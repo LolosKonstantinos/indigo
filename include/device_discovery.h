@@ -144,9 +144,21 @@ uint8_t ip_in_any_subnet(IP_SUBNET addr, const IP_SUBNET *p_addrs, size_t num_ad
 ///                  IO_FUNCTIONS                  ///
 ///                                                ///
 //////////////////////////////////////////////////////
-int send_discovery_packet(int port, uint32_t multicast_addr, SOCKET socket, SEND_INFO *info);
 
-int receive_discv_packet(SOCKET socket, RECV_INFO *info); //may rewrite
+int send_discovery_packet(int port, uint32_t multicast_addr, SOCKET socket, SEND_INFO *info);
+int receive_discv_packet(SOCKET socket, RECV_INFO *info);
+
+//////////////////////////////////////////////////////////
+///                                                    ///
+///                  THREAD_FUNCTIONS                  ///
+///                                                    ///
+//////////////////////////////////////////////////////////
+
+void *send_discovery_thread(void *arg);
+void *recv_discovery_thread(void *arg);
+void *overlapped_io_handler_thread(void *arg);
+void *interface_updater_thread(void *arg);
+void *discovery_manager_thread(void *arg);
 
 //____general_use_functions/misc____//
 void prep_discovery_packet(DISCV_PAC *packet, const unsigned pac_type);
