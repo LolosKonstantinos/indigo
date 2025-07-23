@@ -2,10 +2,10 @@
 // Created by Κωνσταντίνος on 7/22/2025.
 //
 
-#include "../../include/dynamic_array.h"
+#include "dynamic_array.h"
+#include <string.h>
 
-
-int dyn_array_init(dyn_array *array, size_t sizeofelement) {
+int dyn_array_init(dyn_array *array, const size_t sizeofelement) {
     if (array == NULL) return 1;
 
     array->size = 0;
@@ -21,7 +21,7 @@ void dyn_array_destroy(dyn_array *array) {
     free(array->array);
 }
 
-int dyn_array_add(dyn_array *array, void *element) {
+int dyn_array_add(dyn_array *array, const void *element) {
     if (array == NULL || element == NULL) return 1;
 
     void *temp = NULL;
@@ -39,8 +39,8 @@ int dyn_array_add(dyn_array *array, void *element) {
     pthread_mutex_unlock(&(array->mutex));
     return 0;
 }
-
-int dyn_array_remove(dyn_array *array, size_t index) {
+//todo: check if memmove is faster here, memmove accepts overlapping memory
+int dyn_array_remove(dyn_array *array,const size_t index) {
     void *temp = NULL;
     if (array == NULL ) return 1;
     if (array->size >= index) return 1;
@@ -72,7 +72,7 @@ int dyn_array_remove(dyn_array *array, size_t index) {
     return 0;
 }
 
-void *dyn_array_get(dyn_array *array, size_t index) {
+void *dyn_array_get(dyn_array *array,const size_t index) {
     void *temp = NULL, *ret_obj = NULL;
 
     if ((array == NULL) || (index >= array->size)) return NULL;
@@ -91,4 +91,26 @@ void *dyn_array_get(dyn_array *array, size_t index) {
 
     pthread_mutex_unlock(&(array->mutex));
     return ret_obj;
+}
+
+int dyn_array_set(dyn_array *array,const size_t index,const void *element) {
+    void *temp = NULL;
+
+    if ((array == NULL) || (index >= array->size)) return 1;
+
+    pthread_mutex_lock(&(array->mutex));
+
+    temp = (array->array) + (array->sizeofelement * index);
+    memcpy(temp, element, array->sizeofelement);
+
+    pthread_mutex_unlock(&(array->mutex));
+
+    return 0;
+}
+
+void dyn_array_clear(dyn_array *array) {
+    pthread_mutex_lock(&(array->mutex));
+    free(array->array);
+    array->size = 0;
+    pthread_mutex_unlock(&(array->mutex));
 }

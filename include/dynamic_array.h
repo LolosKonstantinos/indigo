@@ -2,9 +2,8 @@
 
 #ifndef DYNAMIC_ARRAY_H
 #define DYNAMIC_ARRAY_H
-#include <stdint.h>
+
 #include <stdlib.h>
-#include <string.h>
 #include <pthread.h>
 
 
@@ -23,6 +22,7 @@ void dyn_array_destroy(dyn_array *array);
 int dyn_array_add(dyn_array *array, void *element);
 int dyn_array_remove(dyn_array *array, size_t index);
 void *dyn_array_get(dyn_array *array, size_t index);
-
+int dyn_array_set(dyn_array *array, size_t index, void *element);
+void dyn_array_clear(dyn_array *array);
 
 #endif //DYNAMIC_ARRAY_H
