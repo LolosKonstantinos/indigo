@@ -14,8 +14,7 @@
 
 //used for discovery packet
 #define MAGIC_NUMBER 1841452771
-#define DISCOVERY_PACKET_SIZE 64 //not very important but good to have
-                                 //(MUST ALWAYS STAY UP TO DATE, things might break) not really but who knows
+
 /*1. 4 byte magic number
  *2. 1 byte protocol version (basically the packet version)
  *3. 1 byte message type (what does this received packet mean?)
@@ -30,7 +29,6 @@
 //more types may be added
 
 #define PAC_VERSION 1
-#define HOST_NAME_MAX_LENGTH 56
 
 //return values and error codes for the device discovery thread system
 #define DDTS_BUG 0xff
@@ -55,6 +53,7 @@
 #include <stdint.h>
 #include <pthread.h>
 #include "Queue.h"
+#include "dynamic_array.h"
 #include <errno.h>
 
 
@@ -66,7 +65,7 @@ typedef struct DISCV_PAC{
     unsigned char pac_version;
     unsigned char pac_type;
     uint16_t pac_length;
-    unsigned char hostname[56];
+    char hostname[MAX_HOSTNAME_LEN];
 }DISCV_PAC;
 
 //for get_discovery_sockets()
@@ -89,33 +88,48 @@ typedef struct IP_SUBNET {
 
 //for device discovery system and queue
 typedef struct DISCOVERED_DEVICE {
-    unsigned char name[56];
+    char hostname[MAX_HOSTNAME_LEN];
     time_t timestamp;
     struct sockaddr_in address;
     uint8_t mac_address[6];
     uint8_t mac_address_len;
 }DISCOVERED_DEVICE;
 
-typedef struct RECV_DATA {
+typedef struct RECV_INFO {
     struct sockaddr *source;
     int *fromLen;
     WSABUF *buf;
     OVERLAPPED *overlapped;
     DWORD *flags;
     DWORD *bytes_recv;
-
     SOCKET socket;
+}RECV_INFO;
 
-    struct RECV_DATA *next;
-}RECV_DATA;
+typedef struct SEND_INFO {
+    struct sockaddr_in *dest;
+    WSABUF *buf;
+    OVERLAPPED *overlapped;
+    DWORD *bytes;
+    SOCKET socket;
+} SEND_INFO;
 
-//____GET_DISCOVERY_SOCKETS____//
+///////////////////////////////////
+//                               //
+//     GET_DISCOVERY_SOCKETS     //
+//                               //
+///////////////////////////////////
+
 //the function that creates a linked list of sockets used for the device discovery
 SOCKET_NODE *get_discovery_sockets(int port, uint32_t multicast_addr);
 //free the sockets linked list
 void free_discv_sock_ll(SOCKET_NODE *firstnode);
 
-//____get_discovery_sockets() helpers____//
+/////////////////////////////////////////////
+///                                       ///
+///    get_discovery_sockets() helpers    ///
+///                                       ///
+/////////////////////////////////////////////
+
 //creates an array of IP_SUBNET
 int get_compatible_interfaces(IP_SUBNET **ip_subnet, size_t *count);
 //creates a single socket node
@@ -125,10 +139,14 @@ uint32_t sub_mask_8to32b(uint8_t mask_8b);
 uint8_t ips_share_subnet(IP_SUBNET addr1, IP_SUBNET addr2);
 uint8_t ip_in_any_subnet(IP_SUBNET addr, const IP_SUBNET *p_addrs, size_t num_addrs);
 
+//////////////////////////////////////////////////////
+///                                                ///
+///                  IO_FUNCTIONS                  ///
+///                                                ///
+//////////////////////////////////////////////////////
+int send_discovery_packet(int port, uint32_t multicast_addr, SOCKET socket, SEND_INFO *info);
 
-//____IO_FUNCTIONS____//
-int send_discovery_packet(int port, uint32_t multicast_addr,SOCKET socket);
-
+int receive_discv_packet(SOCKET socket, RECV_INFO *info); //may rewrite
 
 //____general_use_functions/misc____//
 void prep_discovery_packet(DISCV_PAC *packet, const unsigned pac_type);

@@ -5,20 +5,6 @@
 #include "device_discovery.h"
 
 
-void prep_discovery_packet(DISCV_PAC *packet, const unsigned pac_type) {
-    memset(packet, 0,sizeof(DISCV_PAC));
-
-    packet->magic_number = MAGIC_NUMBER;
-    packet->pac_version = PAC_VERSION;
-    packet->pac_type = pac_type;
-    packet->pac_length = sizeof(DISCV_PAC);
-    if (gethostname(packet->hostname, HOST_NAME_MAX_LENGTH) != 0 ) {
-        strcpy(packet->hostname, "unknown_hostname");
-    }
-
-}
-
-
 
 /*Creates a link list of sockets used for device discovery
  *the sockets are bound to IPs of different subnets covering the maximum network area.
@@ -98,6 +84,29 @@ SOCKET_NODE *get_discovery_sockets(int port, uint32_t multicast_addr) {
 
     return first_sock;
 }
+
+/*Closes all sockets in the linked list and frees the allocated memory for the list*/
+void free_discv_sock_ll(SOCKET_NODE *firstnode) {
+    if (firstnode == NULL) return;
+
+    SOCKET_NODE *curr, *next;
+
+    curr = firstnode;
+    while (curr != NULL) {
+        next = curr->next;
+        closesocket(curr->sock);
+        free(curr);
+        curr = next;
+    }
+}
+
+
+/////////////////////////////////////////////
+///                                       ///
+///    get_discovery_sockets() helpers    ///
+///                                       ///
+/////////////////////////////////////////////
+
 
 int get_compatible_interfaces(IP_SUBNET **ip_subnet, size_t *count) {
     void *temp = NULL;
@@ -239,152 +248,7 @@ SOCKET_NODE *create_discv_sock_node() {
     return node;
 }
 
-/*Closes all sockets in the linked list and frees the allocated memory for the list*/
-void free_discv_sock_ll(SOCKET_NODE *firstnode) {
-    if (firstnode == NULL) return;
-
-    SOCKET_NODE *curr, *next;
-
-    curr = firstnode;
-    while (curr != NULL) {
-        next = curr->next;
-        closesocket(curr->sock);
-        free(curr);
-        curr = next;
-    }
-}
-//todo: use overlapped operation for sending
-/*Sends a multicast packet to the multicast address, defined in the header file, from the socket specified*/
-int send_discv_packet(const SOCKET_NODE *sock, DISCV_PAC *packet, struct sockaddr *dest) {
-    int bytes_sent = sendto(sock->sock,(char *)packet,packet->pac_length,0,dest,sizeof(struct sockaddr));
-
-    if (bytes_sent == SOCKET_ERROR) {
-        fprintf(stderr, "sendto() failed in send_discv_packet()\n");
-        printf("%d\n",WSAGetLastError());
-        fflush(stdout);
-        return -1;
-    }
-    return bytes_sent;
-}
-
-RECV_DATA *receive_discv_packet(SOCKET socket, RECV_DATA *data) {
-    struct sockaddr *source = NULL;
-    int *fromLen = NULL;
-    WSABUF *buf = NULL;
-    OVERLAPPED *overlapped = NULL;
-    RECV_DATA *recv_data = NULL;
-    DWORD *flags = NULL, *bytes_recv = NULL;
-    int retVal;
-
-    //the sender's details
-    if (data == NULL) {
-        source = (struct sockaddr *)malloc(sizeof(struct sockaddr));
-        if (source == NULL) {
-            perror("Failed to allocate memory for socket");
-            goto cleanup;
-        }
-
-        //size of sender's details
-        fromLen = (int *)malloc(sizeof(int));
-        if (fromLen == NULL) {
-            perror("Failed to allocate memory for socket");
-            goto cleanup;
-        }
-        *fromLen = sizeof(struct sockaddr);
-
-        //the buffer that holds the received message
-        buf = (WSABUF *)malloc(sizeof(WSABUF));
-        if (buf == NULL) {
-            perror("Failed to allocate memory for socket");
-            goto cleanup;
-        }
-        //the actual buffer inside the WSABUF struct
-        buf->buf = malloc(sizeof(DISCV_PAC));
-        if (buf->buf == NULL) {
-            perror("Failed to allocate memory for socket");
-            goto cleanup;
-        }
-        buf->len = sizeof(DISCV_PAC);
-
-        overlapped = (OVERLAPPED *)calloc(1,sizeof(OVERLAPPED));
-        if (overlapped == NULL) {
-            perror("Failed to allocate memory for socket");
-            goto cleanup;
-        }
-        overlapped->hEvent = WSACreateEvent();
-        if (overlapped->hEvent == WSA_INVALID_EVENT) {
-            perror("Failed to create event for socket");
-            goto cleanup;
-        }
-
-        //the memory of the returned struct
-        recv_data = malloc (sizeof(RECV_DATA));
-        if (recv_data == NULL) {
-            perror("Failed to allocate memory for socket");
-            goto cleanup;
-        }
-
-        flags = calloc(1,sizeof(DWORD));
-        if (flags == NULL) {
-            perror("Failed to allocate memory for socket");
-            goto cleanup;
-        }
-
-        bytes_recv = calloc(1,sizeof(DWORD));
-        if (bytes_recv == NULL) {
-            perror("Failed to allocate memory for socket");
-            goto cleanup;
-        }
-        recv_data->buf = buf;
-        recv_data->overlapped = overlapped;
-        recv_data->source = source;
-        recv_data->fromLen = fromLen;
-        recv_data->next = NULL;
-        recv_data->bytes_recv = bytes_recv;
-        recv_data->flags = flags;
-        recv_data->socket = socket;
-
-        retVal = WSARecvFrom(socket,buf,1,bytes_recv,flags,source,fromLen,overlapped,NULL);
-
-        if (retVal == SOCKET_ERROR) {
-            if (WSAGetLastError() != WSA_IO_PENDING) {
-                fprintf(stderr, "WSARecvFrom() failed in receive_discv_packet\n");
-                printf("ERROR: %d\n", WSAGetLastError());
-                fflush(stdout);
-                goto cleanup;
-            }
-        }
-        return recv_data;
-    }
-
-    retVal = WSARecvFrom(socket,data->buf,1,data->bytes_recv,data->flags,data->source,data->fromLen,data->overlapped,NULL);
-    if (retVal == SOCKET_ERROR) {
-        if (WSAGetLastError() != WSA_IO_PENDING) {
-            fprintf(stderr, "WSARecvFrom() failed in receive_discv_packet\n");
-            printf("ERROR: %d\n", WSAGetLastError());
-            fflush(stdout);
-            return NULL;
-        }
-    }
-
-    return data;
-
-
-    cleanup:
-    free(source);
-    free(fromLen);
-    if (buf != NULL) {
-        free(buf->buf);
-        free(buf);
-    }
-    if (overlapped != NULL) {
-        WSACloseEvent(overlapped->hEvent);
-        free(overlapped);
-    }
-    free(flags);
-    free(bytes_recv);
-    return NULL;
-}
+//____IP AND SUBNET HELPERS____//
 
 uint32_t sub_mask_8to32b(const uint8_t mask_8b) {
     uint32_t mask_32b = 0;
@@ -411,6 +275,212 @@ uint8_t ip_in_any_subnet(const IP_SUBNET addr, const IP_SUBNET *p_addrs, const s
 }
 
 
+//////////////////////////////////////////////////////
+///                                                ///
+///                  IO_FUNCTIONS                  ///
+///                                                ///
+//////////////////////////////////////////////////////
+
+
+int send_discovery_packet(int port, uint32_t multicast_addr, SOCKET socket, SEND_INFO *info) {
+    WSABUF *buf = NULL;
+    DWORD *numofbytes = NULL;
+    struct sockaddr_in *dest = NULL;
+    OVERLAPPED *overlapped = NULL;
+
+    DISCV_PAC pac;
+
+    int retVal = 0;
+
+    //____memory_allocations____//
+
+    //allocate the buffer
+    buf = (WSABUF *)malloc(sizeof(WSABUF));
+    if (buf == NULL) {
+        perror("Failed to allocate memory for socket");
+        goto cleanup;
+    }
+    buf->buf = malloc(sizeof(DISCV_PAC));
+    buf->len = sizeof(DISCV_PAC);
+
+    //allocate for the number of bytes transfered
+    numofbytes = malloc(sizeof(DWORD));
+    if (numofbytes == NULL) {
+        perror("Failed to allocate memory for socket");
+        goto cleanup;
+    }
+    //allocate the sockaddr_in
+    dest = (struct sockaddr_in *)malloc(sizeof(struct sockaddr_in));
+    if (dest == NULL) {
+        perror("Failed to allocate memory for socket");
+        goto cleanup;
+    }
+    //allocate the overlapped structure
+    overlapped = (OVERLAPPED *)calloc(1,sizeof(OVERLAPPED));
+    if (overlapped == NULL) {
+        perror("Failed to allocate memory for socket");
+        goto cleanup;
+    }
+    overlapped->hEvent = WSACreateEvent();
+    if (overlapped->hEvent == INVALID_HANDLE_VALUE) {
+        fprintf(stderr, "WSACreateEvent() failed in send_discovery_packet: %d\n",WSAGetLastError());
+        goto cleanup;
+    }
+
+    //____initialize the parameters____//
+
+    //the buffer
+    prep_discovery_packet(&pac, MSG_INIT_PAC);
+    memcpy(buf->buf,&pac,sizeof(DISCV_PAC));
+
+    //sockaddr_in
+    memset(dest,0,sizeof(struct sockaddr_in));
+    dest->sin_family = AF_INET;
+    dest->sin_port = port;
+    dest->sin_addr.S_un.S_addr = multicast_addr;
+
+
+    retVal = WSASendTo(socket,buf,1,numofbytes,MSG_DONTROUTE,(struct sockaddr *)dest,sizeof(struct sockaddr),overlapped,NULL);
+    if (retVal == SOCKET_ERROR) {
+        if (WSAGetLastError() != WSA_IO_PENDING) {
+            //todo: there are errors related to connectivity and are not fault of the programmer, address them later
+            fprintf(stderr, "WSASendTo() failed in send_discovery_packet: %d\n", WSAGetLastError());
+            goto cleanup;
+        }
+    }
+
+    info->dest = dest;
+    info->buf = buf;
+    info->overlapped = overlapped;
+    info->bytes = numofbytes;
+    info->socket = socket;
+
+    return 0;
+
+    cleanup:
+    if (buf != NULL) {
+        free(buf->buf);
+        free(buf);
+    }
+    if (overlapped != NULL) {
+        WSACloseEvent(overlapped->hEvent);
+        free(overlapped);
+    }
+    free(numofbytes);
+    free(dest);
+    return 1;
+}
+
+int receive_discv_packet(SOCKET socket, RECV_INFO *info) {
+    struct sockaddr *source = NULL;
+    int *fromLen = NULL;
+    WSABUF *buf = NULL;
+    OVERLAPPED *overlapped = NULL;
+    RECV_INFO *recv_data = NULL;
+    DWORD *flags = NULL, *bytes_recv = NULL;
+    int retVal;
+
+    //the sender's details
+    source = (struct sockaddr *)malloc(sizeof(struct sockaddr));
+    if (source == NULL) {
+        perror("Failed to allocate memory for socket");
+        goto cleanup;
+    }
+
+    //size of sender's details
+    fromLen = (int *)malloc(sizeof(int));
+    if (fromLen == NULL) {
+        perror("Failed to allocate memory for socket");
+        goto cleanup;
+    }
+    *fromLen = sizeof(struct sockaddr);
+
+    //the buffer that holds the received message
+    buf = (WSABUF *)malloc(sizeof(WSABUF));
+    if (buf == NULL) {
+        perror("Failed to allocate memory for socket");
+        goto cleanup;
+    }
+    //the actual buffer inside the WSABUF struct
+    buf->buf = malloc(sizeof(DISCV_PAC));
+    if (buf->buf == NULL) {
+        perror("Failed to allocate memory for socket");
+        goto cleanup;
+    }
+    buf->len = sizeof(DISCV_PAC);
+
+    overlapped = (OVERLAPPED *)calloc(1,sizeof(OVERLAPPED));
+    if (overlapped == NULL) {
+        perror("Failed to allocate memory for socket");
+        goto cleanup;
+    }
+    overlapped->hEvent = WSACreateEvent();
+    if (overlapped->hEvent == WSA_INVALID_EVENT) {
+        perror("Failed to create event for socket");
+        goto cleanup;
+    }
+
+    flags = calloc(1,sizeof(DWORD));
+    if (flags == NULL) {
+        perror("Failed to allocate memory for socket");
+        goto cleanup;
+    }
+
+    bytes_recv = calloc(1,sizeof(DWORD));
+    if (bytes_recv == NULL) {
+        perror("Failed to allocate memory for socket");
+        goto cleanup;
+    }
+
+    info->buf = buf;
+    info->overlapped = overlapped;
+    info->source = source;
+    info->fromLen = fromLen;
+    info->bytes_recv = bytes_recv;
+    info->flags = flags;
+    info->socket = socket;
+
+    retVal = WSARecvFrom(socket,buf,1,bytes_recv,flags,source,fromLen,overlapped,NULL);
+
+    if (retVal == SOCKET_ERROR) {
+        //todo not all errors need full shutdown, some are about connectivity
+        if (WSAGetLastError() != WSA_IO_PENDING) {
+            fprintf(stderr, "WSARecvFrom() failed in receive_discv_packet\n");
+            printf("ERROR: %d\n", WSAGetLastError());
+            fflush(stdout);
+            goto cleanup;
+        }
+    }
+    return 0;
+
+    cleanup:
+    free(source);
+    free(fromLen);
+    if (buf != NULL) {
+        free(buf->buf);
+        free(buf);
+    }
+    if (overlapped != NULL) {
+        WSACloseEvent(overlapped->hEvent);
+        free(overlapped);
+    }
+    free(flags);
+    free(bytes_recv);
+    return 1;
+}
+
+
+//____general_use_functions/misc____//
+
+void prep_discovery_packet(DISCV_PAC *packet, const unsigned pac_type) {
+    packet->magic_number = MAGIC_NUMBER;
+    packet->pac_version = PAC_VERSION;
+    packet->pac_type = pac_type;
+    packet->pac_length = sizeof(DISCV_PAC);
+    if (gethostname(packet->hostname, MAX_HOSTNAME_LEN) != 0 ) {
+        strcpy(packet->hostname, "unknown_hostname");
+    }
+}
 
 void print_discovered_device_info(DISCOVERED_DEVICE *dev, FILE *stream) {
     char addr_str[INET_ADDRSTRLEN];
@@ -419,8 +489,8 @@ void print_discovered_device_info(DISCOVERED_DEVICE *dev, FILE *stream) {
 
     fprintf(stream, "Hostname: ");
 
-    for (int i = 0; i <HOST_NAME_MAX_LENGTH; i++) {
-        if ((dev->name[i]) == '\0')fprintf(stream, "%c", dev->name[i]);
+    for (int i = 0; i <MAX_HOSTNAME_LEN; i++) {
+        if ((dev->hostname[i]) == '\0')fprintf(stream, "%c", dev->hostname[i]);
     }
     fprintf(stream, "\n");
 
