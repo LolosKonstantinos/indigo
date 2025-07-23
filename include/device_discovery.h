@@ -127,9 +127,10 @@ uint8_t ip_in_any_subnet(IP_SUBNET addr, const IP_SUBNET *p_addrs, size_t num_ad
 
 
 //____IO_FUNCTIONS____//
+int send_discovery_packet(int port, uint32_t multicast_addr,SOCKET socket);
 
 
-//general use functions/misc
+//____general_use_functions/misc____//
 void prep_discovery_packet(DISCV_PAC *packet, const unsigned pac_type);
 void print_discovered_device_info(DISCOVERED_DEVICE *dev, FILE *stream);
 
