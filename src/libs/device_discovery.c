@@ -573,3 +573,25 @@ int reset_event_flag(EFLAG *event_flag) {
     pthread_mutex_unlock(&(event_flag->mutex));
     return 0;
 }
+
+uint32_t get_event_flag(EFLAG *event_flag) {
+    uint32_t fvalue = 0;
+    if (event_flag == NULL) return 0;
+    pthread_mutex_lock(&(event_flag->mutex));
+    fvalue = event_flag->event_flag;
+    pthread_mutex_unlock(&(event_flag->mutex));
+    return fvalue;
+}
+
+uint8_t termination_is_on(EFLAG *event_flag) {
+    if (event_flag == NULL) return 0;
+
+    pthread_mutex_lock(&(event_flag->mutex));
+    if ((event_flag->event_flag) & EF_TERMINATION) {
+        pthread_mutex_unlock(&(event_flag->mutex));
+        return 1;
+    }
+    pthread_mutex_unlock(&(event_flag->mutex));
+    return 0;
+
+}

@@ -177,12 +177,16 @@ void prep_discovery_packet(DISCV_PAC *packet, const unsigned pac_type);
 void print_discovered_device_info(DISCOVERED_DEVICE *dev, FILE *stream);
 
 //____EVENT_FLAG_UTILITIES____//
+//to dynamically create an event flag
 EFLAG *create_event_flag();
 int free_event_flag(EFLAG *event_flag);
+//to create stack based event flags (works fine with heap memory but allocation and freeing should be done manually)
 int init_event_flag(EFLAG *event_flag);
 int destroy_event_flag(EFLAG *event_flag);
+//setters getters re-setters
 int set_event_flag(EFLAG *event_flag, uint32_t flag_value);
 int reset_event_flag(EFLAG *event_flag);
-
+uint32_t get_event_flag(EFLAG *event_flag);
+uint8_t termination_is_on(EFLAG *event_flag);
 
 #endif //NETWERK_DEVICE_DISCOVERY_H
