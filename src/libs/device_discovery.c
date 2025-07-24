@@ -282,92 +282,260 @@ uint8_t ip_in_any_subnet(const IP_SUBNET addr, const IP_SUBNET *p_addrs, const s
 //////////////////////////////////////////////////////
 
 
-int send_discovery_packet(int port, uint32_t multicast_addr, SOCKET socket, SEND_INFO *info) {
+int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets, EFLAG *flag, uint32_t pCount, int32_t msec) {
     WSABUF *buf = NULL;
     DWORD *numofbytes = NULL;
     struct sockaddr_in *dest = NULL;
     OVERLAPPED *overlapped = NULL;
 
-    DISCV_PAC pac;
+    dyn_array info_array;
 
+    DISCV_PAC pac;
+    SEND_INFO send_info, *temp = NULL;
+    struct timespec ts;
+    HANDLE *handles = NULL;
+    size_t hCount = 0;
+    uint32_t flag_val;
+    DWORD wait_ret;
     int retVal = 0;
 
-    //____memory_allocations____//
+    if ((sockets == NULL) || (flag == NULL) || (pCount == 0) || (msec < 0)) return 1;
 
-    //allocate the buffer
-    buf = (WSABUF *)malloc(sizeof(WSABUF));
-    if (buf == NULL) {
-        perror("Failed to allocate memory for socket");
-        goto cleanup;
-    }
-    buf->buf = malloc(sizeof(DISCV_PAC));
-    buf->len = sizeof(DISCV_PAC);
-
-    //allocate for the number of bytes transfered
-    numofbytes = malloc(sizeof(DWORD));
-    if (numofbytes == NULL) {
-        perror("Failed to allocate memory for socket");
-        goto cleanup;
-    }
-    //allocate the sockaddr_in
-    dest = (struct sockaddr_in *)malloc(sizeof(struct sockaddr_in));
-    if (dest == NULL) {
-        perror("Failed to allocate memory for socket");
-        goto cleanup;
-    }
-    //allocate the overlapped structure
-    overlapped = (OVERLAPPED *)calloc(1,sizeof(OVERLAPPED));
-    if (overlapped == NULL) {
-        perror("Failed to allocate memory for socket");
-        goto cleanup;
-    }
-    overlapped->hEvent = WSACreateEvent();
-    if (overlapped->hEvent == INVALID_HANDLE_VALUE) {
-        fprintf(stderr, "WSACreateEvent() failed in send_discovery_packet: %d\n",WSAGetLastError());
-        goto cleanup;
-    }
-
-    //____initialize the parameters____//
-
-    //the buffer
+    dyn_array_init(&info_array, sizeof(SEND_INFO));
     prep_discovery_packet(&pac, MSG_INIT_PAC);
-    memcpy(buf->buf,&pac,sizeof(DISCV_PAC));
 
-    //sockaddr_in
-    memset(dest,0,sizeof(struct sockaddr_in));
-    dest->sin_family = AF_INET;
-    dest->sin_port = port;
-    dest->sin_addr.S_un.S_addr = multicast_addr;
+    pthread_mutex_lock(&sockets->mutex);
 
+    for (SOCKET_NODE *sock = sockets->head; sock != NULL; sock = sock->next) {
+        //____memory_allocations____//
 
-    retVal = WSASendTo(socket,buf,1,numofbytes,MSG_DONTROUTE,(struct sockaddr *)dest,sizeof(struct sockaddr),overlapped,NULL);
-    if (retVal == SOCKET_ERROR) {
-        if (WSAGetLastError() != WSA_IO_PENDING) {
-            //todo: there are errors related to connectivity and are not fault of the programmer, address them later
-            fprintf(stderr, "WSASendTo() failed in send_discovery_packet: %d\n", WSAGetLastError());
+        //allocate the buffer
+        buf = (WSABUF *)malloc(sizeof(WSABUF));
+        if (buf == NULL) {
+            perror("malloc() failed in send_discovery_packet");
+            pthread_mutex_unlock(&sockets->mutex);
             goto cleanup;
+        }
+        buf->buf = malloc(sizeof(DISCV_PAC));
+        if (buf->buf == NULL) {
+            perror("malloc() failed in send_discovery_packet");
+            pthread_mutex_unlock(&sockets->mutex);
+            goto cleanup;
+        }
+        buf->len = sizeof(DISCV_PAC);
+
+        //allocate for the number of bytes transfered
+        numofbytes = malloc(sizeof(DWORD));
+        if (numofbytes == NULL) {
+            perror("malloc() failed in send_discovery_packet");
+            pthread_mutex_unlock(&sockets->mutex);
+            goto cleanup;
+        }
+        //allocate the sockaddr_in
+        dest = (struct sockaddr_in *)malloc(sizeof(struct sockaddr_in));
+        if (dest == NULL) {
+            perror("malloc() failed in send_discovery_packet");
+            pthread_mutex_unlock(&sockets->mutex);
+            goto cleanup;
+        }
+        //allocate the overlapped structure
+        overlapped = (OVERLAPPED *)calloc(1,sizeof(OVERLAPPED));
+        if (overlapped == NULL) {
+            perror("malloc() failed in send_discovery_packet");
+            pthread_mutex_unlock(&sockets->mutex);
+            goto cleanup;
+        }
+        overlapped->hEvent = WSACreateEvent();
+        if (overlapped->hEvent == INVALID_HANDLE_VALUE) {
+            fprintf(stderr, "WSACreateEvent() failed in send_discovery_packet: %d\n",WSAGetLastError());
+            pthread_mutex_unlock(&sockets->mutex);
+            goto cleanup;
+        }
+
+        //____initialize the parameters____//
+
+        //the buffer
+        memcpy(buf->buf,&pac,sizeof(DISCV_PAC));
+
+        //sockaddr_in
+        memset(dest,0,sizeof(struct sockaddr_in));
+        dest->sin_family = AF_INET;
+        dest->sin_port = port;
+        dest->sin_addr.S_un.S_addr = multicast_addr;
+
+        send_info.dest = dest;
+        send_info.buf = buf;
+        send_info.overlapped = overlapped;
+        send_info.bytes = numofbytes;
+        send_info.socket = sock->sock;
+
+        dyn_array_add(&info_array,&send_info);
+
+        flag_val = get_event_flag(flag);
+        if ((flag_val & EF_OVERRIDE_IO) || (flag_val & EF_TERMINATION)) {
+            pthread_mutex_unlock(&sockets->mutex);
+            goto cleanup;
+        }
+
+        retVal = WSASendTo(sock->sock,buf,1,numofbytes,MSG_DONTROUTE,(struct sockaddr *)dest,sizeof(struct sockaddr),overlapped,NULL);
+
+        if (retVal == SOCKET_ERROR) {
+            if (WSAGetLastError() != WSA_IO_PENDING) {
+                //todo: there are errors related to connectivity and are not fault of the programmer, address them later
+                fprintf(stderr, "WSASendTo() failed in send_discovery_packet: %d\n", WSAGetLastError());
+                pthread_mutex_unlock(&sockets->mutex);
+                goto cleanup;
+            }
+        }
+    }
+    pthread_mutex_unlock(&sockets->mutex);
+
+    if (create_handle_array_from_send_info(&info_array,&handles,&hCount)) {
+        fprintf(stderr, "create_handle_array_from_send_info() failed in send_discovery_packet()\n");
+        goto cleanup;
+    }
+
+    //set the time interval
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_nsec += (msec * 1'000'000);
+
+    //wait on the condition
+    pthread_mutex_lock(&(flag->mutex));
+    retVal = pthread_cond_timedwait(&flag->cond, &(flag->mutex), &ts);
+    pthread_mutex_unlock(&(flag->mutex));
+
+    if (retVal == 0) goto cleanup;//we got flag to stop the operation
+
+    if (retVal != ETIMEDOUT) {
+        fprintf(stderr, "pthread_cond_timedwait() failed in send_discovery_packet()\n");
+        pthread_mutex_unlock(&(flag->mutex));
+        goto cleanup;
+    }
+
+    //check if the io operations are completed
+    wait_ret = WaitForMultipleObjects(hCount,handles,TRUE,100);
+
+    if (wait_ret == WAIT_FAILED) {
+        fprintf(stderr, "WaitForMultipleObjects() failed in send_discovery_packet(): %d\n",WSAGetLastError());
+        goto cleanup;
+    }
+    if (wait_ret == WAIT_TIMEOUT) {
+        for (int i = 0; i < hCount; i++) {
+            wait_ret = WaitForSingleObject(handles[i],0);
+            if (wait_ret == WAIT_OBJECT_0) continue;
+            if (wait_ret == WAIT_FAILED) {
+                fprintf(stderr,"WaitForSingleObject() failed in send_discovery_packet(): %d\n", WSAGetLastError());
+                goto cleanup;
+            }
+            if (wait_ret == WAIT_TIMEOUT) {
+                CancelIo(handles[i]);//this only works for io requests on the same thread
+                continue;
+            }
+            if (wait_ret == WAIT_FAILED) {
+                fprintf(stderr, "WaitForSingleObjects() failed in send_discovery_packet(): %d\n",WSAGetLastError());
+                goto cleanup;
+            }
         }
     }
 
-    info->dest = dest;
-    info->buf = buf;
-    info->overlapped = overlapped;
-    info->bytes = numofbytes;
-    info->socket = socket;
+    //we did the first operation above, now we have allocated memory, and we use that
+
+    //we do this to avoid type casting
+    temp = info_array.array; // it is ok as this is a local array, and it is safe to have direct access
+
+    for (int i = 0; i < pCount - 1; i++) {
+        //send packets
+        for (int j = 0; j < dyn_array_get_size(&info_array); j++) {
+            WSAResetEvent(temp[j].overlapped->hEvent);
+
+            flag_val = get_event_flag(flag);
+            if ((flag_val & EF_OVERRIDE_IO) || (flag_val & EF_TERMINATION)) goto cleanup;
+
+            retVal = WSASendTo(temp[j].socket,
+                temp[j].buf,
+                1,
+                temp[j].bytes,
+                MSG_DONTROUTE,
+                (struct sockaddr *)(temp[j].dest),
+                sizeof(struct sockaddr),
+                overlapped,
+                NULL);
+
+            if (retVal == SOCKET_ERROR) {
+                if (WSAGetLastError() != WSA_IO_PENDING) {
+                    //todo: there are errors related to connectivity and are not fault of the programmer, address them later
+                    fprintf(stderr, "WSASendTo() failed in send_discovery_packet: %d\n", WSAGetLastError());
+                    pthread_mutex_unlock(&sockets->mutex);
+                    goto cleanup;
+                }
+            }
+        }
+
+        //wait for completion and time interval
+
+        //set the time interval
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_nsec += (msec * 1'000'000);
+
+        //wait on the condition
+        pthread_mutex_lock(&(flag->mutex));
+
+        if ((flag->event_flag & EF_OVERRIDE_IO) || (flag->event_flag & EF_TERMINATION)) {
+            pthread_mutex_unlock(&flag->mutex);
+            goto cleanup;
+        }
+
+        retVal = pthread_cond_timedwait(&flag->cond, &(flag->mutex), &ts);
+
+        pthread_mutex_unlock(&(flag->mutex));
+
+        if (retVal == 0) goto cleanup;//we got flag to stop the operation
+
+        if (retVal != ETIMEDOUT) {
+            fprintf(stderr, "pthread_cond_timedwait() failed in send_discovery_packet()\n");
+            goto cleanup;
+        }
+
+        //check if the io operations are completed
+        wait_ret = WaitForMultipleObjects(hCount,handles,TRUE,100);
+
+        if (wait_ret == WAIT_FAILED) {
+            fprintf(stderr, "WaitForMultipleObjects() failed in send_discovery_packet(): %d\n",WSAGetLastError());
+            goto cleanup;
+        }
+        if (wait_ret == WAIT_TIMEOUT) {
+            for (int k = 0; k < hCount; k++) {
+                wait_ret = WaitForSingleObject(handles[k],0);
+                if (wait_ret == WAIT_OBJECT_0) continue;
+                if (wait_ret == WAIT_FAILED) {
+                    fprintf(stderr,"WaitForSingleObject() failed in send_discovery_packet(): %d\n", WSAGetLastError());
+                    goto cleanup;
+                }
+                if (wait_ret == WAIT_TIMEOUT) {
+                    CancelIo(handles[k]);//this only works for io requests on the same thread
+                    continue;
+                }
+                if (wait_ret == WAIT_FAILED) {
+                    fprintf(stderr, "WaitForSingleObjects() failed in send_discovery_packet(): %d\n",WSAGetLastError());
+                    goto cleanup;
+                }
+            }
+        }
+    }
 
     return 0;
 
     cleanup:
-    if (buf != NULL) {
-        free(buf->buf);
-        free(buf);
+    //free the dynamic array and its contents
+    temp = info_array.array;
+    for (size_t i = 0; i < dyn_array_get_size(&info_array); i++) {
+        free_send_info(&temp[i]);
     }
-    if (overlapped != NULL) {
-        WSACloseEvent(overlapped->hEvent);
-        free(overlapped);
-    }
-    free(numofbytes);
-    free(dest);
+    dyn_array_destroy(&info_array);
+
+    flag_val = get_event_flag(flag);
+    if ((flag_val & EF_OVERRIDE_IO) || (flag_val & EF_TERMINATION)) return -1;
+
     return 1;
 }
 
@@ -470,6 +638,144 @@ int receive_discv_packet(SOCKET socket, RECV_INFO *info) {
 }
 
 
+//////////////////////////////////////////////////////////
+///                                                    ///
+///                  THREAD_FUNCTIONS                  ///
+///                                                    ///
+//////////////////////////////////////////////////////////
+
+// void *send_discovery_thread(void *arg) {
+//     SEND_ARGS *args = (SEND_ARGS *)arg;
+//     struct sockaddr_in multicast_addr;
+//     DISCV_PAC packet;
+//     QNODE *qnode_pop;
+//     QET event_type;
+//     struct timespec ts;
+//     int err_code;
+//     uint8_t *process_return = NULL;
+//
+//     process_return = malloc(sizeof(uint8_t));
+//     if (process_return == NULL) {
+//
+//         free(args);
+//         return NULL;
+//     }
+//     *process_return = 0;
+//
+//     //prep the multicast address
+//     multicast_addr.sin_family = AF_INET;
+//     multicast_addr.sin_addr.s_addr = args->multicast_addr;
+//     multicast_addr.sin_port = args->port;
+//
+//     prep_discovery_packet(&packet, MSG_INIT_PAC);
+//
+//
+//     //we send a small burst of packets on activation
+//     if (send_multiple_discovery_packets(args->port,args->multicast_address,args->sockets,3, 150, args->wEvents->override_execution)) {
+//         *process_return = DDTS_WINLIB_ERROR;
+//
+//         if (queue_push(args->queue,NULL, 0,QET_ERROR) != 0) {
+//             fprintf(stderr, "queue_push() failed in device_discovery_sending\n");
+//             set_event_flag(args->wEvents->terminate);
+//             *process_return = DDTS_MEMORY_ERROR;
+//         }
+//         set_event_flag(args->wEvents->wake_manager);
+//         free(args->wEvents);
+//         free(args);
+//         return process_return;
+//     }
+//
+//
+//     //the main loop
+//     while (flag_is_off(args->wEvents->terminate)) {
+//         qnode_pop = queue_pop(args->queue, QOPT_NON_BLOCK);
+//
+//         if (qnode_pop != NULL) {
+//             if (qnode_pop->size == 0) {
+//                 event_type = qnode_pop->type;
+//
+//                 if (event_type == QET_PACKET_BURST) {
+//                     if (send_multiple_discovery_packets(args->port,args->multicast_address,args->sockets,3, 150, args->wEvents->override_execution)) {
+//                         *process_return = DDTS_WINLIB_ERROR;
+//                         if (queue_push(args->queue,NULL, 0,QET_ERROR) != 0) {
+//                             fprintf(stderr, "queue_push() failed in device_discovery_sending\n");
+//                             set_event_flag(args->wEvents->terminate);
+//                             *process_return = DDTS_MEMORY_ERROR;
+//                         }
+//                         set_event_flag(args->wEvents->wake_manager);
+//                         break;
+//                     }
+//                 }
+//                 else if (event_type == QET_TERMINATION) break;
+//                 //no else, we will not receive any other packet type, and if we do we don't care
+//
+//             }
+//             destroy_qnode(qnode_pop);//we dont need this anymore
+//         }
+//
+//         //send the packets
+//
+//         //set the absolute time
+//         clock_gettime(CLOCK_REALTIME, &ts);
+//         ts.tv_sec += 10;
+//
+//         pthread_mutex_lock(&(args->sockets->mutex));
+//         for (SOCKET_NODE *soc = args->sockets->head; soc != NULL; soc = soc->next) {
+//             if (!flag_is_off(args->wEvents->override_execution)) break;
+//
+//             if (send_discv_packet(soc,&packet,(struct sockaddr *)(&multicast_addr)) == -1) {
+//                 fprintf(stderr, "send_discv_packet() failed in device_discovery_sending\n"
+//                                 "failed to send discovery packet\n");
+//                 pthread_mutex_unlock(&(args->sockets->mutex));
+//                 *process_return = DDTS_WINLIB_ERROR;
+//                 free(args->wEvents);
+//                 free(args);
+//                 return process_return;
+//             }
+//         }
+//         pthread_mutex_unlock(&(args->sockets->mutex));
+//
+//         //wait for 25 sec for a termination event
+//         //we do that to terminate if needed while also setting a 25 sec timeout
+//         if (flag_is_off(args->wEvents->terminate)){
+//             pthread_mutex_lock(&(args->wEvents->terminate->event_mutex));
+//             err_code = pthread_cond_timedwait(&(args->wEvents->terminate->event_cond), &(args->wEvents->terminate->event_mutex),&ts);
+//
+//             if ((err_code != ETIMEDOUT) && (err_code != 0)) {
+//                 fprintf(stderr, "pthread_cond_timedwait() failed in device_discovery_sending\n");
+//                 set_event_flag(args->wEvents->terminate);
+//                 set_event_flag(args->wEvents->wake_manager);
+//                 pthread_mutex_unlock(&(args->wEvents->terminate->event_mutex));
+//                 *process_return = DDTS_BUG;
+//                 break;
+//             }
+//             if (err_code == 0) break; //we got a signal to terminate
+//             pthread_mutex_unlock(&(args->wEvents->terminate->event_mutex));
+//         }
+//         else break; //the condition is already on, we have been signaled to terminate
+//     }
+//     free(args->wEvents);
+//     free(args);
+//     return process_return;
+// }
+
+void *recv_discovery_thread(void *arg) {
+
+}
+
+void *overlapped_io_handler_thread(void *arg) {
+
+}
+
+void *interface_updater_thread(void *arg) {
+
+}
+
+void *discovery_manager_thread(void *arg) {
+
+}
+
+
 //____general_use_functions/misc____//
 
 void prep_discovery_packet(DISCV_PAC *packet, const unsigned pac_type) {
@@ -507,7 +813,58 @@ void print_discovered_device_info(DISCOVERED_DEVICE *dev, FILE *stream) {
     fflush(stream);
 }
 
-//____EVENT_FLAG_UTILITIES____//
+int create_handle_array_from_send_info(dyn_array *info, HANDLE **handles, size_t *hCount) {
+    SEND_INFO *send_info;
+    void *temp = (HANDLE *)malloc(info->size * sizeof(HANDLE));
+    if (temp == NULL) {
+        fprintf(stderr, "malloc() failed in create_handle_array_from_send_info\n");
+        return 1;
+    }
+
+    for (size_t i = 0; i<info->size; i++) {
+        send_info = dyn_array_get(info,i);
+        handles[i] = send_info->overlapped->hEvent;
+        free(send_info);
+    }
+
+    *handles = temp;
+    *hCount = info->size;
+    return 0;
+}
+
+int create_handle_array_from_recv_info(dyn_array *info, HANDLE **handles, size_t *hCount) {
+    RECV_INFO *recv_info;
+    void *temp = (HANDLE *)malloc(info->size * sizeof(HANDLE));
+    if (temp == NULL) {
+        fprintf(stderr, "malloc() failed in create_handle_array_from_send_info\n");
+        return 1;
+    }
+
+    for (size_t i = 0; i<info->size; i++) {
+        recv_info = dyn_array_get(info,i);
+        handles[i] = recv_info->overlapped->hEvent;
+        free(recv_info);
+    }
+
+    *handles = temp;
+    *hCount = info->size;
+    return 0;
+}
+
+void free_send_info(SEND_INFO *info) {
+    free(info->dest);
+    free(info->bytes);
+    free(info->buf->buf);
+    free(info->buf);
+    WSACloseEvent(info->overlapped->hEvent);
+    free(info->overlapped);
+}
+
+//////////////////////////////////////////////////////////////
+///                                                        ///
+///                  EVENT_FLAG_UTILITIES                  ///
+///                                                        ///
+//////////////////////////////////////////////////////////////
 
 EFLAG *create_event_flag() {
     EFLAG *event_flag = (EFLAG *)malloc(sizeof(EFLAG));
@@ -561,6 +918,15 @@ int set_event_flag(EFLAG *event_flag, uint32_t flag_value) {
     if (event_flag == NULL) return 1;
     pthread_mutex_lock(&(event_flag->mutex));
     event_flag->event_flag = flag_value;
+    pthread_cond_broadcast(&(event_flag->cond));
+    pthread_mutex_unlock(&(event_flag->mutex));
+    return 0;
+}
+
+int update_event_flag(EFLAG *event_flag, uint32_t flag_value) {
+    if (event_flag == NULL) return 1;
+    pthread_mutex_lock(&(event_flag->mutex));
+    event_flag->event_flag |= flag_value;
     pthread_cond_broadcast(&(event_flag->cond));
     pthread_mutex_unlock(&(event_flag->mutex));
     return 0;

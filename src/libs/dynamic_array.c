@@ -111,6 +111,15 @@ int dyn_array_set(dyn_array *array,const size_t index,const void *element) {
 void dyn_array_clear(dyn_array *array) {
     pthread_mutex_lock(&(array->mutex));
     free(array->array);
+    array->array = NULL;
     array->size = 0;
     pthread_mutex_unlock(&(array->mutex));
+}
+
+size_t dyn_array_get_size(dyn_array *array) {
+    size_t size;
+    pthread_mutex_lock(&(array->mutex));
+    size = array->size;
+    pthread_mutex_unlock(&(array->mutex));
+    return size;
 }

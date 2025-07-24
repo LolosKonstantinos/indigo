@@ -118,6 +118,7 @@ typedef struct SEND_INFO {
 #define EF_SEND_MULTIPLE_PACKETS 0x00000004
 #define EF_NEW_DEVICE 0x00000008
 #define EF_TERMINATION 0x00000010
+#define EF_OVERRIDE_IO 0x00000020
 
 typedef struct EVENT_FLAG {
     volatile uint32_t event_flag;
@@ -125,6 +126,12 @@ typedef struct EVENT_FLAG {
     pthread_mutex_t mutex;
 }EVENT_FLAG, EFLAG;
 
+typedef struct SEND_ARGS {
+    int port;
+    uint32_t multicast_addr;
+    EFLAG flag;
+    SOCKET_LL *sockets;
+}SEND_ARGS;
 ///////////////////////////////////
 //                               //
 //     GET_DISCOVERY_SOCKETS     //
@@ -157,7 +164,7 @@ uint8_t ip_in_any_subnet(IP_SUBNET addr, const IP_SUBNET *p_addrs, size_t num_ad
 ///                                                ///
 //////////////////////////////////////////////////////
 
-int send_discovery_packet(int port, uint32_t multicast_addr, SOCKET socket, SEND_INFO *info);
+int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets, EFLAG *flag, uint32_t pCount, int32_t msec);
 int receive_discv_packet(SOCKET socket, RECV_INFO *info);
 
 //////////////////////////////////////////////////////////
@@ -172,11 +179,26 @@ void *overlapped_io_handler_thread(void *arg);
 void *interface_updater_thread(void *arg);
 void *discovery_manager_thread(void *arg);
 
-//____general_use_functions/misc____//
+
+////////////////////////////////////////////////////////////////////
+///                                                              ///
+///                  general_use_functions/misc                  ///
+///                                                              ///
+////////////////////////////////////////////////////////////////////
+
+
 void prep_discovery_packet(DISCV_PAC *packet, const unsigned pac_type);
 void print_discovered_device_info(DISCOVERED_DEVICE *dev, FILE *stream);
+int create_handle_array_from_send_info(dyn_array *info, HANDLE **handles, size_t *hCount);
+int create_handle_array_from_recv_info(dyn_array *info, HANDLE **handles, size_t *hCount);
+void free_send_info(SEND_INFO *info);
 
-//____EVENT_FLAG_UTILITIES____//
+//////////////////////////////////////////////////////////////
+///                                                        ///
+///                  EVENT_FLAG_UTILITIES                  ///
+///                                                        ///
+//////////////////////////////////////////////////////////////
+
 //to dynamically create an event flag
 EFLAG *create_event_flag();
 int free_event_flag(EFLAG *event_flag);
@@ -185,6 +207,7 @@ int init_event_flag(EFLAG *event_flag);
 int destroy_event_flag(EFLAG *event_flag);
 //setters getters re-setters
 int set_event_flag(EFLAG *event_flag, uint32_t flag_value);
+int update_event_flag(EFLAG *event_flag, uint32_t flag_value);
 int reset_event_flag(EFLAG *event_flag);
 uint32_t get_event_flag(EFLAG *event_flag);
 uint8_t termination_is_on(EFLAG *event_flag);
