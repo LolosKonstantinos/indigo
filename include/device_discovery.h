@@ -113,6 +113,18 @@ typedef struct SEND_INFO {
     SOCKET socket;
 } SEND_INFO;
 
+#define EF_ERROR 0x00000001
+#define EF_INTERFACE_UPDATE 0x00000002
+#define EF_SEND_MULTIPLE_PACKETS 0x00000004
+#define EF_NEW_DEVICE 0x00000008
+#define EF_TERMINATION 0x00000010
+
+typedef struct EVENT_FLAG {
+    volatile uint32_t event_flag;
+    pthread_cond_t cond;
+    pthread_mutex_t mutex;
+}EVENT_FLAG, EFLAG;
+
 ///////////////////////////////////
 //                               //
 //     GET_DISCOVERY_SOCKETS     //
@@ -163,6 +175,14 @@ void *discovery_manager_thread(void *arg);
 //____general_use_functions/misc____//
 void prep_discovery_packet(DISCV_PAC *packet, const unsigned pac_type);
 void print_discovered_device_info(DISCOVERED_DEVICE *dev, FILE *stream);
+
+//____EVENT_FLAG_UTILITIES____//
+EFLAG *create_event_flag();
+int free_event_flag(EFLAG *event_flag);
+int init_event_flag(EFLAG *event_flag);
+int destroy_event_flag(EFLAG *event_flag);
+int set_event_flag(EFLAG *event_flag, uint32_t flag_value);
+int reset_event_flag(EFLAG *event_flag);
 
 
 #endif //NETWERK_DEVICE_DISCOVERY_H

@@ -506,3 +506,70 @@ void print_discovered_device_info(DISCOVERED_DEVICE *dev, FILE *stream) {
     fprintf(stream, "Timestamp: %lld\n\n", dev->timestamp);
     fflush(stream);
 }
+
+//____EVENT_FLAG_UTILITIES____//
+
+EFLAG *create_event_flag() {
+    EFLAG *event_flag = (EFLAG *)malloc(sizeof(EFLAG));
+    if (event_flag == NULL) {
+        return NULL;
+    }
+    pthread_mutex_init(&(event_flag->mutex), NULL);
+    pthread_cond_init(&(event_flag->cond), NULL);
+    event_flag->event_flag = 0;
+    return event_flag;
+}
+
+int free_event_flag(EFLAG *event_flag) {
+    if (event_flag == NULL) return 1;
+    pthread_mutex_lock(&(event_flag->mutex));
+    pthread_cond_broadcast(&(event_flag->cond));
+    pthread_mutex_unlock(&(event_flag->mutex));
+
+    pthread_mutex_destroy(&(event_flag->mutex));
+    pthread_cond_destroy(&(event_flag->cond));
+    free(event_flag);
+    return 0;
+}
+
+int init_event_flag(EFLAG *event_flag) {
+    if (event_flag == NULL) return 1;
+    if (pthread_mutex_init(&(event_flag->mutex), NULL) != 0) return 1;
+    if (pthread_cond_init(&(event_flag->cond), NULL) != 0) {
+        pthread_mutex_destroy(&(event_flag->mutex));
+        return 1;
+    }
+
+    pthread_mutex_lock(&(event_flag->mutex));
+    event_flag->event_flag = 0;
+    pthread_mutex_unlock(&(event_flag->mutex));
+    return 0;
+}
+
+int destroy_event_flag(EFLAG *event_flag) {
+    if (event_flag == NULL) return 1;
+    pthread_mutex_lock(&(event_flag->mutex));
+    pthread_cond_broadcast(&(event_flag->cond));
+    pthread_mutex_unlock(&(event_flag->mutex));
+
+    pthread_mutex_destroy(&(event_flag->mutex));
+    pthread_cond_destroy(&(event_flag->cond));
+    return 0;
+}
+
+int set_event_flag(EFLAG *event_flag, uint32_t flag_value) {
+    if (event_flag == NULL) return 1;
+    pthread_mutex_lock(&(event_flag->mutex));
+    event_flag->event_flag = flag_value;
+    pthread_cond_broadcast(&(event_flag->cond));
+    pthread_mutex_unlock(&(event_flag->mutex));
+    return 0;
+}
+
+int reset_event_flag(EFLAG *event_flag) {
+    if (event_flag == NULL) return 1;
+    pthread_mutex_lock(&(event_flag->mutex));
+    event_flag->event_flag = 0;
+    pthread_mutex_unlock(&(event_flag->mutex));
+    return 0;
+}
