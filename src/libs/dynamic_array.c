@@ -17,6 +17,7 @@ int dyn_array_init(dyn_array *array, const size_t sizeofelement) {
 }
 
 void dyn_array_destroy(dyn_array *array) {
+    if (array == NULL) return;
     pthread_mutex_destroy(&(array->mutex));
     free(array->array);
 }
@@ -109,6 +110,7 @@ int dyn_array_set(dyn_array *array,const size_t index,const void *element) {
 }
 
 void dyn_array_clear(dyn_array *array) {
+    if (array == NULL) return;
     pthread_mutex_lock(&(array->mutex));
     free(array->array);
     array->array = NULL;
@@ -117,6 +119,7 @@ void dyn_array_clear(dyn_array *array) {
 }
 
 size_t dyn_array_get_size(dyn_array *array) {
+    if (array == NULL) return 0;
     size_t size;
     pthread_mutex_lock(&(array->mutex));
     size = array->size;

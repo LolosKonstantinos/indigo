@@ -320,15 +320,18 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
         if (buf->buf == NULL) {
             perror("malloc() failed in send_discovery_packet");
             pthread_mutex_unlock(&sockets->mutex);
+            free(buf);
             goto cleanup;
         }
         buf->len = sizeof(DISCV_PAC);
 
-        //allocate for the number of bytes transfered
+        //allocate for the number of bytes transferred
         numofbytes = malloc(sizeof(DWORD));
         if (numofbytes == NULL) {
             perror("malloc() failed in send_discovery_packet");
             pthread_mutex_unlock(&sockets->mutex);
+            free(buf->buf);
+            free(buf);
             goto cleanup;
         }
         //allocate the sockaddr_in
@@ -336,6 +339,9 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
         if (dest == NULL) {
             perror("malloc() failed in send_discovery_packet");
             pthread_mutex_unlock(&sockets->mutex);
+            free(numofbytes);
+            free(buf->buf);
+            free(buf);
             goto cleanup;
         }
         //allocate the overlapped structure
@@ -343,12 +349,21 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
         if (overlapped == NULL) {
             perror("malloc() failed in send_discovery_packet");
             pthread_mutex_unlock(&sockets->mutex);
+            free(dest);
+            free(numofbytes);
+            free(buf->buf);
+            free(buf);
             goto cleanup;
         }
         overlapped->hEvent = WSACreateEvent();
         if (overlapped->hEvent == INVALID_HANDLE_VALUE) {
             fprintf(stderr, "WSACreateEvent() failed in send_discovery_packet: %d\n",WSAGetLastError());
             pthread_mutex_unlock(&sockets->mutex);
+            free(overlapped);
+            free(dest);
+            free(numofbytes);
+            free(buf->buf);
+            free(buf);
             goto cleanup;
         }
 
@@ -465,7 +480,6 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
                 if (WSAGetLastError() != WSA_IO_PENDING) {
                     //todo: there are errors related to connectivity and are not fault of the programmer, address them later
                     fprintf(stderr, "WSASendTo() failed in send_discovery_packet: %d\n", WSAGetLastError());
-                    pthread_mutex_unlock(&sockets->mutex);
                     goto cleanup;
                 }
             }
@@ -523,15 +537,27 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
         }
     }
 
-    return 0;
-
-    cleanup:
-    //free the dynamic array and its contents
     temp = info_array.array;
     for (size_t i = 0; i < dyn_array_get_size(&info_array); i++) {
         free_send_info(&temp[i]);
     }
     dyn_array_destroy(&info_array);
+
+    free(handles);
+
+    return 0;
+
+    cleanup:
+
+    //free the dynamic array and its contents
+    temp = info_array.array;
+    if (temp != NULL){
+        for (size_t i = 0; i < dyn_array_get_size(&info_array); i++) {
+            free_send_info(&temp[i]);
+        }
+    }
+    dyn_array_destroy(&info_array);
+    free(handles);
 
     flag_val = get_event_flag(flag);
     if ((flag_val & EF_OVERRIDE_IO) || (flag_val & EF_TERMINATION)) return -1;
@@ -544,7 +570,7 @@ int receive_discv_packet(SOCKET socket, RECV_INFO *info) {
     int *fromLen = NULL;
     WSABUF *buf = NULL;
     OVERLAPPED *overlapped = NULL;
-    RECV_INFO *recv_data = NULL;
+    //RECV_INFO *recv_data = NULL;
     DWORD *flags = NULL, *bytes_recv = NULL;
     int retVal;
 
@@ -760,19 +786,19 @@ int receive_discv_packet(SOCKET socket, RECV_INFO *info) {
 // }
 
 void *recv_discovery_thread(void *arg) {
-
+    return NULL;
 }
 
 void *overlapped_io_handler_thread(void *arg) {
-
+    return NULL;
 }
 
 void *interface_updater_thread(void *arg) {
-
+    return NULL;
 }
 
 void *discovery_manager_thread(void *arg) {
-
+    return NULL;
 }
 
 
