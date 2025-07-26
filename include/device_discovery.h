@@ -102,8 +102,16 @@ typedef struct RECV_INFO {
     OVERLAPPED *overlapped;
     DWORD *flags;
     DWORD *bytes_recv;
+
     SOCKET socket;
+    HANDLE *handles;
+    size_t hCount;
 }RECV_INFO;
+
+typedef struct RECV_INFO_ARRAY {
+    RECV_INFO *head;
+    size_t size;
+} RECV_INFO_ARRAY, RECV_ARRAY;
 
 typedef struct SEND_INFO {
     struct sockaddr_in *dest;
@@ -119,6 +127,7 @@ typedef struct SEND_INFO {
 #define EF_NEW_DEVICE 0x00000008
 #define EF_TERMINATION 0x00000010
 #define EF_OVERRIDE_IO 0x00000020
+#define EF_WAKE_MANAGER 0x00000040
 
 typedef struct EVENT_FLAG {
     volatile uint32_t event_flag;
@@ -129,9 +138,22 @@ typedef struct EVENT_FLAG {
 typedef struct SEND_ARGS {
     int port;
     uint32_t multicast_addr;
-    EFLAG flag;
+    EFLAG *flag;
+    EFLAG *wake;
     SOCKET_LL *sockets;
 }SEND_ARGS;
+
+typedef struct RECV_ARGS {
+
+}RECV_ARGS;
+
+typedef struct INTERFACE_UPDATE_ARGS {
+    EFLAG *flag;
+    EFLAG *wake;
+    HANDLE termination_handle;
+}INTERFACE_UPDATE_ARGS;
+
+
 ///////////////////////////////////
 //                               //
 //     GET_DISCOVERY_SOCKETS     //
@@ -142,6 +164,7 @@ typedef struct SEND_ARGS {
 SOCKET_NODE *get_discovery_sockets(int port, uint32_t multicast_addr);
 //free the sockets linked list
 void free_discv_sock_ll(SOCKET_NODE *firstnode);
+
 
 /////////////////////////////////////////////
 ///                                       ///
@@ -158,6 +181,7 @@ uint32_t sub_mask_8to32b(uint8_t mask_8b);
 uint8_t ips_share_subnet(IP_SUBNET addr1, IP_SUBNET addr2);
 uint8_t ip_in_any_subnet(IP_SUBNET addr, const IP_SUBNET *p_addrs, size_t num_addrs);
 
+
 //////////////////////////////////////////////////////
 ///                                                ///
 ///                  IO_FUNCTIONS                  ///
@@ -165,7 +189,23 @@ uint8_t ip_in_any_subnet(IP_SUBNET addr, const IP_SUBNET *p_addrs, size_t num_ad
 //////////////////////////////////////////////////////
 
 int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets, EFLAG *flag, uint32_t pCount, int32_t msec);
-int receive_discv_packet(SOCKET socket, RECV_INFO *info);
+int register_single_discovery_receiver(SOCKET sock, RECV_INFO **info);
+int register_multiple_discovery_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, EFLAG *flag);
+
+
+/////////////////////////////////////////////////////////////
+///                                                       ///
+///                  IO_HELPER_FUNCTIONS                  ///
+///                                                       ///
+/////////////////////////////////////////////////////////////
+
+void prep_discovery_packet(DISCV_PAC *packet, const unsigned pac_type);
+int create_handle_array_from_send_info(const SEND_INFO *info, size_t infolen, HANDLE **handles, size_t *hCount);
+int create_handle_array_from_recv_info(dyn_array *info, HANDLE **handles, size_t *hCount);
+void free_send_info(const SEND_INFO *info);
+int allocate_recv_info(RECV_INFO **info);
+int allocate_recv_info_fields(RECV_INFO *info);
+void free_recv_info(const RECV_INFO *info);
 
 //////////////////////////////////////////////////////////
 ///                                                    ///
@@ -186,12 +226,8 @@ void *discovery_manager_thread(void *arg);
 ///                                                              ///
 ////////////////////////////////////////////////////////////////////
 
+void print_discovered_device_info(const DISCOVERED_DEVICE *dev, FILE *stream);
 
-void prep_discovery_packet(DISCV_PAC *packet, const unsigned pac_type);
-void print_discovered_device_info(DISCOVERED_DEVICE *dev, FILE *stream);
-int create_handle_array_from_send_info(dyn_array *info, HANDLE **handles, size_t *hCount);
-int create_handle_array_from_recv_info(dyn_array *info, HANDLE **handles, size_t *hCount);
-void free_send_info(SEND_INFO *info);
 
 //////////////////////////////////////////////////////////////
 ///                                                        ///
