@@ -245,6 +245,7 @@ int destroy_event_flag(EFLAG *event_flag);
 int set_event_flag(EFLAG *event_flag, uint32_t flag_value);
 int update_event_flag(EFLAG *event_flag, uint32_t flag_value);
 int reset_event_flag(EFLAG *event_flag);
+int reset_single_event(EFLAG *event_flag, uint32_t flag_value);
 uint32_t get_event_flag(EFLAG *event_flag);
 uint8_t termination_is_on(EFLAG *event_flag);
 

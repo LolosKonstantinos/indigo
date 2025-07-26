@@ -301,12 +301,15 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
     DISCV_PAC packet;
     prep_discovery_packet(&packet, MSG_INIT_PAC);
 
+    int routine_ret = 0;
+
     pthread_mutex_lock(&sockets->mutex);
     for (SOCKET_NODE *sock = sockets->head; sock != NULL; sock = sock->next){
         temp = calloc(1,sizeof(struct sockaddr_in));
         if (temp == NULL) {
             fprintf(stderr, "malloc() failed in send_discovery_packets()\n");
             pthread_mutex_unlock(&sockets->mutex);
+            routine_ret = DDTS_MEMORY_ERROR;
             goto cleanup;
         }
         temp_info.dest = temp;
@@ -319,6 +322,7 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
         if (temp == NULL) {
             fprintf(stderr, "malloc() failed in send_discovery_packets()\n");
             pthread_mutex_unlock(&sockets->mutex);
+            routine_ret = DDTS_MEMORY_ERROR;
             goto cleanup;
         }
         temp_info.buf = temp;
@@ -328,6 +332,7 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
         if (temp == NULL) {
             fprintf(stderr, "malloc() failed in send_discovery_packets()\n");
             pthread_mutex_unlock(&sockets->mutex);
+            routine_ret = DDTS_MEMORY_ERROR;
             goto cleanup;
         }
         temp_info.buf->buf = temp;
@@ -338,6 +343,7 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
         if (temp == NULL) {
             fprintf(stderr, "malloc() failed in send_discovery_packets()\n");
             pthread_mutex_unlock(&sockets->mutex);
+            routine_ret = DDTS_MEMORY_ERROR;
             goto cleanup;
         }
         temp_info.overlapped = temp;
@@ -345,6 +351,7 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
         if (temp_info.overlapped->hEvent == INVALID_HANDLE_VALUE) {
             fprintf(stderr, "WSACreateEvent() failed in send_discovery_packets()\n");
             pthread_mutex_unlock(&sockets->mutex);
+            routine_ret = DDTS_WINLIB_ERROR;
             goto cleanup;
         }
 
@@ -352,6 +359,7 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
         if (temp == NULL) {
             fprintf(stderr, "malloc() failed in send_discovery_packets()\n");
             pthread_mutex_unlock(&sockets->mutex);
+            routine_ret = DDTS_MEMORY_ERROR;
             goto cleanup;
         }
         temp_info.bytes = temp;
@@ -362,6 +370,7 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
         if (temp == NULL) {
             fprintf(stderr, "realloc() failed in send_discovery_packets()\n");
             pthread_mutex_unlock(&sockets->mutex);
+            routine_ret = DDTS_MEMORY_ERROR;
             goto cleanup;
         }
         sInfo = temp;
@@ -386,6 +395,7 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
             if (WSAGetLastError() != WSA_IO_PENDING) {
                 fprintf(stderr, "WSASendTo() failed in send_discovery_packets(): %d\n",WSAGetLastError());
                 pthread_mutex_unlock(&sockets->mutex);
+                routine_ret = DDTS_WINLIB_ERROR;
                 goto cleanup;
             }
         }
@@ -415,6 +425,7 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
     wait_ret = WSAWaitForMultipleEvents(hCount,handles,TRUE,100, FALSE);
     if (wait_ret == WSA_WAIT_FAILED) {
         fprintf(stderr, "WaitForMultipleObjects() failed in send_discovery_packets(): %d\n", WSAGetLastError());
+        routine_ret = DDTS_WINLIB_ERROR ;
         goto cleanup;
     }
     if (wait_ret == WSA_WAIT_TIMEOUT) {
@@ -452,6 +463,8 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
                 if (WSAGetLastError() != WSA_IO_PENDING) {
                     fprintf(stderr, "WSASendTo() failed in send_discovery_packets(): %d\n",WSAGetLastError());
                     pthread_mutex_unlock(&sockets->mutex);
+
+                    routine_ret = DDTS_WINLIB_ERROR;
                     goto cleanup;
                 }
             }
@@ -474,12 +487,14 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
 
         if(create_handle_array_from_send_info(sInfo, infolen, &handles, &hCount)) {
             fprintf(stderr, "create_handle_array_from_send_info() failed in send_discovery_packets()\n");
+            routine_ret = DDTS_MEMORY_ERROR;
             goto cleanup;
         }
 
         wait_ret = WSAWaitForMultipleEvents(hCount,handles,TRUE,100, FALSE);
         if (wait_ret == WSA_WAIT_FAILED) {
             fprintf(stderr, "WaitForMultipleObjects() failed in send_discovery_packets(): %d\n", WSAGetLastError());
+            routine_ret = DDTS_WINLIB_ERROR;
             goto cleanup;
         }
         if (wait_ret == WSA_WAIT_TIMEOUT) {
@@ -489,6 +504,7 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
 
                 if (wait_ret == WAIT_FAILED) {
                     fprintf(stderr, "WaitForSingleObject() failed in send_discovery_packets(): %d\n", WSAGetLastError());
+                    routine_ret = DDTS_WINLIB_ERROR;
                     goto cleanup;
                 }
 
@@ -508,12 +524,16 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
     return 0;
 
     cleanup:
+
+    flag_val = get_event_flag(flag);
+    if (flag_val & EF_OVERRIDE_IO || flag_val & EF_TERMINATION) return -1;
+
     free_send_info(&temp_info);
     for (size_t i = 0; i < infolen; i++) {
         free_send_info(&sInfo[i]);
     }
     free(handles);
-    return 1;
+    return routine_ret;
 }
 
 int register_single_discovery_receiver(SOCKET sock, RECV_INFO **info) {
@@ -974,8 +994,151 @@ void free_recv_info(const RECV_INFO *info) {
 //////////////////////////////////////////////////////////
 
 void *send_discovery_thread(void *arg) {
+    SEND_ARGS *args = arg;
+    uint32_t flag_val;
+    struct timespec ts;
+    int ret;
+    int *process_return = NULL;
 
-    return NULL;
+    //allocate memory for the return value
+    process_return = malloc(sizeof(uint8_t));
+    if (process_return == NULL) {
+        set_event_flag(args->flag,EF_TERMINATION);
+        set_event_flag(args->wake, EF_WAKE_MANAGER);
+        free(arg);
+        return NULL;
+    }
+    *process_return = 0;
+
+    //send a packet burst when a device discovery operation starts
+    ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,3,150);
+    if (ret > 0) {
+        set_event_flag(args->flag,EF_TERMINATION);
+        set_event_flag(args->wake, EF_WAKE_MANAGER);
+        *process_return = ret;
+        free(arg);
+        return process_return;
+    }
+    //returns -1 when we get an overide excecution or
+    if (ret == -1) {
+        flag_val = get_event_flag(args->flag);
+        if(flag_val & EF_TERMINATION){
+            free(arg);
+            *process_return = 0;
+            return process_return;
+        }
+        if (flag_val & EF_OVERRIDE_IO) {
+            reset_single_event(args->flag,EF_OVERRIDE_IO);
+            Sleep(1);
+        } //sleep for 1 ms to make sure the sockets are updated
+    }
+
+    //the main loop
+    while (!termination_is_on(args->flag)) {
+        ///////////////////////////////////
+        ///  phase 1: check for events  ///
+        ///////////////////////////////////
+
+        flag_val = get_event_flag(args->flag);
+
+        if (flag_val & EF_OVERRIDE_IO) {
+
+            reset_single_event(args->flag,EF_OVERRIDE_IO);
+            Sleep(1);
+        } //sleep for 1 ms to make sure the sockets are updated
+
+        else if (flag_val & EF_SEND_MULTIPLE_PACKETS) {
+
+            reset_single_event(args->flag,EF_SEND_MULTIPLE_PACKETS);
+
+            ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,3,150);
+            if (ret > 0) {
+                set_event_flag(args->flag,EF_TERMINATION);
+                set_event_flag(args->wake, EF_WAKE_MANAGER);
+                *process_return = ret;
+                free(arg);
+                return process_return;
+            }
+            //returns -1 when we get an override excecution or termination event
+            if (ret == -1) {
+                flag_val = get_event_flag(args->flag);
+                if(flag_val & EF_TERMINATION){
+                    free(arg);
+                    *process_return = 0;
+                    return process_return;
+                }
+                if (flag_val & EF_OVERRIDE_IO) {
+                    reset_single_event(args->flag,EF_OVERRIDE_IO);
+                    Sleep(1);
+                } //sleep for 1 ms to make sure the sockets are updated
+            }
+        }//we don't care about other events, if they are there we shouldn't get them anyway
+
+
+        ////////////////////////////////
+        ///  phase 2: send a packet  ///
+        ////////////////////////////////
+
+
+        ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,1,0);
+        if (ret > 0) {
+            set_event_flag(args->flag,EF_TERMINATION);
+            set_event_flag(args->wake, EF_WAKE_MANAGER);
+            *process_return = ret;
+            free(arg);
+            return process_return;
+        }
+        //returns -1 when we get an override excecution or termination event
+        if (ret == -1) {
+            flag_val = get_event_flag(args->flag);
+            if(flag_val & EF_TERMINATION){
+                free(arg);
+                *process_return = 0;
+                return process_return;
+            }
+            if (flag_val & EF_OVERRIDE_IO) {
+                reset_single_event(args->flag,EF_OVERRIDE_IO);
+                Sleep(1);
+            } //sleep for 1 ms to make sure the sockets are updated
+        }
+
+        /////////////////////////////////////////////////
+        ///  phase 3: wait and check for termination  ///
+        /////////////////////////////////////////////////
+
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_sec += 25;
+
+        pthread_mutex_lock(&(args->flag->mutex));
+        if (args->flag->event_flag & EF_TERMINATION) {
+            free(arg);
+            *process_return = 0;
+            break;
+        }
+        ret = 0;
+        while ((ret == 0) && (!(args->flag->event_flag & EF_TERMINATION))) {
+            ret = pthread_cond_timedwait(&(args->flag->cond), &(args->flag->mutex), &ts);
+
+            if ((ret != ETIMEDOUT) && (ret != 0)) {
+                fprintf(stderr, "pthread_cond_timedwait() failed in device_discovery_sending\n");
+                set_event_flag(args->flag, EF_TERMINATION);
+                set_event_flag(args->wake,EF_WAKE_MANAGER);
+                pthread_mutex_unlock(&(args->flag->mutex));
+                *process_return = DDTS_BUG;
+                return process_return;
+            }
+            if (ret == 0) {
+                if (args->flag->event_flag & EF_TERMINATION) {
+                    pthread_mutex_unlock(&(args->flag->mutex));
+                    free(arg);
+                    *process_return = 0;
+                    return process_return;
+                }
+            }
+        }
+        pthread_mutex_unlock(&(args->flag->mutex));
+    }
+    return process_return;
 }
 
 void *recv_discovery_thread(void *arg) {
@@ -1200,6 +1363,14 @@ int reset_event_flag(EFLAG *event_flag) {
     if (event_flag == NULL) return 1;
     pthread_mutex_lock(&(event_flag->mutex));
     event_flag->event_flag = 0;
+    pthread_mutex_unlock(&(event_flag->mutex));
+    return 0;
+}
+
+int reset_single_event(EFLAG *event_flag, uint32_t flag_value) {
+    if (event_flag == NULL) return 1;
+    pthread_mutex_lock(&(event_flag->mutex));
+    event_flag->event_flag &= (!flag_value);
     pthread_mutex_unlock(&(event_flag->mutex));
     return 0;
 }
