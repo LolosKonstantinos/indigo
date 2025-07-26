@@ -518,7 +518,6 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
 
 int register_single_discovery_receiver(SOCKET sock, RECV_INFO **info) {
     RECV_INFO *temp_info;
-    void *temp;
 
     int recv_ret;
 
@@ -597,7 +596,12 @@ int register_multiple_discovery_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, 
 
         if (allocate_recv_info_fields(info->head + info->size)) {
             fprintf(stderr, "allocate_recv_info_fields() failed in register_multiple_discovery_receivers()\n");
-            realloc(info->head, (info->size) * sizeof(RECV_INFO)); // we decrease the size by one
+            temp = realloc(info->head, (info->size) * sizeof(RECV_INFO)); // we decrease the size by one
+            if (temp == NULL) {
+                fprintf(stderr, "realloc() failed in register_multiple_discovery_receivers()\n");
+                return 1;
+            }
+            info->head = temp;
             return 1;
         }
 
