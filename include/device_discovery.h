@@ -5,6 +5,11 @@
 #ifndef NETWERK_DEVICE_DISCOVERY_H
 #define NETWERK_DEVICE_DISCOVERY_H
 
+#define ON 1
+#define OFF 0
+
+#define DEVICE_TIME_UNTIL_DISCONNECTED 90
+
 //for TCP/IP communication (not for device discovery)
 #define TCP_PORT 57362
 
@@ -95,6 +100,17 @@ typedef struct DISCOVERED_DEVICE {
     uint8_t mac_address_len;
 }DISCOVERED_DEVICE;
 
+typedef struct DISCOVERED_DEVICE_NODE {
+    DISCOVERED_DEVICE device;
+    struct DISCOVERED_DEVICE_NODE *next;
+}DISCOVERED_DEVICE_NODE, DEVICE_NODE;
+
+typedef struct DISCOVERED_DEVICE_LIST {
+    DEVICE_NODE *head;
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+}DISCOVERED_DEVICE_LIST, DEVICE_LIST;
+
 typedef struct RECV_INFO {
     struct sockaddr *source;
     int *fromLen;
@@ -104,8 +120,6 @@ typedef struct RECV_INFO {
     DWORD *bytes_recv;
 
     SOCKET socket;
-    HANDLE *handles;
-    size_t hCount;
 }RECV_INFO;
 
 typedef struct RECV_INFO_ARRAY {
@@ -144,14 +158,29 @@ typedef struct SEND_ARGS {
 }SEND_ARGS;
 
 typedef struct RECV_ARGS {
-
+    QUEUE *queue;
+    SOCKET_LL *sockets;
+    EFLAG *flag;
+    EFLAG *wake;
+    HANDLE termination_handle;
+    HANDLE wake_handle;
 }RECV_ARGS;
 
 typedef struct INTERFACE_UPDATE_ARGS {
     EFLAG *flag;
     EFLAG *wake;
     HANDLE termination_handle;
+    SOCKET_LL *sockets;
+    int port;
+    uint32_t multicast_addr;
 }INTERFACE_UPDATE_ARGS;
+
+typedef struct PACKET_HANDLER_ARGS {
+    EFLAG *flag;
+    EFLAG *wake;
+    QUEUE *queue;
+    DEVICE_LIST *devices;
+}PACKET_HANDLER_ARGS;
 
 
 ///////////////////////////////////
@@ -201,7 +230,6 @@ int register_multiple_discovery_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, 
 
 void prep_discovery_packet(DISCV_PAC *packet, const unsigned pac_type);
 int create_handle_array_from_send_info(const SEND_INFO *info, size_t infolen, HANDLE **handles, size_t *hCount);
-int create_handle_array_from_recv_info(dyn_array *info, HANDLE **handles, size_t *hCount);
 void free_send_info(const SEND_INFO *info);
 int allocate_recv_info(RECV_INFO **info);
 int allocate_recv_info_fields(RECV_INFO *info);
@@ -215,10 +243,19 @@ void free_recv_info(const RECV_INFO *info);
 
 void *send_discovery_thread(void *arg);
 void *recv_discovery_thread(void *arg);
-void *overlapped_io_handler_thread(void *arg);
+void *discovery_packet_handler_thread(void *arg);
 void *interface_updater_thread(void *arg);
 void *discovery_manager_thread(void *arg);
 
+
+/////////////////////////////////////////////////////////////////
+///                                                           ///
+///                  THREAD_FUNCTION_HELPERS                  ///
+///                                                           ///
+/////////////////////////////////////////////////////////////////
+
+int create_handle_array_from_recv_info(const RECV_ARRAY *info, HANDLE **handles, size_t *hCount);
+void free_recv_array(const RECV_ARRAY *info);
 
 ////////////////////////////////////////////////////////////////////
 ///                                                              ///
@@ -248,5 +285,18 @@ int reset_event_flag(EFLAG *event_flag);
 int reset_single_event(EFLAG *event_flag, uint32_t flag_value);
 uint32_t get_event_flag(EFLAG *event_flag);
 uint8_t termination_is_on(EFLAG *event_flag);
+//conditions
+void wait_on_flag_condition(EFLAG *flag, uint32_t flag_value, uint8_t status);
+
+//////////////////////////////////////////////////////////////
+///                                                        ///
+///                  DEVICE_LL_UTILITIES                   ///
+///                                                        ///
+//////////////////////////////////////////////////////////////
+
+//they are thread unsafe, first lock the mutex and then use
+
+int remove_device(DEVICE_LIST *devices, DISCOVERED_DEVICE *dev);
+DEVICE_NODE *device_exists(const DEVICE_LIST *devices, const DISCOVERED_DEVICE *dev);
 
 #endif //NETWERK_DEVICE_DISCOVERY_H
