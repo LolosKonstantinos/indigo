@@ -1371,6 +1371,7 @@ void *discovery_packet_handler_thread(void *arg) {
     PULONG p_mac_address_len = &mac_address_len;
 
     time_t curr_time;
+    struct timespec ts;
 
     DEVICE_NODE device, *temp_dev, *found_dev;
 
@@ -1481,6 +1482,18 @@ void *discovery_packet_handler_thread(void *arg) {
             }
         }
         pthread_mutex_unlock(&(args->devices->mutex));
+
+        /////////////////////////////////////////////
+        ///  phase 3: wait a little and go again  ///
+        /////////////////////////////////////////////
+
+        clock_gettime(CLOCK_REALTIME,&ts);
+        ts.tv_sec +=1;
+
+        pthread_mutex_lock(&args->flag->mutex);
+        pthread_cond_timedwait(&args->flag->cond,&args->flag->mutex,&ts);
+        pthread_mutex_unlock(&args->flag->mutex);
+
     }
     free(arg);
     return process_return;
@@ -1546,6 +1559,7 @@ void *interface_updater_thread(void *arg) {
         return process_return;
     }
 
+    //the main loop
     while (!termination_is_on(args->flag)) {
         //the function blocks here and waits for an event
         retVal = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
@@ -1563,7 +1577,7 @@ void *interface_updater_thread(void *arg) {
         //check which event was signalled
         if (retVal - WAIT_OBJECT_0 == 1) {
             //interface update
-            set_event_flag(args->flag, EF_INTERFACE_UPDATE);
+            set_event_flag(args->flag, EF_INTERFACE_UPDATE | EF_OVERRIDE_IO);
             set_event_flag(args->wake, EF_WAKE_MANAGER);
             WSAResetEvent(overlapped.hEvent);
 
@@ -1579,6 +1593,7 @@ void *interface_updater_thread(void *arg) {
                 return process_return;
             }
             pthread_mutex_unlock(&(args->sockets->mutex));
+            reset_single_event(args->flag, EF_OVERRIDE_IO);
         }
         else if (retVal - WAIT_OBJECT_0 == 0) {
             //termination event
@@ -1605,8 +1620,198 @@ void *interface_updater_thread(void *arg) {
 }
 
 void *discovery_manager_thread(void *arg) {
-    return NULL;
+    MANAGER_ARGS *args = arg;
+
+    int *process_return = NULL;
+
+    //allocate memory for the return value
+    process_return = malloc(sizeof(uint8_t));
+    if (process_return == NULL) {
+        set_event_flag(args->flag,EF_TERMINATION);
+        free(arg);
+        return NULL;
+    }
+    *process_return = 0;
+    return process_return;
+
+    cleanup:
+    return process_return;
 }
+
+
+///////////////////////////////////////////////////////////////////
+///                                                             ///
+///                  THREAD_CREATING_FUNCTIONS                  ///
+///                                                             ///
+///////////////////////////////////////////////////////////////////
+
+int init_device_discovery_threads(int port) {
+    return 0;
+}
+
+int create_device_discovery_manager_thread(MANAGER_ARGS *args, pthread_t *tid){
+    return 0;
+}
+
+int create_discovery_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, SOCKET_LL *sockets, EFLAG *wake_mngr, pthread_t *tid){
+    pthread_t thread;
+
+    SEND_ARGS *send_args = malloc(sizeof(SEND_ARGS));
+    if (send_args == NULL) {
+        fprintf(stderr, "malloc() failed in create_discovery_sending_thread\n");
+        return 1;
+    }
+    *args = send_args;
+
+
+    EFLAG *flag = create_event_flag();
+    if (flag == NULL) {
+        fprintf(stderr,"create_event_flag() failed in create_discovery_sending_thread\n");
+        free(send_args);
+        return 1;
+    }
+
+    send_args->port = port;
+    send_args->multicast_addr = multicast_address;
+    send_args->sockets = sockets;
+    send_args->wake = wake_mngr;
+    send_args->flag = flag;
+
+    if (pthread_create(&thread, NULL, (void *)(&send_discovery_thread), args)) {
+        free_event_flag(flag);
+        free(args);
+        return 1;
+    }
+
+    *tid = thread;
+
+    return 0;
+}
+
+int create_discovery_receiving_thread(RECV_ARGS **args, SOCKET_LL *sockets, QUEUE *queue, EFLAG *wake_mngr, pthread_t *tid){
+    pthread_t thread;
+
+    RECV_ARGS *recv_args = malloc(sizeof(SEND_ARGS));
+    if (recv_args == NULL) {
+        fprintf(stderr, "malloc() failed in create_discovery_sending_thread\n");
+        return 1;
+    }
+    *args = recv_args;
+
+
+    EFLAG *flag = create_event_flag();
+    if (flag == NULL) {
+        fprintf(stderr,"create_event_flag() failed in create_discovery_sending_thread\n");
+        free(recv_args);
+        return 1;
+    }
+
+
+    recv_args->wake_handle = WSACreateEvent();
+    if (recv_args->wake_handle == NULL) {
+        fprintf(stderr, "WSACreateEvent() failed in create_discovery_sending_thread\n");
+        free_event_flag(flag);
+        free(recv_args);
+        return 1;
+    }
+
+    recv_args->termination_handle = WSACreateEvent();
+    if (recv_args->termination_handle == NULL) {
+        fprintf(stderr, "WSACreateEvent() failed in create_discovery_receiving_thread\n");
+        free_event_flag(flag);
+        WSACloseEvent(recv_args->wake_handle);
+        free(recv_args);
+    }
+
+    recv_args->queue = queue;
+    recv_args->sockets = sockets;
+    recv_args->wake = wake_mngr;
+    recv_args->flag = flag;
+
+    if (pthread_create(&thread, NULL, (void *)(&recv_discovery_thread), *args)) {
+        free_event_flag(flag);
+        free(recv_args);
+        return 1;
+    }
+
+    *tid = thread;
+
+    return 0;
+}
+
+int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint32_t multicast_address, EFLAG *wake_mngr, SOCKET_LL *sockets, pthread_t *tid){
+    pthread_t thread;
+
+    INTERFACE_UPDATE_ARGS *update_args = malloc(sizeof(INTERFACE_UPDATE_ARGS));
+    if (update_args == NULL) {
+        fprintf(stderr, "malloc() failed in create_interface_updater_thread\n");
+        return 1;
+    }
+    *args = update_args;
+
+    EFLAG *flag = create_event_flag();
+    if (flag == NULL) {
+        fprintf(stderr,"create_event_flag() failed in create_interface_updater_thread\n");
+        free(update_args);
+        return 1;
+    }
+
+    update_args->termination_handle = WSACreateEvent();
+    if (update_args->termination_handle == NULL) {
+        fprintf(stderr, "WSACreateEvent() failed in create_interface_updater_thread\n");
+        free_event_flag(flag);
+        free(update_args);
+        return 1;
+    }
+
+    update_args->port = port;
+    update_args->multicast_addr = multicast_address;
+    update_args->sockets = sockets;
+    update_args->wake = wake_mngr;
+    update_args->flag = flag;
+
+    if (pthread_create(&thread, NULL, (void *)(&interface_updater_thread), *args)) {
+        free_event_flag(flag);
+        free(update_args);
+        return 1;
+    }
+
+    *tid = thread;
+    return 0;
+}
+
+int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, DEVICE_LIST *dev_list, pthread_t *tid){
+    pthread_t thread;
+
+    PACKET_HANDLER_ARGS *handler_args = malloc(sizeof(INTERFACE_UPDATE_ARGS));
+    if (handler_args == NULL) {
+        fprintf(stderr, "malloc() failed in create_interface_updater_thread\n");
+        return 1;
+    }
+    *args = handler_args;
+
+    EFLAG *flag = create_event_flag();
+    if (flag == NULL) {
+        fprintf(stderr,"create_event_flag() failed in create_interface_updater_thread\n");
+        free(handler_args);
+        return 1;
+    }
+
+    handler_args->queue = queue;
+    handler_args->devices = dev_list;
+    handler_args->wake = wake_mngr;
+    handler_args->flag = flag;
+
+    if (pthread_create(&thread, NULL, (void *)(&discovery_packet_handler_thread), *args)) {
+        free_event_flag(flag);
+        free(handler_args);
+        return 1;
+    }
+
+    *tid = thread;
+    return 0;
+}
+
 
 /////////////////////////////////////////////////////////////////
 ///                                                           ///
@@ -1743,6 +1948,7 @@ int reset_event_flag(EFLAG *event_flag) {
     if (event_flag == NULL) return 1;
     pthread_mutex_lock(&(event_flag->mutex));
     event_flag->event_flag = 0;
+    pthread_cond_broadcast(&(event_flag->cond));
     pthread_mutex_unlock(&(event_flag->mutex));
     return 0;
 }
@@ -1751,6 +1957,7 @@ int reset_single_event(EFLAG *event_flag, uint32_t flag_value) {
     if (event_flag == NULL) return 1;
     pthread_mutex_lock(&(event_flag->mutex));
     event_flag->event_flag &= (!flag_value);
+    pthread_cond_broadcast(&(event_flag->cond));
     pthread_mutex_unlock(&(event_flag->mutex));
     return 0;
 }

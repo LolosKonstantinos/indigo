@@ -182,6 +182,14 @@ typedef struct PACKET_HANDLER_ARGS {
     DEVICE_LIST *devices;
 }PACKET_HANDLER_ARGS;
 
+typedef struct MANAGER_ARGS {
+    int port;
+    uint32_t multicast_addr;
+    EFLAG *flag;
+    DEVICE_LIST *devices;
+
+}MANAGER_ARGS;
+
 
 ///////////////////////////////////
 //                               //
@@ -247,6 +255,19 @@ void *discovery_packet_handler_thread(void *arg);
 void *interface_updater_thread(void *arg);
 void *discovery_manager_thread(void *arg);
 
+
+///////////////////////////////////////////////////////////////////
+///                                                             ///
+///                  THREAD_CREATING_FUNCTIONS                  ///
+///                                                             ///
+///////////////////////////////////////////////////////////////////
+
+int init_device_discovery_threads(int port);
+int create_device_discovery_manager_thread(MANAGER_ARGS *args, pthread_t *tid);
+int create_discovery_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, SOCKET_LL *sockets, EFLAG *wake_mngr, pthread_t *tid);
+int create_discovery_receiving_thread(RECV_ARGS **args, SOCKET_LL *sockets, QUEUE *queue, EFLAG *wake_mngr, pthread_t *tid);
+int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint32_t multicast_address, EFLAG *wake_mngr, SOCKET_LL *sockets, pthread_t *tid);
+int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, DEVICE_LIST *dev_list, pthread_t *tid);
 
 /////////////////////////////////////////////////////////////////
 ///                                                           ///
