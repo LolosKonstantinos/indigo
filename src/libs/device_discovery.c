@@ -11,7 +11,7 @@
  *Priority is given to IPs of ethernet adapters over wi-fi adapters
  *returns a pointer to the first node else returns NULL
  */
-SOCKET_NODE *get_discovery_sockets(int port, uint32_t multicast_addr) {
+SOCKET_NODE *get_discovery_sockets(const int port, const uint32_t multicast_addr) {
     SOCKET_NODE *new_sock = NULL, *first_sock = NULL, *temp_sock = NULL;
     IP_SUBNET *p_ip_subnet = NULL;
     size_t addr_count = 0;
@@ -282,7 +282,8 @@ uint8_t ip_in_any_subnet(const IP_SUBNET addr, const IP_SUBNET *p_addrs, const s
 //////////////////////////////////////////////////////
 
 
-int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets, EFLAG *flag, uint32_t pCount, int32_t msec) {
+int send_discovery_packets(const int port, const uint32_t multicast_addr, SOCKET_LL *sockets, EFLAG *flag, const uint32_t pCount, const int32_t
+                           msec) {
     //temporary variables for memory allocation
     SEND_INFO temp_info = {0}, *sInfo = NULL;
     size_t infolen = 0;
@@ -386,7 +387,7 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
                     free_send_info(&sInfo[i]);
                 }
                 free(handles);
-                wait_on_flag_condition(flag,EF_OVERRIDE_IO,OFF);
+                wait_on_flag_condition(flag, EF_OVERRIDE_IO, OFF);
                 break;
             }
             if (flag_val & EF_TERMINATION) goto cleanup;
@@ -417,7 +418,7 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
             for (size_t i = 0; i < infolen; i++) {
                 free_send_info(&sInfo[i]);
             }
-            wait_on_flag_condition(flag,EF_OVERRIDE_IO,OFF);
+            wait_on_flag_condition(flag, EF_OVERRIDE_IO, OFF);
             continue;
         }
 
@@ -431,7 +432,7 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
             for (size_t i = 0; i < infolen; i++) {
                 free_send_info(&sInfo[i]);
             }
-            wait_on_flag_condition(flag,EF_OVERRIDE_IO,OFF);
+            wait_on_flag_condition(flag, EF_OVERRIDE_IO, OFF);
             continue;
         }
         if (flag_val & EF_TERMINATION) goto cleanup;
@@ -445,7 +446,7 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
             for (size_t i = 0; i < infolen; i++) {
                 free_send_info(&sInfo[i]);
             }
-            wait_on_flag_condition(flag,EF_OVERRIDE_IO,OFF);
+            wait_on_flag_condition(flag, EF_OVERRIDE_IO, OFF);
             continue;
         }
 
@@ -515,7 +516,7 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
                     free_send_info(&sInfo[l]);
                 }
                 free(handles);
-                wait_on_flag_condition(flag,EF_OVERRIDE_IO,OFF);
+                wait_on_flag_condition(flag, EF_OVERRIDE_IO, OFF);
                 break;
             }
             if (flag_val & EF_TERMINATION) goto cleanup;
@@ -530,7 +531,7 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
                     free_send_info(&sInfo[l]);
                 }
                 free(handles);
-                wait_on_flag_condition(flag,EF_OVERRIDE_IO,OFF);
+                wait_on_flag_condition(flag, EF_OVERRIDE_IO, OFF);
                 break;
             }
 
@@ -1042,7 +1043,7 @@ void *send_discovery_thread(void *arg) {
     //allocate memory for the return value
     process_return = malloc(sizeof(uint8_t));
     if (process_return == NULL) {
-        set_event_flag(args->flag,EF_TERMINATION);
+        set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
         free_event_flag(args->flag);
         free(arg);
@@ -1053,14 +1054,14 @@ void *send_discovery_thread(void *arg) {
     //send a packet burst when a device discovery operation starts
     ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,3,150);
     if (ret > 0) {
-        set_event_flag(args->flag,EF_TERMINATION);
+        set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
         *process_return = ret;
         free_event_flag(args->flag);
         free(arg);
         return process_return;
     }
-    //returns -1 when we get an overide excecution or
+    //returns -1 when we get an override excecution or
     if (ret == -1) {
         flag_val = get_event_flag(args->flag);
         if(flag_val & EF_TERMINATION){
@@ -1080,16 +1081,16 @@ void *send_discovery_thread(void *arg) {
         flag_val = get_event_flag(args->flag);
 
         if (flag_val & EF_OVERRIDE_IO) {
-            wait_on_flag_condition(args->flag,EF_OVERRIDE_IO,OFF);
+            wait_on_flag_condition(args->flag, EF_OVERRIDE_IO, OFF);
         }
 
         else if (flag_val & EF_SEND_MULTIPLE_PACKETS) {
 
-            reset_single_event(args->flag,EF_SEND_MULTIPLE_PACKETS);
+            reset_single_event(args->flag, EF_SEND_MULTIPLE_PACKETS);
 
             ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,3,150);
             if (ret > 0) {
-                set_event_flag(args->flag,EF_TERMINATION);
+                set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
                 *process_return = ret;
                 free_event_flag(args->flag);
@@ -1116,7 +1117,7 @@ void *send_discovery_thread(void *arg) {
 
         ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,1,0);
         if (ret > 0) {
-            set_event_flag(args->flag,EF_TERMINATION);
+            set_event_flag(args->flag, EF_TERMINATION);
             set_event_flag(args->wake, EF_WAKE_MANAGER);
             *process_return = ret;
             free_event_flag(args->flag);
@@ -1155,7 +1156,7 @@ void *send_discovery_thread(void *arg) {
             if ((ret != ETIMEDOUT) && (ret != 0)) {
                 fprintf(stderr, "pthread_cond_timedwait() failed in device_discovery_sending\n");
                 set_event_flag(args->flag, EF_TERMINATION);
-                set_event_flag(args->wake,EF_WAKE_MANAGER);
+                set_event_flag(args->wake, EF_WAKE_MANAGER);
                 pthread_mutex_unlock(&(args->flag->mutex));
                 *process_return = DDTS_BUG;
                 return process_return;
@@ -1192,7 +1193,7 @@ void *recv_discovery_thread(void *arg) {
     //allocate memory for the return value
     process_return = malloc(sizeof(uint8_t));
     if (process_return == NULL) {
-        set_event_flag(args->flag,EF_TERMINATION);
+        set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
         WSACloseEvent(args->termination_handle);
         WSACloseEvent(args->wake_handle);
@@ -1205,7 +1206,7 @@ void *recv_discovery_thread(void *arg) {
     //register all the sockets for receiving
     ret = register_multiple_discovery_receivers(args->sockets,&info,args->flag);
     if (ret > 0) {
-        set_event_flag(args->flag,EF_TERMINATION);
+        set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
         *process_return = ret;
         WSACloseEvent(args->termination_handle);
@@ -1227,7 +1228,7 @@ void *recv_discovery_thread(void *arg) {
     }
     //create the handles array to wait for a packet
     if (create_handle_array_from_recv_info(&info,&handles,&hCount)) {
-        set_event_flag(args->flag,EF_TERMINATION);
+        set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
         *process_return = ret;
         WSACloseEvent(args->termination_handle);
@@ -1251,11 +1252,11 @@ void *recv_discovery_thread(void *arg) {
             info.size = 0;
             hCount = 0;
 
-            wait_on_flag_condition(args->flag,EF_OVERRIDE_IO,OFF);
+            wait_on_flag_condition(args->flag, EF_OVERRIDE_IO, OFF);
 
             ret = register_multiple_discovery_receivers(args->sockets,&info,args->flag);
             if (ret > 0) {
-                set_event_flag(args->flag,EF_TERMINATION);
+                set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
                 *process_return = ret;
                 WSACloseEvent(args->termination_handle);
@@ -1279,7 +1280,7 @@ void *recv_discovery_thread(void *arg) {
 
             //create the handles array to wait for a packet
             if (create_handle_array_from_recv_info(&info,&handles,&hCount)) {
-                set_event_flag(args->flag,EF_TERMINATION);
+                set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
                 *process_return = ret;
                 WSACloseEvent(args->termination_handle);
@@ -1315,7 +1316,7 @@ void *recv_discovery_thread(void *arg) {
 
         if (wait_ret == WSA_WAIT_FAILED) {
             fprintf(stderr, "WSAWaitForMultipleEvents() failed in recv_discovery_thread\n");
-            set_event_flag(args->flag,EF_TERMINATION);
+            set_event_flag(args->flag, EF_TERMINATION);
             set_event_flag(args->wake, EF_WAKE_MANAGER);
 
             WSACloseEvent(args->termination_handle);
@@ -1375,7 +1376,7 @@ void *recv_discovery_thread(void *arg) {
 
                 //push the packet to be processed
                 if (queue_push(args->queue,&device,sizeof(DISCOVERED_DEVICE),QET_NEW_DEVICE)) {
-                    set_event_flag(args->flag,EF_TERMINATION);
+                    set_event_flag(args->flag, EF_TERMINATION);
                     set_event_flag(args->wake, EF_WAKE_MANAGER);
                     *process_return = DDTS_QUEUE_ERROR;
                     WSACloseEvent(args->termination_handle);
@@ -1386,13 +1387,13 @@ void *recv_discovery_thread(void *arg) {
                     free(handles);
                     return process_return;
                 }
-                set_event_flag(args->flag,EF_NEW_DEVICE);
+                set_event_flag(args->flag, EF_NEW_DEVICE);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
 
                 //reset and re-receive
                 WSAResetEvent(handles[i]);
                 if (register_single_discovery_receiver(recv_info->socket,&recv_info)) {
-                    set_event_flag(args->flag,EF_TERMINATION);
+                    set_event_flag(args->flag, EF_TERMINATION);
                     set_event_flag(args->wake, EF_WAKE_MANAGER);
                     *process_return = DDTS_WINLIB_ERROR;
                     WSACloseEvent(args->termination_handle);
@@ -1432,7 +1433,7 @@ void *discovery_packet_handler_thread(void *arg) {
     //allocate memory for the return value
     process_return = malloc(sizeof(uint8_t));
     if (process_return == NULL) {
-        set_event_flag(args->flag,EF_TERMINATION);
+        set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
         free_event_flag(args->flag);
         free(arg);
@@ -1451,7 +1452,7 @@ void *discovery_packet_handler_thread(void *arg) {
             break;
         }
         if (flag_val & EF_NEW_DEVICE) {
-            reset_single_event(args->flag,EF_NEW_DEVICE);
+            reset_single_event(args->flag, EF_NEW_DEVICE);
 
             node = queue_pop(args->queue,QOPT_NON_BLOCK);
 
@@ -1465,12 +1466,14 @@ void *discovery_packet_handler_thread(void *arg) {
 
             memcpy(&(device.device),node->buf,sizeof(DISCOVERED_DEVICE));
 
+            destroy_qnode(node);
+
             mac_address_len = 6;
             mac_address_len = 6;
             mac_address = calloc(1,mac_address_len);
             if (mac_address == NULL) {
                 fprintf(stderr, "malloc() failed in device_discovery_receiving\n");
-                set_event_flag(args->flag,EF_TERMINATION);
+                set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
                 *process_return = DDTS_MEMORY_ERROR;
                 free_event_flag(args->flag);
@@ -1479,7 +1482,7 @@ void *discovery_packet_handler_thread(void *arg) {
             }
 
             if (SendARP(device.device.address.sin_addr.S_un.S_addr,INADDR_ANY,mac_address,p_mac_address_len) != NO_ERROR) {
-                set_event_flag(args->flag,EF_TERMINATION);
+                set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
                 *process_return = DDTS_WINLIB_ERROR;
                 free_event_flag(args->flag);
@@ -1493,6 +1496,7 @@ void *discovery_packet_handler_thread(void *arg) {
 
             free(mac_address);
 
+            print_discovered_device_info(&device.device,stdout);
 
             pthread_mutex_lock(&(args->devices->mutex));
 
@@ -1505,7 +1509,7 @@ void *discovery_packet_handler_thread(void *arg) {
 
             temp_dev = malloc(sizeof(DEVICE_NODE));
             if (temp_dev == NULL) {
-                set_event_flag(args->flag,EF_TERMINATION);
+                set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
                 *process_return = DDTS_MEMORY_ERROR;
                 free_event_flag(args->flag);
@@ -1518,7 +1522,6 @@ void *discovery_packet_handler_thread(void *arg) {
             args->devices->head = temp_dev;
 
             pthread_mutex_unlock(&(args->devices->mutex));
-            destroy_qnode(node);
         }
 
         /////////////////////////////////////////
@@ -1710,7 +1713,6 @@ void *discovery_manager_thread(void *arg) {
 
     //for the event handling
     QNODE *qnode_pop = NULL;
-    QET qtype;
 
     //the discovery sockets list
     SOCKET_LL sockets;
@@ -1726,7 +1728,7 @@ void *discovery_manager_thread(void *arg) {
     //allocate memory for the return value
     process_return = malloc(sizeof(uint8_t));
     if (process_return == NULL) {
-        set_event_flag(args->flag,EF_TERMINATION);
+        set_event_flag(args->flag, EF_TERMINATION);
         free(arg);
         return NULL;
     }
@@ -1846,13 +1848,13 @@ void *discovery_manager_thread(void *arg) {
         }
         if (flag_val & EF_INTERFACE_UPDATE) {
             if (flag_val & EF_OVERRIDE_IO) {
-                update_event_flag(send_args->flag,EF_OVERRIDE_IO);
-                update_event_flag(recv_args->flag,EF_OVERRIDE_IO);
+                update_event_flag(send_args->flag, EF_OVERRIDE_IO);
+                update_event_flag(recv_args->flag, EF_OVERRIDE_IO);
 
-                wait_on_flag_condition(update_args->flag,EF_OVERRIDE_IO,OFF);
+                wait_on_flag_condition(update_args->flag, EF_OVERRIDE_IO, OFF);
 
-                reset_single_event(send_args->flag,EF_OVERRIDE_IO);
-                reset_single_event(recv_args->flag,EF_OVERRIDE_IO);
+                reset_single_event(send_args->flag, EF_OVERRIDE_IO);
+                reset_single_event(recv_args->flag, EF_OVERRIDE_IO);
             }
         }
 
@@ -1867,10 +1869,10 @@ void *discovery_manager_thread(void *arg) {
     WSASetEvent(recv_args->termination_handle);
     WSASetEvent(update_args->termination_handle);
 
-    set_event_flag(send_args->flag,EF_TERMINATION);
-    set_event_flag(recv_args->flag,EF_TERMINATION);
-    set_event_flag(handler_args->flag,EF_TERMINATION);
-    set_event_flag(update_args->flag,EF_TERMINATION);
+    set_event_flag(send_args->flag, EF_TERMINATION);
+    set_event_flag(recv_args->flag, EF_TERMINATION);
+    set_event_flag(handler_args->flag, EF_TERMINATION);
+    set_event_flag(update_args->flag, EF_TERMINATION);
 
     if (pthread_equal(tid_send, pthread_self()) == 0) pthread_join(tid_send, (void **)&send_ret);
     if (pthread_equal(tid_receive, pthread_self()) == 0) pthread_join(tid_receive, (void **)&receive_ret);
@@ -1904,10 +1906,10 @@ void *discovery_manager_thread(void *arg) {
         WSASetEvent(update_args->termination_handle);
     }
 
-    if (send_args != NULL) set_event_flag(send_args->flag,EF_TERMINATION);
-    if(recv_args != NULL)set_event_flag(recv_args->flag,EF_TERMINATION);
-    if (handler_args != NULL) set_event_flag(handler_args->flag,EF_TERMINATION);
-    if (update_args != NULL) set_event_flag(update_args->flag,EF_TERMINATION);
+    if (send_args != NULL) set_event_flag(send_args->flag, EF_TERMINATION);
+    if(recv_args != NULL)set_event_flag(recv_args->flag, EF_TERMINATION);
+    if (handler_args != NULL) set_event_flag(handler_args->flag, EF_TERMINATION);
+    if (update_args != NULL) set_event_flag(update_args->flag, EF_TERMINATION);
 
     //wait for the threads to terminate before we deallocate any resources
     if (pthread_equal(tid_send, pthread_self()) == 0) pthread_join(tid_send, (void **)&send_ret);
@@ -2180,7 +2182,7 @@ void print_discovered_device_info(const DISCOVERED_DEVICE *dev, FILE *stream) {
 
     fprintf(stream, "Hostname: ");
 
-    for (int i = 0; i <MAX_HOSTNAME_LEN; i++) {
+    for (int i = 0; i < MAX_HOSTNAME_LEN; i++) {
         if ((dev->hostname[i]) == '\0')fprintf(stream, "%c", dev->hostname[i]);
     }
     fprintf(stream, "\n");
@@ -2253,7 +2255,7 @@ int destroy_event_flag(EFLAG *event_flag) {
     return 0;
 }
 
-int set_event_flag(EFLAG *event_flag, uint32_t flag_value) {
+int set_event_flag(EFLAG *event_flag, const uint32_t flag_value) {
     if (event_flag == NULL) return 1;
     pthread_mutex_lock(&(event_flag->mutex));
     event_flag->event_flag = flag_value;
@@ -2262,7 +2264,7 @@ int set_event_flag(EFLAG *event_flag, uint32_t flag_value) {
     return 0;
 }
 
-int update_event_flag(EFLAG *event_flag, uint32_t flag_value) {
+int update_event_flag(EFLAG *event_flag, const uint32_t flag_value) {
     if (event_flag == NULL) return 1;
     pthread_mutex_lock(&(event_flag->mutex));
     event_flag->event_flag |= flag_value;
@@ -2280,7 +2282,7 @@ int reset_event_flag(EFLAG *event_flag) {
     return 0;
 }
 
-int reset_single_event(EFLAG *event_flag, uint32_t flag_value) {
+int reset_single_event(EFLAG *event_flag, const uint32_t flag_value) {
     if (event_flag == NULL) return 1;
     pthread_mutex_lock(&(event_flag->mutex));
     event_flag->event_flag &= (!flag_value);
@@ -2312,7 +2314,7 @@ uint8_t termination_is_on(EFLAG *event_flag) {
 }
 
 //conditions
-void wait_on_flag_condition(EFLAG *flag, uint32_t flag_value, uint8_t status) {
+void wait_on_flag_condition(EFLAG *flag, const uint32_t flag_value, const uint8_t status) {
     pthread_mutex_lock(&(flag->mutex));
     while (((flag->event_flag) & flag_value) ^ status) {
         pthread_cond_wait(&(flag->cond), &(flag->mutex));
@@ -2326,14 +2328,12 @@ void wait_on_flag_condition(EFLAG *flag, uint32_t flag_value, uint8_t status) {
 ///                                                        ///
 //////////////////////////////////////////////////////////////
 
-int remove_device(DEVICE_LIST *devices, DISCOVERED_DEVICE *dev) {
-    DEVICE_NODE *curr, *prev;
-
+int remove_device(DEVICE_LIST *devices, const DISCOVERED_DEVICE *dev) {
     if (devices == NULL) return 1;
 
 
-    prev = NULL;
-    curr = devices->head;
+    DEVICE_NODE *prev = NULL;
+    DEVICE_NODE *curr = devices->head;
 
     while (curr != NULL) {
         if (memcmp(curr->device.mac_address, dev->mac_address, 6) == 0) {

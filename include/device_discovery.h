@@ -321,7 +321,7 @@ void wait_on_flag_condition(EFLAG *flag, uint32_t flag_value, uint8_t status);
 
 //they are thread unsafe, first lock the mutex and then use
 
-int remove_device(DEVICE_LIST *devices, DISCOVERED_DEVICE *dev);
+int remove_device(DEVICE_LIST *devices, const DISCOVERED_DEVICE *dev);
 DEVICE_NODE *device_exists(const DEVICE_LIST *devices, const DISCOVERED_DEVICE *dev);
 
 #endif //NETWERK_DEVICE_DISCOVERY_H
