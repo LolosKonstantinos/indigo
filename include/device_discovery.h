@@ -262,12 +262,14 @@ void *discovery_manager_thread(void *arg);
 ///                                                             ///
 ///////////////////////////////////////////////////////////////////
 
-int init_device_discovery_threads(int port);
-int create_device_discovery_manager_thread(MANAGER_ARGS *args, pthread_t *tid);
+#define init_device_discovery create_device_discovery_manager_thread
+
+int create_device_discovery_manager_thread(MANAGER_ARGS *args, int port, uint32_t multicast_address, DEVICE_LIST *devices, pthread_t *tid);
 int create_discovery_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, SOCKET_LL *sockets, EFLAG *wake_mngr, pthread_t *tid);
 int create_discovery_receiving_thread(RECV_ARGS **args, SOCKET_LL *sockets, QUEUE *queue, EFLAG *wake_mngr, pthread_t *tid);
 int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint32_t multicast_address, EFLAG *wake_mngr, SOCKET_LL *sockets, pthread_t *tid);
 int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, DEVICE_LIST *dev_list, pthread_t *tid);
+
 
 /////////////////////////////////////////////////////////////////
 ///                                                           ///
@@ -277,6 +279,7 @@ int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, Q
 
 int create_handle_array_from_recv_info(const RECV_ARRAY *info, HANDLE **handles, size_t *hCount);
 void free_recv_array(const RECV_ARRAY *info);
+
 
 ////////////////////////////////////////////////////////////////////
 ///                                                              ///
@@ -308,6 +311,7 @@ uint32_t get_event_flag(EFLAG *event_flag);
 uint8_t termination_is_on(EFLAG *event_flag);
 //conditions
 void wait_on_flag_condition(EFLAG *flag, uint32_t flag_value, uint8_t status);
+
 
 //////////////////////////////////////////////////////////////
 ///                                                        ///
