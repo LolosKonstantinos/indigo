@@ -1,0 +1,41 @@
+{
+	"folder":
+	[
+		{
+			"path": "src"
+		},
+		{
+			"path": "src/libs"
+		},
+		{
+			"path": "include"
+		},
+		{
+			"path": ".build"
+		}
+	],
+	"settings": {
+		"tab_size": 4
+	},
+	"build_systems":[
+		{
+			"name": "CMake",
+			"working_dir": "${project_path}/build",
+			"shell_cmd": "cmake .. -G Ninja",
+			"variants": [
+				{
+					"name": "Build",
+					"shell_cmd": "ninja"
+				},
+				{
+					"name": "Run",
+					"shell_cmd": "ninja && ${project_path}/build/exec_name"
+				},
+				{
+					"name": "Clean",
+					"shell_cmd": "ninja clrean"
+				}
+			]
+		}
+	]
+}

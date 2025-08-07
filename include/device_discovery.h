@@ -58,7 +58,6 @@
 #include <stdint.h>
 #include <pthread.h>
 #include "Queue.h"
-#include "dynamic_array.h"
 #include <errno.h>
 
 
@@ -249,11 +248,11 @@ void free_recv_info(const RECV_INFO *info);
 ///                                                    ///
 //////////////////////////////////////////////////////////
 
-void *send_discovery_thread(void *arg);
-void *recv_discovery_thread(void *arg);
-void *discovery_packet_handler_thread(void *arg);
-void *interface_updater_thread(void *arg);
-void *discovery_manager_thread(void *arg);
+int *send_discovery_thread(SEND_ARGS *args);
+int *recv_discovery_thread(RECV_ARGS *args);
+int *discovery_packet_handler_thread(PACKET_HANDLER_ARGS *args);
+uint8_t *interface_updater_thread(INTERFACE_UPDATE_ARGS *args);
+int *discovery_manager_thread(MANAGER_ARGS *args);
 
 
 ///////////////////////////////////////////////////////////////////
@@ -263,8 +262,9 @@ void *discovery_manager_thread(void *arg);
 ///////////////////////////////////////////////////////////////////
 
 #define init_device_discovery create_device_discovery_manager_thread
+int cancel_device_discovery(pthread_t tid, EFLAG *flag);
 
-int create_device_discovery_manager_thread(MANAGER_ARGS *args, int port, uint32_t multicast_address, DEVICE_LIST *devices, pthread_t *tid);
+int create_device_discovery_manager_thread(MANAGER_ARGS **args, int port, uint32_t multicast_address, DEVICE_LIST *devices, pthread_t *tid);
 int create_discovery_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, SOCKET_LL *sockets, EFLAG *wake_mngr, pthread_t *tid);
 int create_discovery_receiving_thread(RECV_ARGS **args, SOCKET_LL *sockets, QUEUE *queue, EFLAG *wake_mngr, pthread_t *tid);
 int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint32_t multicast_address, EFLAG *wake_mngr, SOCKET_LL *sockets, pthread_t *tid);
