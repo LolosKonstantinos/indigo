@@ -2011,7 +2011,7 @@ int create_discovery_sending_thread(SEND_ARGS **args, int port, uint32_t multica
 int create_discovery_receiving_thread(RECV_ARGS **args, SOCKET_LL *sockets, QUEUE *queue, EFLAG *wake_mngr, pthread_t *tid){
     pthread_t thread;
 
-    RECV_ARGS *recv_args = malloc(sizeof(SEND_ARGS));
+    RECV_ARGS *recv_args = malloc(sizeof(RECV_ARGS));
     if (recv_args == NULL) {
         fprintf(stderr, "malloc() failed in create_discovery_sending_thread\n");
         return 1;
