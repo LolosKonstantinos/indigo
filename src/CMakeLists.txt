@@ -10,6 +10,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE dev_disc)
 add_library(dev_disc SHARED
         libs/device_discovery.c
         libs/Queue.c
+        libs/event_flags.c
 )
 
 # Link the library target with the interface target so that it knows where to find headers.
