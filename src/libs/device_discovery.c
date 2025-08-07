@@ -3,7 +3,8 @@
 //
 
 #include "device_discovery.h"
-
+#include <stdlib.h>
+#include <errno.h>
 
 
 /*Creates a link list of sockets used for device discovery
@@ -736,10 +737,13 @@ int register_multiple_discovery_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, 
 /////////////////////////////////////////////////////////////
 
 void prep_discovery_packet(DISCV_PAC *packet, const unsigned pac_type) {
+
     packet->magic_number = MAGIC_NUMBER;
     packet->pac_version = PAC_VERSION;
     packet->pac_type = pac_type;
     packet->pac_length = sizeof(DISCV_PAC);
+
+    memset(packet->hostname, 0, MAX_HOSTNAME_LEN);
     if (gethostname(packet->hostname, MAX_HOSTNAME_LEN) != 0 ) {
         strcpy(packet->hostname, "unknown_hostname");
     }
@@ -1136,7 +1140,7 @@ int *send_discovery_thread(SEND_ARGS *args) {
         /////////////////////////////////////////////////
 
         clock_gettime(CLOCK_REALTIME, &ts);
-        ts.tv_sec += 10;
+        ts.tv_sec += DISCOVERY_SEND_PERIOD_SEC;
 
         pthread_mutex_lock(&(args->flag->mutex));
         if (args->flag->event_flag & EF_TERMINATION) {
@@ -1723,7 +1727,6 @@ int *discovery_manager_thread(MANAGER_ARGS *args) {
         pthread_mutex_unlock(&args->flag->mutex);
 
         if (termination_is_on(args->flag)) {
-            fprintf(stderr, "Termination detected\n");
             *process_return = 0;
             break;
         }
@@ -1796,9 +1799,6 @@ int *discovery_manager_thread(MANAGER_ARGS *args) {
     if (pthread_equal(tid_handler, pthread_self()) == 0) pthread_join(tid_handler, (void **)&handler_ret);
     if (pthread_equal(tid_update, pthread_self()) == 0) pthread_join(tid_update, (void **)&update_ret);
 
-    printf("DEBUG: all threads joined\n");
-    fflush(stdout);
-
     free(send_ret);
     free(receive_ret);
     free(update_ret);
@@ -1820,34 +1820,22 @@ int *discovery_manager_thread(MANAGER_ARGS *args) {
     free_event_flag(update_args->flag);
     free(update_args);
 
-    printf("DEBUG: free update\n");
-    fflush(stdout);
     //handler args
     free_event_flag(handler_args->flag);
     free(handler_args);
 
-    printf("DEBUG: free handler\n");
-    fflush(stdout);
-
     pthread_mutex_destroy(&sockets->mutex);
     pthread_cond_destroy(&sockets->cond);
     free_discv_sock_ll(sockets->head);
-
-    printf("DEBUG: destroyed sockets\n");
-    fflush(stdout);
 
     destroy_queue(queue_handler);
     destroy_queue(queue_receiver);
 
     free(queue_handler);
     free(queue_receiver);
-    printf("DEBUG: destroyed queues\n");
-    fflush(stdout);
 
     free_event_flag(args->flag);
     free(args);
-    printf("DEBUG: freed arguments\n");
-    fflush(stdout);
     return process_return;
 
     cleanup:

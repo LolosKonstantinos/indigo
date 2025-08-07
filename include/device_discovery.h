@@ -5,8 +5,13 @@
 #ifndef NETWERK_DEVICE_DISCOVERY_H
 #define NETWERK_DEVICE_DISCOVERY_H
 
+#ifndef ON
 #define ON 1
+#endif
+
+#ifndef OFF
 #define OFF 0
+#endif
 
 #define DEVICE_TIME_UNTIL_DISCONNECTED 90
 
@@ -35,6 +40,8 @@
 
 #define PAC_VERSION 1
 
+#define DISCOVERY_SEND_PERIOD_SEC 10
+
 //return values and error codes for the device discovery thread system
 #define DDTS_BUG 0xff
 #define DDTS_UNSUPPORTED 0xfe
@@ -56,12 +63,10 @@
 #endif
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <pthread.h>
 #include "Queue.h"
-#include <errno.h>
 #include "event_flags.h"
 
 //the packet that is sent to the multicast group
