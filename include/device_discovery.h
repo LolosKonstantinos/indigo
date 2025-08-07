@@ -49,10 +49,13 @@
 //for now, it's ok, later we will need to add linux libraries
 #ifdef _WIN32
 
-#include <stdio.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
+
+#endif
+
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -60,9 +63,6 @@
 #include "Queue.h"
 #include <errno.h>
 #include "event_flags.h"
-
-
-#endif
 
 //the packet that is sent to the multicast group
 typedef struct DISCV_PAC{

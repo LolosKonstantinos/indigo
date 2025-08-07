@@ -3,6 +3,8 @@
 //
 
 #include "event_flags.h"
+
+#include <stdio.h>
 #include <stdlib.h>
 
 
@@ -25,12 +27,16 @@ EFLAG *create_event_flag() {
 
 int free_event_flag(EFLAG *event_flag) {
     if (event_flag == NULL) return 1;
+    // pthread_mutex_lock(&(event_flag->mutex));
+    // pthread_cond_broadcast(&(event_flag->cond));
+    // pthread_mutex_unlock(&(event_flag->mutex));
+
     pthread_mutex_lock(&(event_flag->mutex));
-    pthread_cond_broadcast(&(event_flag->cond));
+    pthread_mutex_destroy(&(event_flag->mutex));
     pthread_mutex_unlock(&(event_flag->mutex));
 
-    pthread_mutex_destroy(&(event_flag->mutex));
     pthread_cond_destroy(&(event_flag->cond));
+
     free(event_flag);
     return 0;
 }

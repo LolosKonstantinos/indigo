@@ -49,16 +49,12 @@ int main(int argc, char *argv[]) {
     //     printf("%d\n", 5-i);
     //     sleep(1);
     // }
-    while (1) {
-        int kuwait =0;
-        kuwait += 1;
-        if (kuwait == 4000000000) break;
-    }
-    sleep(60);
+
+    sleep(10);
 
     derr = cancel_device_discovery(tid,args->flag);
     printf("Device discovery finished: %x\n", derr);
-
+    fflush(stdout);
     WSACleanup();
     return 0;
 }

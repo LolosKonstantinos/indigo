@@ -107,7 +107,9 @@ void free_discv_sock_ll(SOCKET_NODE *firstnode) {
 ///                                               ///
 /////////////////////////////////////////////////////
 
-
+//creates an array of the compatible IPs and the respective subnet masks.
+//the minimum amount of separate interfaces and higher speed is ensured.
+//returns 0 on success and non-zero on failure
 int get_compatible_interfaces(IP_SUBNET **ip_subnet, size_t *count) {
     void *temp = NULL;
     PIP_ADAPTER_ADDRESSES adapter = NULL,p =0;
@@ -282,8 +284,8 @@ uint8_t ip_in_any_subnet(const IP_SUBNET addr, const IP_SUBNET *p_addrs, const s
 //////////////////////////////////////////////////////
 
 
-int send_discovery_packets(const int port, const uint32_t multicast_addr, SOCKET_LL *sockets, EFLAG *flag, const uint32_t pCount, const int32_t
-                           msec) {
+int send_discovery_packets(const int port, const uint32_t multicast_addr, SOCKET_LL *sockets, EFLAG *flag,
+    const uint32_t pCount, const int32_t msec) {
     //temporary variables for memory allocation
     SEND_INFO temp_info = {0}, *sInfo = NULL;
     size_t infolen = 0;
@@ -1134,7 +1136,7 @@ int *send_discovery_thread(SEND_ARGS *args) {
         /////////////////////////////////////////////////
 
         clock_gettime(CLOCK_REALTIME, &ts);
-        ts.tv_sec += 25;
+        ts.tv_sec += 10;
 
         pthread_mutex_lock(&(args->flag->mutex));
         if (args->flag->event_flag & EF_TERMINATION) {
@@ -1171,8 +1173,10 @@ int *send_discovery_thread(SEND_ARGS *args) {
 int *recv_discovery_thread(RECV_ARGS *args) {
     RECV_ARRAY info = {0};
     RECV_INFO *recv_info = NULL;
-    HANDLE *handles;
+
+    HANDLE *handles = NULL;
     size_t hCount;
+
     DISCV_PAC pack;
     DISCOVERED_DEVICE device;
 
@@ -1206,12 +1210,17 @@ int *recv_discovery_thread(RECV_ARGS *args) {
         }
     }
     //create the handles array to wait for a packet
-    if (create_handle_array_from_recv_info(&info,&handles,&hCount)) {
+    ret = create_handle_array_from_recv_info(&info,&handles,&hCount);
+    if (ret) {
         set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
+        free_recv_array(&info);
         *process_return = ret;
         return process_return;
     }
+
+    handles[0] = args->termination_handle;
+    handles[1] = args->wake_handle;
 
     while (!termination_is_on(args->flag)) {
         ///////////////////////////////////
@@ -1246,12 +1255,15 @@ int *recv_discovery_thread(RECV_ARGS *args) {
             }
 
             //create the handles array to wait for a packet
-            if (create_handle_array_from_recv_info(&info,&handles,&hCount)) {
+            ret = create_handle_array_from_recv_info(&info,&handles,&hCount);
+            if (ret) {
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
+                free_recv_array(&info);
                 *process_return = ret;
                 return process_return;
             }
+
             handles[0] = args->termination_handle;
             handles[1] = args->wake_handle;
         }
@@ -1267,7 +1279,6 @@ int *recv_discovery_thread(RECV_ARGS *args) {
         ////////////////////////////////////
 
         wait_ret = WSAWaitForMultipleEvents(hCount,handles,FALSE,INFINITE,FALSE);
-
 
         /////////////////////////////////////
         ///  phase 3: process the packet  ///
@@ -1294,7 +1305,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
         if (wait_ret - WSA_WAIT_EVENT_0 == 1) {
             WSAResetEvent(handles[1]);
             continue;
-        } // we got a wake event so we continue;
+        } // we got a wake event so we continue
 
         for (size_t i = wait_ret - WSA_WAIT_EVENT_0; i < hCount; i++) {
             wait_ret = WaitForSingleObject(handles[i],0);
@@ -1346,9 +1357,10 @@ int *recv_discovery_thread(RECV_ARGS *args) {
             }
         }
     }
-    //todo check for double free
     free(handles);
-    return NULL;
+    free_recv_array(&info);
+    *process_return = 0;
+    return process_return;
 }
 
 int *discovery_packet_handler_thread(PACKET_HANDLER_ARGS *args) {
@@ -1781,41 +1793,61 @@ int *discovery_manager_thread(MANAGER_ARGS *args) {
 
     if (pthread_equal(tid_send, pthread_self()) == 0) pthread_join(tid_send, (void **)&send_ret);
     if (pthread_equal(tid_receive, pthread_self()) == 0) pthread_join(tid_receive, (void **)&receive_ret);
-    if (pthread_equal(tid_update, pthread_self()) == 0) pthread_join(tid_update, (void **)&update_ret);
     if (pthread_equal(tid_handler, pthread_self()) == 0) pthread_join(tid_handler, (void **)&handler_ret);
+    if (pthread_equal(tid_update, pthread_self()) == 0) pthread_join(tid_update, (void **)&update_ret);
+
+    printf("DEBUG: all threads joined\n");
+    fflush(stdout);
 
     free(send_ret);
     free(receive_ret);
     free(update_ret);
     free(handler_ret);
 
+
     //send args
-    free(send_args->flag);
+    free_event_flag(send_args->flag);
     free(send_args);
+
     //receive args
     WSACloseEvent(recv_args->termination_handle);
     WSACloseEvent(recv_args->wake_handle);
-    free_event_flag(recv_args->flag);
+    free_event_flag(recv_args->flag); //todo here it crashes
     free(recv_args);
+
     //update args
     WSACloseEvent(update_args->termination_handle);
     free_event_flag(update_args->flag);
     free(update_args);
+
+    printf("DEBUG: free update\n");
+    fflush(stdout);
     //handler args
     free_event_flag(handler_args->flag);
     free(handler_args);
+
+    printf("DEBUG: free handler\n");
+    fflush(stdout);
 
     pthread_mutex_destroy(&sockets->mutex);
     pthread_cond_destroy(&sockets->cond);
     free_discv_sock_ll(sockets->head);
 
+    printf("DEBUG: destroyed sockets\n");
+    fflush(stdout);
+
     destroy_queue(queue_handler);
     destroy_queue(queue_receiver);
+
     free(queue_handler);
     free(queue_receiver);
+    printf("DEBUG: destroyed queues\n");
+    fflush(stdout);
 
     free_event_flag(args->flag);
     free(args);
+    printf("DEBUG: freed arguments\n");
+    fflush(stdout);
     return process_return;
 
     cleanup:
@@ -1899,6 +1931,9 @@ int cancel_device_discovery(pthread_t tid, EFLAG *flag) {
     if (pthread_equal(tid,pthread_self()) == 0) {
         pthread_join(tid,(void **)&ret);
     }
+    printf("DEBUG: manager thread joined\n");
+    fflush(stdout);
+
     if (ret == NULL) return DDTS_MEMORY_ERROR;
     val = *ret;
     free(ret);
@@ -2108,10 +2143,9 @@ int create_handle_array_from_recv_info(const RECV_ARRAY *info, HANDLE **handles,
     if (info == NULL || handles == NULL || hCount == NULL) return 1;
 
     RECV_INFO *recv = info->head;
-    void *temp = malloc((sizeof(HANDLE) * (info->size)) + 2);//we allocate 2 more, 1 for the termination handle
-    if (temp == NULL) {                                           //and one for the wake handle
-        return 1;
-    }
+    void *temp = malloc(sizeof(HANDLE) * ((info->size) + 2));//we allocate 2 more, 1 for the termination handle
+    if (temp == NULL) return 1;                                 //and one for the wake handle
+
     *handles = temp;
     *hCount = (info->size) + 2;
 
