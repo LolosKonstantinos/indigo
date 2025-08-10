@@ -1,0 +1,2 @@
+add_subdirectory(device_discovery)
+add_subdirectory(file_transfer)

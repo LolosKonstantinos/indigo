@@ -5,6 +5,7 @@
 #include <ws2tcpip.h>
 
 #include "device_discovery.h"
+#include "file_transfer.h"
 
 
 int main(int argc, char *argv[]) {
