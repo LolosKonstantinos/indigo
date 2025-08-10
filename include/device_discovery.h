@@ -243,7 +243,7 @@ void free_recv_info(const RECV_INFO *info);
 int *send_discovery_thread(SEND_ARGS *args);
 int *recv_discovery_thread(RECV_ARGS *args);
 int *discovery_packet_handler_thread(PACKET_HANDLER_ARGS *args);
-uint8_t *interface_updater_thread(INTERFACE_UPDATE_ARGS *args);
+int* interface_updater_thread(INTERFACE_UPDATE_ARGS* args);
 int *discovery_manager_thread(MANAGER_ARGS *args);
 
 

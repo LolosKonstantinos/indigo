@@ -737,13 +737,12 @@ int register_multiple_discovery_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, 
 /////////////////////////////////////////////////////////////
 
 void prep_discovery_packet(DISCV_PAC *packet, const unsigned pac_type) {
-
+    memset(packet, 0, sizeof(DISCV_PAC));
     packet->magic_number = MAGIC_NUMBER;
     packet->pac_version = PAC_VERSION;
     packet->pac_type = pac_type;
     packet->pac_length = sizeof(DISCV_PAC);
 
-    memset(packet->hostname, 0, MAX_HOSTNAME_LEN);
     if (gethostname(packet->hostname, MAX_HOSTNAME_LEN) != 0 ) {
         strcpy(packet->hostname, "unknown_hostname");
     }
@@ -1190,7 +1189,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
     int *process_return = NULL;
 
     //allocate memory for the return value
-    process_return = malloc(sizeof(uint8_t));
+    process_return = malloc(sizeof(int));
     if (process_return == NULL) {
         set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
@@ -1213,6 +1212,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
             return process_return;
         }
     }
+
     //create the handles array to wait for a packet
     ret = create_handle_array_from_recv_info(&info,&handles,&hCount);
     if (ret) {
@@ -1282,7 +1282,10 @@ int *recv_discovery_thread(RECV_ARGS *args) {
         ///  phase 2: wait for a packet  ///
         ////////////////////////////////////
 
-        wait_ret = WSAWaitForMultipleEvents(hCount,handles,FALSE,INFINITE,FALSE);
+        //todo limit the maximum handles to WSA_MAXIMUM_WAIT_EVENTS (64)
+        //todo set a long timeout, to prevent deadlock (idk windows says something like that)
+
+        wait_ret = WSAWaitForMultipleEvents(hCount, handles,FALSE,WSA_INFINITE,FALSE);
 
         /////////////////////////////////////
         ///  phase 3: process the packet  ///
@@ -1299,41 +1302,60 @@ int *recv_discovery_thread(RECV_ARGS *args) {
             *process_return = 1;
             return process_return;
         }
-        if ((wait_ret - WSA_WAIT_EVENT_0) == 0) {
+
+        wait_ret -= WSA_WAIT_EVENT_0;
+
+        //the termination handle is signaled
+        if (wait_ret == 0) {
             free(handles);
             free_recv_array(&info);
 
             *process_return = 0;
             return process_return;
         }
-        if (wait_ret - WSA_WAIT_EVENT_0 == 1) {
+
+        //the wake handle is signaled
+        if (wait_ret == 1) {
             WSAResetEvent(handles[1]);
             continue;
         } // we got a wake event so we continue
 
-        for (size_t i = wait_ret - WSA_WAIT_EVENT_0; i < hCount; i++) {
+        for (size_t i = wait_ret; i < hCount; i++) {
+            //check is the event is signaled
             wait_ret = WaitForSingleObject(handles[i],0);
+
             if (wait_ret == WAIT_FAILED) {
+                printf("WaitForSingleObject() failed in recv_discovery_thread: %d\n", WSAGetLastError());
+                fflush(stdout);
                 free(handles);
                 free_recv_array(&info);
 
                 *process_return = 0;
                 return process_return;
             }
-            if (wait_ret == WAIT_OBJECT_0) {
+
+            if (wait_ret == WAIT_OBJECT_0)
+            {
                 //we received on that socket
                 recv_info = (info.head) + i - 2;
 
                 //check the packet we received
-                if ((recv_info->buf->len) == sizeof(DISCV_PAC)) continue;
+                // //todo later the packets will not be the same size anyway (in future update)
+                if ((recv_info->buf->len) != sizeof(DISCV_PAC)){
+                    WSAResetEvent(handles[i]);
+                    continue;
+                }
 
                 memcpy(&pack,recv_info->buf->buf,sizeof(DISCV_PAC));
 
-                if (pack.magic_number != MAGIC_NUMBER) continue;
+                if (pack.magic_number != MAGIC_NUMBER){
+                    WSAResetEvent(handles[i]);
+                    continue;
+                }
 
                 //initialize the device info
                 memcpy(device.hostname,pack.hostname,MAX_HOSTNAME_LEN);
-                memcpy(&device.address,recv_info->source,*(recv_info->fromLen));
+                memcpy(&device.address,recv_info->source,sizeof(struct sockaddr_in));
                 device.timestamp = time(NULL);
 
                 //push the packet to be processed
@@ -1350,6 +1372,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
 
                 //reset and re-receive
                 WSAResetEvent(handles[i]);
+
                 if (register_single_discovery_receiver(recv_info->socket,&recv_info)) {
                     set_event_flag(args->flag, EF_TERMINATION);
                     set_event_flag(args->wake, EF_WAKE_MANAGER);
@@ -1498,12 +1521,12 @@ int *discovery_packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     return process_return;
 }
 
-uint8_t *interface_updater_thread(INTERFACE_UPDATE_ARGS *args) {
+int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
    HANDLE notification_handle = NULL;
     HANDLE handles[2];
     WSAOVERLAPPED overlapped = {0};
     DWORD retVal;
-    uint8_t *process_return = malloc(sizeof(uint8_t));
+    int *process_return = malloc(sizeof(int));
     if (process_return == NULL) {
         set_event_flag(args->flag, EF_TERMINATION | EF_ERROR);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
@@ -1757,6 +1780,7 @@ int *discovery_manager_thread(MANAGER_ARGS *args) {
                     goto cleanup;
                 }
                 destroy_qnode(qnode_pop);
+                update_event_flag(handler_args->flag, EF_NEW_DEVICE);
             }
         }
 
@@ -2166,7 +2190,7 @@ void print_discovered_device_info(const DISCOVERED_DEVICE *dev, FILE *stream) {
     fprintf(stream, "Hostname: ");
 
     for (int i = 0; i < MAX_HOSTNAME_LEN; i++) {
-        if ((dev->hostname[i]) == '\0')fprintf(stream, "%c", dev->hostname[i]);
+        if ((dev->hostname[i]) != '\0')fprintf(stream, "%c", dev->hostname[i]);
     }
     fprintf(stream, "\n");
 

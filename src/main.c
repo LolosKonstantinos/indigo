@@ -50,7 +50,7 @@ int main(int argc, char *argv[]) {
     //     sleep(1);
     // }
 
-    sleep(60);
+    sleep(120);
 
     derr = cancel_device_discovery(tid,args->flag);
     printf("Device discovery finished: %x\n", derr);
