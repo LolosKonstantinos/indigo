@@ -535,6 +535,3 @@ int load_signing_key_pair(SIGNING_KEY_PAIR *key_pair,const unsigned char* master
     return 0;
 }
 
-int sign_buffer(SIGNING_KEY_PAIR *key_pair) {
-    return 0;
-}

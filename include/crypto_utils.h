@@ -42,15 +42,3 @@ int cmp_password_hash(char* psw, uint64_t psw_len);
 int create_signing_key_pair(const unsigned char* master_key);
 int load_signing_key_pair(SIGNING_KEY_PAIR *key_pair,const unsigned char* master_key);
 int delete_signing_key_pair();
-int sign_buffer(SIGNING_KEY_PAIR *key_pair);
-int verify_buffer();
-
-/*these keys (below) are ephemeral and need to be generated for every session*/
-
-int create_asymmetric_key_pair(unsigned char** key_pair);
-int encrypt_buffer_asymmetric();
-int decrypt_buffer_asymmetric();
-
-int create_symmetric_key();
-int encrypt_buffer_symmetric();
-int decrypt_buffer_symmetric();
