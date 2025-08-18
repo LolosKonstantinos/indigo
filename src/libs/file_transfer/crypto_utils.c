@@ -6,7 +6,7 @@
 
 #include <math.h>
 #include <unistd.h>
-#include  <sodium.h>
+#include <sodium.h>
 
 #ifdef _WIN32
 #include <sysinfoapi.h>
@@ -18,7 +18,12 @@ struct PSW_HASH_SETTINGS {
     unsigned char time_cost;
 };
 
-int derive_master_key(const char* psw, const uint64_t psw_len, void** master_key, uint64_t* key_len) {
+struct SIGNING_KEY_PAIR {
+    unsigned char public[crypto_sign_PUBLICKEYBYTES];
+    unsigned char secret[crypto_sign_SECRETKEYBYTES];
+};
+
+int derive_master_key(const char* psw, const uint64_t psw_len, void** master_key) {
     uint64_t mem_cost = crypto_pwhash_MEMLIMIT_MIN;
     unsigned char time_cost = crypto_pwhash_OPSLIMIT_MIN;
     unsigned char *out_key = NULL ;
@@ -27,7 +32,7 @@ int derive_master_key(const char* psw, const uint64_t psw_len, void** master_key
     int ret;
 
 
-    if (psw == NULL || master_key == NULL || key_len == NULL) return 2;
+    if (psw == NULL || master_key == NULL) return 2;
 
     ret = load_key_derivation_settings(&psw_settings);
     if (ret != 0) {
@@ -61,7 +66,6 @@ int derive_master_key(const char* psw, const uint64_t psw_len, void** master_key
     if (ret == -1) goto cleanup;
 
     *master_key = out_key;
-    *key_len = crypto_secretbox_KEYBYTES;
 
     free(salt);
     return 0;
@@ -70,7 +74,6 @@ int derive_master_key(const char* psw, const uint64_t psw_len, void** master_key
     sodium_free(out_key);
     free(salt);
     *master_key = NULL;
-    *key_len = 0;
     return 1;
 }
 
@@ -283,8 +286,8 @@ int load_key_derivation_settings(PSW_HASH_SETTINGS *settings) {
 }
 
 int save_password_hash(const char* password, const uint64_t psw_len) {
-    unsigned char mem_cost = crypto_pwhash_MEMLIMIT_MIN;
-    unsigned char time_cost = crypto_pwhash_OPSLIMIT_MIN;
+    unsigned char mem_cost;
+    unsigned char time_cost;
     PSW_HASH_SETTINGS psw_settings;
     FILE *fp = NULL;
     char *psw_hash = NULL, *file_name = NULL;
@@ -414,4 +417,124 @@ int cmp_password_hash(char* psw, uint64_t psw_len) {
     free(stored_hash);
     return 0;
 
+}
+
+int create_signing_key_pair(const unsigned char* const master_key) {
+    SIGNING_KEY_PAIR key_pair;
+    unsigned char *cipher;
+    unsigned char *nonce;
+    char *file_name;
+    FILE *fp;
+    int ret;
+
+
+    cipher = (unsigned char *)malloc(crypto_secretbox_MACBYTES + sizeof(SIGNING_KEY_PAIR));
+    if (cipher == NULL) return 1;
+
+    nonce = (unsigned char *)malloc(crypto_secretbox_NONCEBYTES);
+
+    randombytes_buf(nonce, crypto_secretbox_NONCEBYTES);
+
+    if (crypto_sign_keypair(key_pair.public, key_pair.secret) != 0) {
+        free(nonce);
+        free(cipher);
+        return 1;
+    }
+
+    ret = crypto_secretbox_easy(cipher, (unsigned char *)(&key_pair),sizeof(SIGNING_KEY_PAIR),nonce,master_key);
+
+    if (ret != 0) {
+        free(cipher);
+        free(nonce);
+        return -1;
+    }
+
+    file_name = malloc(strlen(INDIGO_KEY_DIR) + strlen(INDIGO_SIGN_KEY_FILE_NAME) + 1);
+    if (file_name == NULL) return 1;
+    strcpy(file_name, INDIGO_PSW_DIR);
+    strcat(file_name, INDIGO_SIGN_KEY_FILE_NAME);
+
+    fp = fopen(file_name, "wb");
+    if (fp == NULL) {
+        free(file_name);
+        free(cipher);
+        free(nonce);
+        return 1;
+    }
+
+    fwrite(nonce, 1, crypto_secretbox_NONCEBYTES, fp);
+    fwrite(cipher, 1, crypto_secretbox_MACBYTES + sizeof(SIGNING_KEY_PAIR), fp);
+
+    fclose(fp);
+    free(file_name);
+    free(cipher);
+    free(nonce);
+    return 0;
+}
+
+int load_signing_key_pair(SIGNING_KEY_PAIR *key_pair,const unsigned char* master_key) {
+    FILE *fp;
+    char *file_name = NULL;
+    uint32_t file_len = 0;
+    unsigned char *cipher = NULL;
+    unsigned char *nonce = NULL;
+    int ret = 0;
+
+    file_name = malloc(strlen(INDIGO_KEY_DIR) + strlen(INDIGO_SIGN_KEY_FILE_NAME) + 1);
+    if (file_name == NULL) return 1;
+    strcpy(file_name, INDIGO_PSW_DIR);
+    strcat(file_name, INDIGO_SIGN_KEY_FILE_NAME);
+
+    fp = fopen(file_name, "rb");
+    if (fp == NULL) {
+        free(file_name);
+        return 1;
+    }
+    free(file_name);
+
+    fseek(fp, 0, SEEK_END);
+    file_len = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+
+    if (file_len != crypto_secretbox_KEYBYTES + sizeof(SIGNING_KEY_PAIR) + crypto_secretbox_NONCEBYTES) {
+        fclose(fp);
+        return 2;
+    }
+
+    cipher = (unsigned char *)malloc(crypto_secretbox_KEYBYTES + sizeof(SIGNING_KEY_PAIR));
+    if (cipher == NULL) {
+        fclose(fp);
+        return 1;
+    }
+    nonce = (unsigned char *)malloc(crypto_secretbox_NONCEBYTES);
+    if (nonce == NULL) {
+        fclose(fp);
+        free(cipher);
+        return 1;
+    }
+
+    fread(nonce, 1, crypto_secretbox_NONCEBYTES, fp);
+    fread(cipher, 1, crypto_secretbox_KEYBYTES + sizeof(SIGNING_KEY_PAIR), fp);
+
+    ret =  crypto_secretbox_open_easy((unsigned char *)key_pair,
+        cipher,
+        crypto_secretbox_KEYBYTES + sizeof(SIGNING_KEY_PAIR) ,
+        nonce,
+        master_key);
+
+    if (ret != 0) {
+        fclose(fp);
+        free(nonce);
+        free(cipher);
+        return -1;
+    }
+
+    free(cipher);
+    free(nonce);
+    fclose(fp);
+    return 0;
+}
+
+int sign_buffer(SIGNING_KEY_PAIR *key_pair) {
+    return 0;
 }

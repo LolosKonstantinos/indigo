@@ -23,9 +23,10 @@
 #define INDIGO_PSW_HASH_SETTINGS_FILE "psw-hash-settings.dat"
 
 typedef struct PSW_HASH_SETTINGS PSW_HASH_SETTINGS;
+typedef struct SIGNING_KEY_PAIR SIGNING_KEY_PAIR;
 
 /*derive a symmetric key based on the user password*/
-int derive_master_key(const char* psw, const uint64_t psw_len, void** master_key, uint64_t* key_len);
+int derive_master_key(const char* psw, const uint64_t psw_len, void** master_key);
 
 int create_psw_salt(char overwrite);
 int load_psw_salt(unsigned char** salt);
@@ -38,11 +39,13 @@ int save_password_hash(const char* password, const uint64_t psw_len);
 int load_password_hash(char** hash);
 int cmp_password_hash(char* psw, uint64_t psw_len);
 
-int create_signing_key_pair();
-int load_signing_key_pair();
+int create_signing_key_pair(const unsigned char* master_key);
+int load_signing_key_pair(SIGNING_KEY_PAIR *key_pair,const unsigned char* master_key);
 int delete_signing_key_pair();
-int sign_buffer();
+int sign_buffer(SIGNING_KEY_PAIR *key_pair);
 int verify_buffer();
+
+/*these keys (below) are ephemeral and need to be generated for every session*/
 
 int create_asymmetric_key_pair(unsigned char** key_pair);
 int encrypt_buffer_asymmetric();

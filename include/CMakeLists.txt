@@ -10,9 +10,6 @@ add_library(file_trans_includes INTERFACE
         crypto_utils.h
 )
 
-add_library(keygen_includes INTERFACE keygen.h)
-
 # The interface target makes all its consumers aware of the include directory.
 target_include_directories(dev_disc_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(file_trans_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
-target_include_directories(keygen_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
