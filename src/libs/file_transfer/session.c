@@ -3,3 +3,7 @@
 //
 
 #include "session.h"
+
+int init_session(int port, uint32_t address,SESSION *session) {
+    return 0;
+}

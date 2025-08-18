@@ -2,8 +2,8 @@
 // Created by Κωνσταντίνος on 4/16/2025.
 //
 //todo-> define the error codes after the system is completed
-#ifndef NETWERK_DEVICE_DISCOVERY_H
-#define NETWERK_DEVICE_DISCOVERY_H
+#ifndef INDIGO_DEVICE_DISCOVERY_H
+#define INDIGO_DEVICE_DISCOVERY_H
 
 #ifndef ON
 #define ON 1
@@ -14,9 +14,6 @@
 #endif
 
 #define DEVICE_TIME_UNTIL_DISCONNECTED 90
-
-//for TCP/IP communication (not for device discovery)
-#define TCP_PORT 57362
 
 //for device discovery
 #define DISCOVERY_PORT 57883
@@ -293,4 +290,4 @@ void print_discovered_device_info(const DISCOVERED_DEVICE *dev, FILE *stream);
 int remove_device(DEVICE_LIST *devices, const DISCOVERED_DEVICE *dev);
 DEVICE_NODE *device_exists(const DEVICE_LIST *devices, const DISCOVERED_DEVICE *dev);
 
-#endif //NETWERK_DEVICE_DISCOVERY_H
+#endif //INDIGO_DEVICE_DISCOVERY_H

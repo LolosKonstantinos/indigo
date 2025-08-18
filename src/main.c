@@ -7,8 +7,18 @@
 #include "device_discovery.h"
 #include "file_transfer.h"
 
+#include "crypto_utils.h"
+
 
 int main(int argc, char *argv[]) {
+    // int ret;
+    // printf("DEBUG:\n");
+    // fflush(stdout);
+    //
+    // ret = create_key_derivation_settings();
+    // printf("Created key derivation settings: %d\n", ret);
+    // fflush(stdout);
+
     WSADATA wsaData;
     int err;
     uint8_t derr;

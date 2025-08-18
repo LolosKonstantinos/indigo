@@ -457,6 +457,7 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, SOCKET
 
         if(create_handle_array_from_send_info(sInfo, infolen, &handles, &hCount)) {
             fprintf(stderr, "create_handle_array_from_send_info() failed in send_discovery_packets()\n");
+            routine_ret = DDTS_MEMORY_ERROR;
             goto cleanup;
         }
 
@@ -1530,6 +1531,8 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
     if (process_return == NULL) {
         set_event_flag(args->flag, EF_TERMINATION | EF_ERROR);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
+        printf("DEBUG: update exit\n");
+        fflush(stdout);
         return NULL;
     }
     *process_return = 0;
@@ -1540,6 +1543,8 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
         *process_return = DDTS_WINLIB_ERROR;
         set_event_flag(args->flag, EF_TERMINATION | EF_ERROR);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
+        printf("DEBUG: update exit\n");
+        fflush(stdout);
         return process_return;
     }
 
@@ -1572,15 +1577,19 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
 
         set_event_flag(args->flag, EF_TERMINATION | EF_ERROR);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
-
+        printf("DEBUG: update exit\n");
+        fflush(stdout);
         return process_return;
     }
 
     //the main loop
     while (!termination_is_on(args->flag)) {
         //the function blocks here and waits for an event
+        printf("DEBUG: entered waiting\n");
+        fflush(stdout);
         retVal = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
-
+        printf("DEBUG: exited waiting\n");
+        fflush(stdout);
         //error check
         if (retVal == WAIT_FAILED) {
             //
@@ -1588,11 +1597,16 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
             *process_return = DDTS_WINLIB_ERROR;
             set_event_flag(args->flag, EF_TERMINATION | EF_ERROR);
             set_event_flag(args->wake, EF_WAKE_MANAGER);
+            printf("DEBUG: update exit\n");
+            fflush(stdout);
             return process_return;
         }
         //check which event was signalled
         if (retVal - WAIT_OBJECT_0 == 1) {
             //interface update
+            printf("DEBUG: interface update\n");
+            fflush(stdout);
+
             set_event_flag(args->flag, EF_INTERFACE_UPDATE | EF_OVERRIDE_IO);
             set_event_flag(args->wake, EF_WAKE_MANAGER);
             WSAResetEvent(overlapped.hEvent);
@@ -1606,14 +1620,48 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
                 *process_return = DDTS_WINLIB_ERROR | DDTS_MEMORY_ERROR;
                 pthread_mutex_unlock(&(args->sockets->mutex));
+                printf("DEBUG: update exit\n");
+                fflush(stdout);
                 return process_return;
             }
             pthread_mutex_unlock(&(args->sockets->mutex));
             reset_single_event(args->flag, EF_OVERRIDE_IO);
+
+            //re-register for address changes
+            retVal = NotifyAddrChange(&notification_handle,&overlapped);
+            if (retVal != ERROR_IO_PENDING) {
+                fprintf(stderr, "NotifyAddrChange() failed in interface_updater\n");
+                //print what the fuzz is about
+                switch (retVal) {
+                case ERROR_INVALID_PARAMETER:
+                    fprintf(stderr, "ERROR_INVALID_PARAMETER\n");
+                    *process_return = DDTS_BUG;
+                    break;
+                case ERROR_NOT_ENOUGH_MEMORY:
+                    fprintf(stderr, "ERROR_NOT_ENOUGH_MEMORY\n");
+                    *process_return = DDTS_MEMORY_ERROR;
+                    break;
+                case ERROR_NOT_SUPPORTED:
+                    fprintf(stderr, "ERROR_NOT_SUPPORTED\n");
+                    *process_return = DDTS_UNSUPPORTED;
+                    break;
+                default:
+                    break;
+                }
+
+                set_event_flag(args->flag, EF_TERMINATION | EF_ERROR);
+                set_event_flag(args->wake, EF_WAKE_MANAGER);
+                printf("DEBUG: update exit\n");
+                fflush(stdout);
+                return process_return;
+            }
+
         }
         else if (retVal - WAIT_OBJECT_0 == 0) {
             //termination event
             CancelIPChangeNotify(&overlapped);
+            printf("DEBUG: update exit\n");
+            fflush(stdout);
             return process_return;
         }
         else {
@@ -1624,10 +1672,15 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
             set_event_flag(args->wake, EF_WAKE_MANAGER);
             CancelIPChangeNotify(&overlapped);
             *process_return = DDTS_BUG;
+            printf("DEBUG: update exit\n");
+            fflush(stdout);
             return process_return;
         }
     }
     //termination event signalled and loop ended
+    printf("DEBUG: update exit\n");
+    fflush(stdout);
+
     CancelIPChangeNotify(&overlapped);
     return process_return;
 }
@@ -1791,6 +1844,10 @@ int *discovery_manager_thread(MANAGER_ARGS *args) {
             goto cleanup;
         }
         if (flag_val & EF_INTERFACE_UPDATE) {
+            printf("DEBUG: manager override\n");
+            fflush(stdout);
+
+            reset_single_event(update_args->flag, EF_INTERFACE_UPDATE);
             if (flag_val & EF_OVERRIDE_IO) {
                 update_event_flag(send_args->flag, EF_OVERRIDE_IO);
                 update_event_flag(recv_args->flag, EF_OVERRIDE_IO);
@@ -1800,6 +1857,8 @@ int *discovery_manager_thread(MANAGER_ARGS *args) {
                 reset_single_event(send_args->flag, EF_OVERRIDE_IO);
                 reset_single_event(recv_args->flag, EF_OVERRIDE_IO);
             }
+            printf("DEBUG: override complete\n");
+            fflush(stdout);
         }
 
         //check the packet handler thread
@@ -1860,6 +1919,10 @@ int *discovery_manager_thread(MANAGER_ARGS *args) {
 
     free_event_flag(args->flag);
     free(args);
+
+    printf("DEBUG: manager thread exit\n");
+    fflush(stdout);
+
     return process_return;
 
     cleanup:
@@ -1923,6 +1986,9 @@ int *discovery_manager_thread(MANAGER_ARGS *args) {
 
     free_event_flag(args->flag);
     free(args);
+
+    printf("DEBUG: manager thread exit\n");
+    fflush(stdout);
     return process_return;
 
 }

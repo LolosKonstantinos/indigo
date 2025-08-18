@@ -43,6 +43,6 @@ int reset_single_event(EFLAG *event_flag, uint32_t flag_value);
 uint32_t get_event_flag(EFLAG *event_flag);
 uint8_t termination_is_on(EFLAG *event_flag);
 //conditions
-void wait_on_flag_condition(EFLAG *flag, uint32_t flag_value, uint8_t status);
+void wait_on_flag_condition(EFLAG *flag, uint32_t flag_value, uint32_t status);
 
 #endif //EVENT_FLAGS_H

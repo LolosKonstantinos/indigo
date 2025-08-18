@@ -4,4 +4,4 @@ add_library(file_tras SHARED
         session.c
 )
 
-target_link_libraries(file_tras PUBLIC file_trans_includes)
+target_link_libraries(file_tras PUBLIC file_trans_includes Kernel32 sodium )

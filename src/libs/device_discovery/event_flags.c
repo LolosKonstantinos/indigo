@@ -3,8 +3,6 @@
 //
 
 #include "event_flags.h"
-
-#include <stdio.h>
 #include <stdlib.h>
 
 
@@ -125,7 +123,7 @@ uint8_t termination_is_on(EFLAG *event_flag) {
 }
 
 //conditions
-void wait_on_flag_condition(EFLAG *flag, const uint32_t flag_value, const uint8_t status) {
+void wait_on_flag_condition(EFLAG *flag, const uint32_t flag_value, const uint32_t status) {
     pthread_mutex_lock(&(flag->mutex));
     while (((flag->event_flag) & flag_value) ^ status) {
         pthread_cond_wait(&(flag->cond), &(flag->mutex));
