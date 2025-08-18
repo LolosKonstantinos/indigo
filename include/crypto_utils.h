@@ -19,11 +19,12 @@
 #define INDIGO_PSW_DIR "config/crypto/psw/"
 #define INDIGO_KEY_DIR "config/crypto/key/"
 #define INDIGO_SIGN_KEY_FILE_NAME "sign.dat"
-#define INDIGO_PSW_HASH_FILE_NAME "psw-hash.dat"
+#define INDIGO_PSW_HASH_FILE_NAME "psw-hash.txt"
 #define INDIGO_PSW_HASH_SETTINGS_FILE "psw-hash-settings.dat"
 
 typedef struct PSW_HASH_SETTINGS PSW_HASH_SETTINGS;
 
+/*derive a symmetric key based on the user password*/
 int derive_master_key(const char* psw, const uint64_t psw_len, void** master_key, uint64_t* key_len);
 
 int create_psw_salt(char overwrite);
@@ -33,12 +34,20 @@ int create_key_derivation_settings();
 int save_key_derivation_settings(uint8_t mem_cost, uint8_t time_cost);
 int load_key_derivation_settings(PSW_HASH_SETTINGS *settings);
 
+int save_password_hash(const char* password, const uint64_t psw_len);
+int load_password_hash(char** hash);
+int cmp_password_hash(char* psw, uint64_t psw_len);
+
 int create_signing_key_pair();
 int load_signing_key_pair();
 int delete_signing_key_pair();
+int sign_buffer();
+int verify_buffer();
 
-int create_auth_key_pair();
+int create_asymmetric_key_pair(unsigned char** key_pair);
+int encrypt_buffer_asymmetric();
+int decrypt_buffer_asymmetric();
 
-int save_password();
-int load_password();
-int cmp_password();
+int create_symmetric_key();
+int encrypt_buffer_symmetric();
+int decrypt_buffer_symmetric();
