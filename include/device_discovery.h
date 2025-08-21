@@ -5,18 +5,15 @@
 #ifndef INDIGO_DEVICE_DISCOVERY_H
 #define INDIGO_DEVICE_DISCOVERY_H
 
-#ifndef ON
-#define ON 1
-#endif
 
-#ifndef OFF
+#define ON 1
 #define OFF 0
-#endif
+
 
 #define DEVICE_TIME_UNTIL_DISCONNECTED 90
 
 //for device discovery
-#define DISCOVERY_PORT 57883
+#define DISCOVERY_PORT 2693
 #define MULTICAST_ADDR "239.255.49.152"
 
 //used for discovery packet
@@ -30,8 +27,10 @@
  */
 
 //message types
-#define MSG_INIT_PAC 0x01
+#define MSG_INIT_PACKET 0x01
 #define MSG_INIT_REC 0x02
+#define MSG_SIGNING_REQUEST 0x03
+#define MSG_SIGNING_RESPONSE 0x04
 #define MSG_ERR      0xff
 //more types may be added
 
@@ -66,14 +65,16 @@
 #include "Queue.h"
 #include "event_flags.h"
 
+#define DPAC_DATA_BYTES 128
+#define DPAC_MIN_BYTES 7
+#define DPAC_MAX_BYTES sizeof(DPAC)
 //the packet that is sent to the multicast group
-typedef struct DISCV_PAC{
+typedef struct discovery_packet{
     uint32_t magic_number;
     unsigned char pac_version;
     unsigned char pac_type;
-    uint16_t pac_length;
-    char hostname[MAX_HOSTNAME_LEN];
-}DISCV_PAC;
+    char data[DPAC_DATA_BYTES];
+}DPAC;
 
 //for get_discovery_sockets()
 typedef struct SOCKET_LL_NODE {
@@ -224,7 +225,7 @@ int register_multiple_discovery_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, 
 ///                                                       ///
 /////////////////////////////////////////////////////////////
 
-void prep_discovery_packet(DISCV_PAC *packet, const unsigned pac_type);
+void prep_discovery_packet(DPAC *packet, const unsigned pac_type);
 int create_handle_array_from_send_info(const SEND_INFO *info, size_t infolen, HANDLE **handles, size_t *hCount);
 void free_send_info(const SEND_INFO *info);
 int allocate_recv_info(RECV_INFO **info);

@@ -302,10 +302,10 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, SOCKET
 
     struct timespec ts;
 
-    DISCV_PAC packet;
+    DPAC packet;
     int routine_ret = 0;
 
-    prep_discovery_packet(&packet, MSG_INIT_PAC);
+    prep_discovery_packet(&packet, MSG_INIT_PACKET);
 
     while (1) {
         pthread_mutex_lock(&sockets->mutex);
@@ -333,7 +333,7 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, SOCKET
             temp_info.buf = temp;
             temp_info.buf->buf = NULL;
 
-            temp = malloc(sizeof(DISCV_PAC));
+            temp = malloc(sizeof(DPAC));
             if (temp == NULL) {
                 fprintf(stderr, "malloc() failed in send_discovery_packets()\n");
                 pthread_mutex_unlock(&sockets->mutex);
@@ -341,8 +341,8 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, SOCKET
                 goto cleanup;
             }
             temp_info.buf->buf = temp;
-            memcpy(temp_info.buf->buf, &packet, sizeof(struct sockaddr_in));
-            temp_info.buf->len = sizeof(DISCV_PAC);
+            memcpy(temp_info.buf->buf, &packet, sizeof(DPAC));
+            temp_info.buf->len = sizeof(DPAC);
 
             temp = malloc(sizeof(OVERLAPPED));
             if (temp == NULL) {
@@ -737,15 +737,14 @@ int register_multiple_discovery_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, 
 ///                                                       ///
 /////////////////////////////////////////////////////////////
 
-void prep_discovery_packet(DISCV_PAC *packet, const unsigned pac_type) {
-    memset(packet, 0, sizeof(DISCV_PAC));
+void prep_discovery_packet(DPAC *packet, const unsigned pac_type) {
+    memset(packet, 0, sizeof(DPAC));
     packet->magic_number = MAGIC_NUMBER;
     packet->pac_version = PAC_VERSION;
     packet->pac_type = pac_type;
-    packet->pac_length = sizeof(DISCV_PAC);
-
-    if (gethostname(packet->hostname, MAX_HOSTNAME_LEN) != 0 ) {
-        strcpy(packet->hostname, "unknown_hostname");
+    //todo: we will use the username
+    if (gethostname(packet->data, DPAC_DATA_BYTES) != 0 ) {
+        strcpy(packet->data, "unknown_hostname");
     }
 }
 
@@ -834,7 +833,7 @@ int allocate_recv_info(RECV_INFO **info) {
     (*info)->buf = temp;
     (*info)->buf->buf = NULL;
 
-    temp = malloc(sizeof (DISCV_PAC));
+    temp = malloc(sizeof (DPAC));
     if (temp == NULL) {
         fprintf(stderr, "malloc() failed in allocate_recv_info()\n");
 
@@ -847,7 +846,7 @@ int allocate_recv_info(RECV_INFO **info) {
         return 1;
     }
     (*info)->buf->buf = temp;
-    (*info)->buf->len = sizeof (DISCV_PAC);
+    (*info)->buf->len = sizeof (DPAC);
 
     temp = malloc(sizeof (OVERLAPPED));
     if (temp == NULL) {
@@ -950,7 +949,7 @@ int allocate_recv_info_fields(RECV_INFO *info) {
     info->buf = temp;
     info->buf->buf = NULL;
 
-    temp = malloc(sizeof (DISCV_PAC));
+    temp = malloc(sizeof (DPAC));
     if (temp == NULL) {
         fprintf(stderr, "malloc() failed in allocate_recv_info()\n");
 
@@ -961,7 +960,7 @@ int allocate_recv_info_fields(RECV_INFO *info) {
         return 1;
     }
     info->buf->buf = temp;
-    info->buf->len = sizeof (DISCV_PAC);
+    info->buf->len = sizeof (DPAC);
 
     temp = malloc(sizeof (OVERLAPPED));
     if (temp == NULL) {
@@ -1181,7 +1180,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
     HANDLE *handles = NULL;
     size_t hCount;
 
-    DISCV_PAC pack;
+    DPAC pack;
     DISCOVERED_DEVICE device;
 
     uint32_t flag_val;
@@ -1341,13 +1340,13 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                 recv_info = (info.head) + i - 2;
 
                 //check the packet we received
-                // //todo later the packets will not be the same size anyway (in future update)
-                if ((recv_info->buf->len) != sizeof(DISCV_PAC)){
+
+                if ((*(recv_info->bytes_recv) > sizeof(DPAC)) || (*(recv_info->bytes_recv) < DPAC_MIN_BYTES)){
                     WSAResetEvent(handles[i]);
                     continue;
                 }
-
-                memcpy(&pack,recv_info->buf->buf,sizeof(DISCV_PAC));
+                memset(&pack,0,sizeof(DPAC));
+                memcpy(&pack,recv_info->buf->buf,*(recv_info->bytes_recv));
 
                 if (pack.magic_number != MAGIC_NUMBER){
                     WSAResetEvent(handles[i]);
@@ -1355,7 +1354,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                 }
 
                 //initialize the device info
-                memcpy(device.hostname,pack.hostname,MAX_HOSTNAME_LEN);
+                memcpy(device.hostname,pack.data,DPAC_DATA_BYTES);
                 memcpy(&device.address,recv_info->source,sizeof(struct sockaddr_in));
                 device.timestamp = time(NULL);
 

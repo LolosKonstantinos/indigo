@@ -5,12 +5,15 @@ add_library(file_trans_includes INTERFACE
         file_transfer.h
         session.h
         crypto_utils.h
+        session_types.h
 )
 #utilities libraries
-add_library(path_includes INTERFACE path.h)
+add_library(path_includes INTERFACE path.h
+        indigo_errors.h)
 add_library(event_flag_includes INTERFACE event_flags.h)
 add_library(queue_includes INTERFACE Queue.h)
-add_library(buffer_includes INTERFACE buffer.h)
+add_library(buffer_includes INTERFACE buffer.h
+        indigo_errors.h)
 
 
 # The interface target makes all its consumers aware of the include directory.

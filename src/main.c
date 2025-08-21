@@ -8,6 +8,7 @@
 #include "file_transfer.h"
 
 #include "crypto_utils.h"
+#include "session.h"
 
 
 int main(int argc, char *argv[]) {
