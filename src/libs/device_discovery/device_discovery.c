@@ -4,6 +4,7 @@
 
 #include "device_discovery.h"
 #include "buffer.h"
+#include "indigo_errors.h"
 #include <stdlib.h>
 #include <errno.h>
 
@@ -22,14 +23,18 @@ SOCKET_NODE *get_discovery_sockets(const int port, const uint32_t multicast_addr
     DWORD optval = 0; // the optval for the IP_MULTICAST_LOOP
     //initialize the multicast address
     mreq.imr_multiaddr.S_un.S_addr = multicast_addr;
+    int err;
 
-    if (get_compatible_interfaces(&p_ip_subnet, &addr_count)) {
+    err = get_compatible_interfaces(&p_ip_subnet, &addr_count);
+    if (err != INDIGO_SUCCESS) {
         fprintf(stderr, "get_compatible_interfaces failed in get_discovery_sockets\n");
+        indigo_set_error(err);
         return NULL;
     }
 
     if (p_ip_subnet == NULL) {
         fprintf(stderr, "NO VALID INTERFACE FOUND...\n");
+        indigo_set_error(INDIGO_ERROR_NO_ADDRESS_FOUND);
         return NULL;
     }
 
@@ -40,6 +45,7 @@ SOCKET_NODE *get_discovery_sockets(const int port, const uint32_t multicast_addr
             fprintf(stderr, "Failed to create disc node\n");
             free_discv_sock_ll(first_sock);
             free(p_ip_subnet);
+            indigo_set_error(INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
             return NULL;
         }
 
@@ -58,25 +64,63 @@ SOCKET_NODE *get_discovery_sockets(const int port, const uint32_t multicast_addr
         server.sin_family = AF_INET;
         server.sin_port = port;
         server.sin_addr.s_addr = htonl(p_ip_subnet[0].ip);
-        if (bind(new_sock->sock,(struct sockaddr *)(&server),sizeof(server))) {
+
+        err = bind(new_sock->sock,(struct sockaddr *)(&server),sizeof(server));
+        if (err == SOCKET_ERROR) {
             perror("Failed to bind disc node");
             free_discv_sock_ll(first_sock);
             free(p_ip_subnet);
+            err = WSAGetLastError();
+            switch (err) {
+            case WSANOTINITIALISED:
+                indigo_set_error(INDIGO_ERROR_WINSOCK2_NOT_INITIALIZED);
+                break;
+            case WSAENETDOWN:
+                indigo_set_error(INDIGO_ERROR_NETWORK_SUBSYS_DOWN);
+                break;
+            default:
+                indigo_set_error(INDIGO_ERROR_INVALID_STATE);
+                break;
+            }
             return NULL;
         }
 
         mreq.imr_interface.S_un.S_addr = server.sin_addr.S_un.S_addr;
-        if (setsockopt(new_sock->sock,IPPROTO_IP,IP_ADD_MEMBERSHIP,(char *)&mreq,sizeof(mreq)) == SOCKET_ERROR) {
+        err = setsockopt(new_sock->sock,IPPROTO_IP,IP_ADD_MEMBERSHIP,(char *)&mreq,sizeof(mreq));
+        if (err == SOCKET_ERROR) {
             perror("Failed to add membership");
             free_discv_sock_ll(first_sock);
             free(p_ip_subnet);
+            switch (err) {
+            case WSANOTINITIALISED:
+                indigo_set_error(INDIGO_ERROR_WINSOCK2_NOT_INITIALIZED);
+                break;
+            case WSAENETDOWN:
+                indigo_set_error(INDIGO_ERROR_NETWORK_SUBSYS_DOWN);
+                break;
+            default:
+                indigo_set_error(INDIGO_ERROR_INVALID_STATE);
+                break;
+            }
             return NULL;
         }
 
-        if (setsockopt(new_sock->sock,IPPROTO_IP,IP_MULTICAST_LOOP,(char *)&optval,sizeof(optval)) == SOCKET_ERROR) {
+        err = setsockopt(new_sock->sock,IPPROTO_IP,IP_MULTICAST_LOOP,(char *)&optval,sizeof(optval));
+        if (err == SOCKET_ERROR) {
             perror("Failed to set multicast loop");
             free_discv_sock_ll(first_sock);
             free(p_ip_subnet);
+            switch (err) {
+            case WSANOTINITIALISED:
+                indigo_set_error(INDIGO_ERROR_WINSOCK2_NOT_INITIALIZED);
+                break;
+            case WSAENETDOWN:
+                indigo_set_error(INDIGO_ERROR_NETWORK_SUBSYS_DOWN);
+                break;
+            default:
+                indigo_set_error(INDIGO_ERROR_INVALID_STATE);
+                break;
+            }
             return NULL;
         }
     }
@@ -126,7 +170,7 @@ int get_compatible_interfaces(IP_SUBNET **ip_subnet, size_t *count) {
     adapter = malloc(size);
     if (adapter == NULL) {
         perror("Failed to allocate memory for adapter_addresses");
-        return DDTS_MEMORY_ERROR;
+        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
 
     //prepare GetAdaptersAddresses flags
@@ -145,17 +189,48 @@ int get_compatible_interfaces(IP_SUBNET **ip_subnet, size_t *count) {
             if (temp == NULL) {
                 perror("Failed to allocate memory for adapter_addresses");
                 free(adapter);
-                return DDTS_MEMORY_ERROR;
+                return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
             }
             adapter = temp;
             err = GetAdaptersAddresses(AF_INET,flags,NULL,adapter,&size);
+        }
+
+        if (err == ERROR_ADDRESS_NOT_ASSOCIATED){
+            for (int j = 0; j < 50; j++) {
+                Sleep(100);
+                err = GetAdaptersAddresses(AF_INET,flags,NULL,adapter,&size);
+                if (err != ERROR_ADDRESS_NOT_ASSOCIATED) break;
+            }
+            if (err == ERROR_ADDRESS_NOT_ASSOCIATED) {
+                fprintf(stderr, "GetAdaptersAddresses failed in get_compatible_interfaces addr not associated\n");
+                free(adapter);
+                return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+            }
+        }
+
+        if (err == ERROR_INVALID_PARAMETER) {
+            fprintf(stderr, "Invalid parameters in GetAdaptersAddresses() call in get_compatible_interfaces\n");
+            fprintf(stderr,"its a buuuuuuuuuuuugggggg!\n");
+            free(adapter);
+            return INDIGO_ERROR_INVALID_PARAM;
+        }
+
+        if (err == ERROR_NOT_ENOUGH_MEMORY) {
+            fprintf(stderr, "NOT ENOUGH MEMORY!\n");
+            free(adapter);
+            return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        }
+
+        if (err == ERROR_NO_DATA) {
+            free(adapter);
+            return INDIGO_ERROR_NO_ADDRESS_FOUND;
         }
 
         //if we get another error we return
         if (err != ERROR_SUCCESS) {
             fprintf(stderr,"GetAdaptersAddresses failed.%d\n",err);
             free(adapter);
-            return DDTS_WINLIB_ERROR;
+            return INDIGO_ERROR_WINLIB_ERROR;
         }
     }
 
@@ -166,8 +241,6 @@ int get_compatible_interfaces(IP_SUBNET **ip_subnet, size_t *count) {
             //go through all the unicast addresses of the adapter
             for (PIP_ADAPTER_UNICAST_ADDRESS unicast_addr = p->FirstUnicastAddress; unicast_addr != NULL; unicast_addr = unicast_addr->Next) {
                 if (unicast_addr->Flags == IP_ADAPTER_ADDRESS_TRANSIENT) continue;
-
-                //TODO: do something for DAD states
 
                 //fill the ip, subnet mask, and interface type
                 temp_ip_subnet.ip = ntohl((((struct sockaddr_in *)((unicast_addr->Address).lpSockaddr))->sin_addr).S_un.S_addr);
@@ -182,7 +255,7 @@ int get_compatible_interfaces(IP_SUBNET **ip_subnet, size_t *count) {
                         perror("Failed to reallocate memory for ip_subnet");
                         free(adapter);
                         free(p_ip_subnet);
-                        return DDTS_MEMORY_ERROR;
+                        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                     }
                     p_ip_subnet = temp;
                     //store the new-found subnet
@@ -208,7 +281,7 @@ int get_compatible_interfaces(IP_SUBNET **ip_subnet, size_t *count) {
     *ip_subnet = p_ip_subnet;
     *count = addr_count;
     free(adapter);
-    return 0;
+    return INDIGO_SUCCESS;
 }
 
 /*  Create a discovery socket linked list node.(a linked list of sockets that send discovery packets. one per adapter)
@@ -286,6 +359,7 @@ uint8_t ip_in_any_subnet(const IP_SUBNET addr, const IP_SUBNET *p_addrs, const s
 ///                                                ///
 //////////////////////////////////////////////////////
 
+//todo: continue error handling from here
 
 int send_discovery_packets(const int port, const uint32_t multicast_addr, SOCKET_LL *sockets, EFLAG *flag,
     const uint32_t pCount, const int32_t msec) {
@@ -316,7 +390,7 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, SOCKET
             if (temp == NULL) {
                 fprintf(stderr, "malloc() failed in send_discovery_packets()\n");
                 pthread_mutex_unlock(&sockets->mutex);
-                routine_ret = DDTS_MEMORY_ERROR;
+                routine_ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                 goto cleanup;
             }
             temp_info.dest = temp;
@@ -329,7 +403,7 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, SOCKET
             if (temp == NULL) {
                 fprintf(stderr, "malloc() failed in send_discovery_packets()\n");
                 pthread_mutex_unlock(&sockets->mutex);
-                routine_ret = DDTS_MEMORY_ERROR;
+                routine_ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                 goto cleanup;
             }
             temp_info.buf = temp;
@@ -339,7 +413,7 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, SOCKET
             if (temp == NULL) {
                 fprintf(stderr, "malloc() failed in send_discovery_packets()\n");
                 pthread_mutex_unlock(&sockets->mutex);
-                routine_ret = DDTS_MEMORY_ERROR;
+                routine_ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                 goto cleanup;
             }
             temp_info.buf->buf = temp;
@@ -350,7 +424,7 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, SOCKET
             if (temp == NULL) {
                 fprintf(stderr, "malloc() failed in send_discovery_packets()\n");
                 pthread_mutex_unlock(&sockets->mutex);
-                routine_ret = DDTS_MEMORY_ERROR;
+                routine_ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                 goto cleanup;
             }
             temp_info.overlapped = temp;
@@ -358,7 +432,7 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, SOCKET
             if (temp_info.overlapped->hEvent == INVALID_HANDLE_VALUE) {
                 fprintf(stderr, "WSACreateEvent() failed in send_discovery_packets()\n");
                 pthread_mutex_unlock(&sockets->mutex);
-                routine_ret = DDTS_WINLIB_ERROR;
+                routine_ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                 goto cleanup;
             }
 
@@ -366,7 +440,7 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, SOCKET
             if (temp == NULL) {
                 fprintf(stderr, "malloc() failed in send_discovery_packets()\n");
                 pthread_mutex_unlock(&sockets->mutex);
-                routine_ret = DDTS_MEMORY_ERROR;
+                routine_ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                 goto cleanup;
             }
             temp_info.bytes = temp;
@@ -377,7 +451,7 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, SOCKET
             if (temp == NULL) {
                 fprintf(stderr, "realloc() failed in send_discovery_packets()\n");
                 pthread_mutex_unlock(&sockets->mutex);
-                routine_ret = DDTS_MEMORY_ERROR;
+                routine_ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                 goto cleanup;
             }
             sInfo = temp;
@@ -411,7 +485,7 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, SOCKET
                 if (WSAGetLastError() != WSA_IO_PENDING) {
                     fprintf(stderr, "WSASendTo() failed in send_discovery_packets(): %d\n",WSAGetLastError());
                     pthread_mutex_unlock(&sockets->mutex);
-                    routine_ret = DDTS_WINLIB_ERROR;
+                    routine_ret = INDIGO_ERROR_WINLIB_ERROR;
                     goto cleanup;
                 }
             }
@@ -459,14 +533,14 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, SOCKET
 
         if(create_handle_array_from_send_info(sInfo, infolen, &handles, &hCount)) {
             fprintf(stderr, "create_handle_array_from_send_info() failed in send_discovery_packets()\n");
-            routine_ret = DDTS_MEMORY_ERROR;
+            routine_ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
             goto cleanup;
         }
 
         wait_ret = WSAWaitForMultipleEvents(hCount,handles,TRUE,100, FALSE);
         if (wait_ret == WSA_WAIT_FAILED) {
             fprintf(stderr, "WaitForMultipleObjects() failed in send_discovery_packets(): %d\n", WSAGetLastError());
-            routine_ret = DDTS_WINLIB_ERROR ;
+            routine_ret = INDIGO_ERROR_WINLIB_ERROR ;
             goto cleanup;
         }
         if (wait_ret == WSA_WAIT_TIMEOUT) {
@@ -505,7 +579,7 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, SOCKET
                         fprintf(stderr, "WSASendTo() failed in send_discovery_packets(): %d\n",WSAGetLastError());
                         pthread_mutex_unlock(&sockets->mutex);
 
-                        routine_ret = DDTS_WINLIB_ERROR;
+                        routine_ret = INDIGO_ERROR_WINLIB_ERROR;
                         goto cleanup;
                     }
                 }
@@ -545,14 +619,14 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, SOCKET
 
             if(create_handle_array_from_send_info(sInfo, infolen, &handles, &hCount)) {
                 fprintf(stderr, "create_handle_array_from_send_info() failed in send_discovery_packets()\n");
-                routine_ret = DDTS_MEMORY_ERROR;
+                routine_ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                 goto cleanup;
             }
 
             wait_ret = WSAWaitForMultipleEvents(hCount,handles,TRUE,100, FALSE);
             if (wait_ret == WSA_WAIT_FAILED) {
                 fprintf(stderr, "WaitForMultipleObjects() failed in send_discovery_packets(): %d\n", WSAGetLastError());
-                routine_ret = DDTS_WINLIB_ERROR;
+                routine_ret = INDIGO_ERROR_WINLIB_ERROR;
                 goto cleanup;
             }
             if (wait_ret == WSA_WAIT_TIMEOUT) {
@@ -562,7 +636,7 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, SOCKET
 
                     if (wait_ret == WAIT_FAILED) {
                         fprintf(stderr, "WaitForSingleObject() failed in send_discovery_packets(): %d\n", WSAGetLastError());
-                        routine_ret = DDTS_WINLIB_ERROR;
+                        routine_ret = INDIGO_ERROR_WINLIB_ERROR;
                         goto cleanup;
                     }
 
@@ -1159,7 +1233,7 @@ int *send_discovery_thread(SEND_ARGS *args) {
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
                 pthread_mutex_unlock(&(args->flag->mutex));
-                *process_return = DDTS_BUG;
+                *process_return = INDIGO_ERROR_INVALID_STATE;
                 return process_return;
             }
             if (ret == 0) {
@@ -1210,7 +1284,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
     if (ip_rates == NULL) {
         set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
-        *process_return = DDTS_MEMORY_ERROR;
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         return process_return;
     }
 
@@ -1413,7 +1487,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                 if (queue_push(args->queue,&device,sizeof(DISCOVERED_DEVICE),QET_NEW_DEVICE)) {
                     set_event_flag(args->flag, EF_TERMINATION);
                     set_event_flag(args->wake, EF_WAKE_MANAGER);
-                    *process_return = DDTS_QUEUE_ERROR;
+                    *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                     free_recv_array(&info);
                     free(handles);
                     return process_return;
@@ -1427,7 +1501,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                 if (register_single_discovery_receiver(recv_info->socket,&recv_info)) {
                     set_event_flag(args->flag, EF_TERMINATION);
                     set_event_flag(args->wake, EF_WAKE_MANAGER);
-                    *process_return = DDTS_WINLIB_ERROR;
+                    *process_return = INDIGO_ERROR_WINLIB_ERROR;
                     free_recv_array(&info);
                     free(handles);
                     return process_return;
@@ -1500,14 +1574,14 @@ int *discovery_packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                 fprintf(stderr, "malloc() failed in device_discovery_receiving\n");
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
-                *process_return = DDTS_MEMORY_ERROR;
+                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                 return process_return;
             }
 
             if (SendARP(device.device.address.sin_addr.S_un.S_addr,INADDR_ANY,mac_address,p_mac_address_len) != NO_ERROR) {
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
-                *process_return = DDTS_WINLIB_ERROR;
+                *process_return = INDIGO_ERROR_WINLIB_ERROR;
                 free(mac_address);
                 return process_return;
             }
@@ -1533,7 +1607,7 @@ int *discovery_packet_handler_thread(PACKET_HANDLER_ARGS *args) {
             if (temp_dev == NULL) {
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
-                *process_return = DDTS_MEMORY_ERROR;
+                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                 return process_return;
             }
             memcpy(temp_dev,&device,sizeof(DEVICE_NODE));
@@ -1592,7 +1666,7 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
     overlapped.hEvent = WSACreateEvent();
     if (overlapped.hEvent == NULL) {
         perror("WSACreateEvent() failed in device_discovery_sending");
-        *process_return = DDTS_WINLIB_ERROR;
+        *process_return = INDIGO_ERROR_WINLIB_ERROR;
         set_event_flag(args->flag, EF_TERMINATION | EF_ERROR);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
         printf("DEBUG: update exit\n");
@@ -1613,15 +1687,15 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
         switch (retVal) {
             case ERROR_INVALID_PARAMETER:
                 fprintf(stderr, "ERROR_INVALID_PARAMETER\n");
-                *process_return = DDTS_BUG;
+                *process_return = INDIGO_ERROR_INVALID_STATE;
                 break;
             case ERROR_NOT_ENOUGH_MEMORY:
                 fprintf(stderr, "ERROR_NOT_ENOUGH_MEMORY\n");
-                *process_return = DDTS_MEMORY_ERROR;
+                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                 break;
             case ERROR_NOT_SUPPORTED:
                 fprintf(stderr, "ERROR_NOT_SUPPORTED\n");
-                *process_return = DDTS_UNSUPPORTED;
+                *process_return = INDIGO_ERROR_UNSUPPORTED;
                 break;
             default:
                 break;
@@ -1646,7 +1720,7 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
         if (retVal == WAIT_FAILED) {
             //
             perror("WaitForMultipleObjects() failed in interface_updater");
-            *process_return = DDTS_WINLIB_ERROR;
+            *process_return = INDIGO_ERROR_WINLIB_ERROR;
             set_event_flag(args->flag, EF_TERMINATION | EF_ERROR);
             set_event_flag(args->wake, EF_WAKE_MANAGER);
             printf("DEBUG: update exit\n");
@@ -1670,7 +1744,7 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
                 //no discovery sockets, no device discovery
                 set_event_flag(args->flag, EF_TERMINATION | EF_ERROR);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
-                *process_return = DDTS_WINLIB_ERROR | DDTS_MEMORY_ERROR;
+                *process_return = (int)indigo_get_last_error();
                 pthread_mutex_unlock(&(args->sockets->mutex));
                 printf("DEBUG: update exit\n");
                 fflush(stdout);
@@ -1687,15 +1761,15 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
                 switch (retVal) {
                 case ERROR_INVALID_PARAMETER:
                     fprintf(stderr, "ERROR_INVALID_PARAMETER\n");
-                    *process_return = DDTS_BUG;
+                    *process_return = INDIGO_ERROR_INVALID_STATE;
                     break;
                 case ERROR_NOT_ENOUGH_MEMORY:
                     fprintf(stderr, "ERROR_NOT_ENOUGH_MEMORY\n");
-                    *process_return = DDTS_MEMORY_ERROR;
+                    *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                     break;
                 case ERROR_NOT_SUPPORTED:
                     fprintf(stderr, "ERROR_NOT_SUPPORTED\n");
-                    *process_return = DDTS_UNSUPPORTED;
+                    *process_return = INDIGO_ERROR_UNSUPPORTED;
                     break;
                 default:
                     break;
@@ -1723,7 +1797,7 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
             set_event_flag(args->flag, EF_TERMINATION | EF_ERROR);
             set_event_flag(args->wake, EF_WAKE_MANAGER);
             CancelIPChangeNotify(&overlapped);
-            *process_return = DDTS_BUG;
+            *process_return = INDIGO_ERROR_INVALID_STATE;
             printf("DEBUG: update exit\n");
             fflush(stdout);
             return process_return;
@@ -1783,7 +1857,7 @@ int *discovery_manager_thread(MANAGER_ARGS *args) {
     sockets = malloc(sizeof(SOCKET_LL));
     if (sockets == NULL) {
         fprintf(stderr, "malloc() failed in discovery_manager_thread\n");
-        *process_return =  DDTS_MEMORY_ERROR;
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
     pthread_mutex_init(&sockets->mutex, NULL);
@@ -1801,49 +1875,49 @@ int *discovery_manager_thread(MANAGER_ARGS *args) {
     queue_receiver = (QUEUE *)malloc(sizeof(QUEUE));
     if (queue_receiver == NULL) {
         fprintf(stderr, "Failed to allocate memory for queue_receiving\n");
-        *process_return = DDTS_MEMORY_ERROR;
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
     if (init_queue(queue_receiver)) {
         fprintf(stderr, "init_queue failed\n");
-        *process_return = DDTS_MEMORY_ERROR | DDTS_SYSTEM_ERROR;
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
 
     queue_handler = (QUEUE *)malloc(sizeof(QUEUE));
     if (queue_handler == NULL) {
         fprintf(stderr, "Failed to allocate memory for queue_receiving\n");
-        *process_return = DDTS_MEMORY_ERROR;
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
     if (init_queue(queue_handler)) {
         fprintf(stderr, "init_queue failed\n");
-        *process_return = DDTS_MEMORY_ERROR | DDTS_SYSTEM_ERROR;
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
 
     //create threads
     if (create_interface_updater_thread(&update_args,args->port, args->multicast_addr, args->flag, sockets, &tid_update)) {
         fprintf(stderr, "create_interface_updater_thread failed\n");
-        *process_return = DDTS_MEMORY_ERROR | DDTS_SYSTEM_ERROR;
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
 
     if (create_packet_handler_thread(&handler_args, args->flag, queue_handler, args->devices, &tid_handler)) {
         fprintf(stderr, "create_packet_handler_thread failed\n");
-        *process_return = DDTS_MEMORY_ERROR | DDTS_SYSTEM_ERROR;
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
 
     if (create_discovery_receiving_thread(&recv_args, sockets, queue_receiver, args->flag, &tid_receive)) {
         fprintf(stderr, "create_discovery_receiving_thread failed\n");
-        *process_return = DDTS_MEMORY_ERROR | DDTS_SYSTEM_ERROR;
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
 
     if (create_discovery_sending_thread(&send_args, args->port, args->multicast_addr, sockets, args->flag, &tid_send)) {
         fprintf(stderr, "create_discovery_sending_thread failed\n");
-        *process_return = DDTS_MEMORY_ERROR | DDTS_SYSTEM_ERROR;
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
 
@@ -2064,7 +2138,7 @@ int cancel_device_discovery(pthread_t tid, EFLAG *flag) {
     printf("DEBUG: manager thread joined\n");
     fflush(stdout);
 
-    if (ret == NULL) return DDTS_MEMORY_ERROR;
+    if (ret == NULL) return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     val = *ret;
     free(ret);
     return val;

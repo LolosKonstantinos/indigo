@@ -31,7 +31,7 @@
 #define MSG_INIT_REC 0x02
 #define MSG_SIGNING_REQUEST 0x03
 #define MSG_SIGNING_RESPONSE 0x04
-#define MSG_ERR      0xff
+#define MSG_ERR 0xff
 //more types may be added
 
 #define PAC_VERSION 1
@@ -39,16 +39,6 @@
 #define DISCOVERY_SEND_PERIOD_SEC 10
 #define SIGNATURE_REQUEST_PROCESSING_RATE 1 //1 request per second
 #define SIGNATURE_REQUEST_MAX_PER_IP_INTERVAL 6
-
-//return values and error codes for the device discovery thread system
-#define DDTS_BUG 0xff
-#define DDTS_UNSUPPORTED 0xfe
-#define DDTS_MEMORY_ERROR 0x01
-#define DDTS_QUEUE_ERROR 0x02
-#define DDTS_WINLIB_ERROR 0x04 //todo check later and report more detailed return code, why the windows function failed
-#define DDTS_BAD_REQUEST 0x08
-#define DDTS_OVERRIDE_INSTRUCTION 0x10
-#define DDTS_SYSTEM_ERROR 0x20 //todo same as winlib_error
 
 
 //for now, it's ok, later we will need to add linux libraries
