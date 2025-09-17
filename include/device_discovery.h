@@ -37,6 +37,8 @@
 #define PAC_VERSION 1
 
 #define DISCOVERY_SEND_PERIOD_SEC 10
+#define SIGNATURE_REQUEST_PROCESSING_RATE 1 //1 request per second
+#define SIGNATURE_REQUEST_MAX_PER_IP_INTERVAL 6
 
 //return values and error codes for the device discovery thread system
 #define DDTS_BUG 0xff
@@ -96,7 +98,7 @@ typedef struct IP_SUBNET {
 
 //for device discovery system and queue
 typedef struct DISCOVERED_DEVICE {
-    char hostname[MAX_HOSTNAME_LEN];
+    char hostname[DPAC_DATA_BYTES];
     time_t timestamp;
     struct sockaddr_in address;
     uint8_t mac_address[6];
@@ -108,11 +110,29 @@ typedef struct DISCOVERED_DEVICE_NODE {
     struct DISCOVERED_DEVICE_NODE *next;
 }DISCOVERED_DEVICE_NODE, DEVICE_NODE;
 
+
 typedef struct DISCOVERED_DEVICE_LIST {
     DEVICE_NODE *head;
     pthread_mutex_t mutex;
     pthread_cond_t cond;
 }DISCOVERED_DEVICE_LIST, DEVICE_LIST;
+
+#define INDIGO_IP_STATE_DEFAULT 0
+#define INDIGO_IP_STATE_SOFT_BANNED 1
+#define INDIGO_IP_STATE_HARD_BANNED 2
+
+typedef struct IP_SEND_RATE {
+    uint32_t ip;
+    time_t last_dis_packet;
+    time_t last_request;
+    uint8_t state;
+    time_t ignore_until;
+}IP_SEND_RATE;
+
+typedef struct IP_RATE_ARRAY {
+    IP_SEND_RATE *first_ip;
+    size_t size;
+}IP_RATE_ARRAY;
 
 typedef struct RECV_INFO {
     struct sockaddr *source;
@@ -171,12 +191,15 @@ typedef struct PACKET_HANDLER_ARGS {
     DEVICE_LIST *devices;
 }PACKET_HANDLER_ARGS;
 
+typedef struct SIGNING_SERVICE_ARGS {
+    EFLAG *flag;
+}SIGNING_SERVICE_ARGS;
+
 typedef struct MANAGER_ARGS {
     int port;
     uint32_t multicast_addr;
     EFLAG *flag;
     DEVICE_LIST *devices;
-
 }MANAGER_ARGS;
 
 
@@ -238,11 +261,18 @@ void free_recv_info(const RECV_INFO *info);
 ///                                                    ///
 //////////////////////////////////////////////////////////
 
+/*this thread manages all the device discovery threads,
+ *it's responsible for creating the other threads and handling their errors
+ *and moving resources between threads*/
+int *discovery_manager_thread(MANAGER_ARGS *args);
+
 int *send_discovery_thread(SEND_ARGS *args);
 int *recv_discovery_thread(RECV_ARGS *args);
 int *discovery_packet_handler_thread(PACKET_HANDLER_ARGS *args);
 int* interface_updater_thread(INTERFACE_UPDATE_ARGS* args);
-int *discovery_manager_thread(MANAGER_ARGS *args);
+
+/*this thread function is called by the packet handler when there is a signing request*/
+int *signing_service_thread(SEND_ARGS *args);
 
 
 ///////////////////////////////////////////////////////////////////
@@ -290,5 +320,20 @@ void print_discovered_device_info(const DISCOVERED_DEVICE *dev, FILE *stream);
 
 int remove_device(DEVICE_LIST *devices, const DISCOVERED_DEVICE *dev);
 DEVICE_NODE *device_exists(const DEVICE_LIST *devices, const DISCOVERED_DEVICE *dev);
+
+/////////////////////////////////////////////////////////////////
+///                                                           ///
+///                  IP_SEND_RATE_UTILITIES                   ///
+///                                                           ///
+/////////////////////////////////////////////////////////////////
+
+IP_RATE_ARRAY *ip_rate_array_new();
+void ip_rate_array_free(IP_RATE_ARRAY *array);
+int ip_rate_add(IP_RATE_ARRAY *buffer,const uint32_t ip);
+int ip_rate_get(IP_RATE_ARRAY *restrict const buffer,const size_t index , IP_SEND_RATE **restrict const data);
+int ip_rate_set(IP_RATE_ARRAY *restrict buffer,const size_t index ,const IP_SEND_RATE *restrict const data);
+int ip_rate_sort(IP_RATE_ARRAY *restrict buffer);
+int ip_rate_cmp(const void *s1, const void *s2);
+int ip_rate_search(IP_RATE_ARRAY *restrict buffer, const uint32_t ip, size_t *const index);
 
 #endif //INDIGO_DEVICE_DISCOVERY_H

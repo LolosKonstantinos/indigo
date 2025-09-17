@@ -3,6 +3,7 @@
 //
 
 #include "device_discovery.h"
+#include "buffer.h"
 #include <stdlib.h>
 #include <errno.h>
 
@@ -149,6 +150,7 @@ int get_compatible_interfaces(IP_SUBNET **ip_subnet, size_t *count) {
             adapter = temp;
             err = GetAdaptersAddresses(AF_INET,flags,NULL,adapter,&size);
         }
+
         //if we get another error we return
         if (err != ERROR_SUCCESS) {
             fprintf(stderr,"GetAdaptersAddresses failed.%d\n",err);
@@ -1186,6 +1188,13 @@ int *recv_discovery_thread(RECV_ARGS *args) {
     uint32_t flag_val;
     DWORD wait_ret;
     int ret;
+
+    IP_RATE_ARRAY *ip_rates = NULL;
+    size_t rate_idx = 0;
+    IP_SEND_RATE *ip_send_rate = NULL;
+
+    time_t current_time = 0;
+
     int *process_return = NULL;
 
     //allocate memory for the return value
@@ -1196,6 +1205,14 @@ int *recv_discovery_thread(RECV_ARGS *args) {
         return NULL;
     }
     *process_return = 0;
+
+    ip_rates = ip_rate_array_new();
+    if (ip_rates == NULL) {
+        set_event_flag(args->flag, EF_TERMINATION);
+        set_event_flag(args->wake, EF_WAKE_MANAGER);
+        *process_return = DDTS_MEMORY_ERROR;
+        return process_return;
+    }
 
     //register all the sockets for receiving
     ret = register_multiple_discovery_receivers(args->sockets,&info,args->flag);
@@ -1320,6 +1337,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
             continue;
         } // we got a wake event so we continue
 
+//check the handles one by one
         for (size_t i = wait_ret; i < hCount; i++) {
             //check is the event is signaled
             wait_ret = WaitForSingleObject(handles[i],0);
@@ -1344,6 +1362,39 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                 if ((*(recv_info->bytes_recv) > sizeof(DPAC)) || (*(recv_info->bytes_recv) < DPAC_MIN_BYTES)){
                     WSAResetEvent(handles[i]);
                     continue;
+                }
+                //todo: when blocking an ip make sure you block the ip on that network
+                //todo: if the system is connected on more than 1 network then banning one ip,
+                //todo: the ban applies on the origin network
+
+                //todo: the else is in case the ip is found for the first time
+                if(ip_rate_search(ip_rates, ((struct sockaddr_in *)(recv_info->source))->sin_addr.S_un.S_addr, &rate_idx)) {
+                    ip_rate_get(ip_rates, rate_idx, &ip_send_rate);
+                    switch (ip_send_rate->state) {
+                        case INDIGO_IP_STATE_DEFAULT:
+                            current_time = time(NULL);
+                            if (current_time - ip_send_rate->last_request < SIGNATURE_REQUEST_MAX_PER_IP_INTERVAL) {
+                                ip_send_rate->last_request = current_time;
+                                ip_send_rate->state = INDIGO_IP_STATE_HARD_BANNED;
+                                break;
+                            }
+                            ip_send_rate->last_request = current_time;
+                            break;
+                        case INDIGO_IP_STATE_SOFT_BANNED:
+                            current_time = time(NULL);
+                            if (current_time - ip_send_rate->last_request < SIGNATURE_REQUEST_MAX_PER_IP_INTERVAL) {
+                                ip_send_rate->last_request = current_time;
+                                ip_send_rate->state = INDIGO_IP_STATE_HARD_BANNED;
+                                break;
+                            }
+                            break;
+                            //todo: let the discovery packets free for all, limit later to a max of 100 ms
+                        case INDIGO_IP_STATE_HARD_BANNED:
+                            break;
+                        default:
+                            fprintf(stderr,"\ninvalid ip state\n");
+                            break;
+                    }
                 }
                 memset(&pack,0,sizeof(DPAC));
                 memcpy(&pack,recv_info->buf->buf,*(recv_info->bytes_recv));
@@ -1402,6 +1453,7 @@ int *discovery_packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     struct timespec ts;
 
     DEVICE_NODE device, *temp_dev, *found_dev;
+
 
     int *process_return = NULL;
 
@@ -1475,6 +1527,7 @@ int *discovery_packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                 pthread_mutex_unlock(&args->devices->mutex);
                 continue;
             }
+
 
             temp_dev = malloc(sizeof(DEVICE_NODE));
             if (temp_dev == NULL) {
@@ -2312,4 +2365,93 @@ DEVICE_NODE *device_exists(const DEVICE_LIST *devices, const DISCOVERED_DEVICE *
         if (memcmp(curr->device.mac_address, dev->mac_address, 6) == 0) return curr;
     }
     return NULL;
+}
+
+
+/////////////////////////////////////////////////////////////////
+///                                                           ///
+///                  IP_SEND_RATE_UTILITIES                   ///
+///                                                           ///
+/////////////////////////////////////////////////////////////////
+
+IP_RATE_ARRAY *ip_rate_array_new() {
+    return calloc(1,sizeof(IP_RATE_ARRAY));
+}
+
+void ip_rate_array_free(IP_RATE_ARRAY *array) {
+    free(array->first_ip);
+    array->first_ip = NULL;
+    free(array);
+}
+
+int ip_rate_add(IP_RATE_ARRAY *buffer,const uint32_t ip) {
+    void *temp;
+
+    if (buffer == NULL) return 1;
+    temp = realloc(buffer->first_ip, sizeof(IP_SEND_RATE)*(buffer->size + 1));
+    if (temp == NULL) {
+        return -1;
+    }
+    buffer->first_ip = temp;
+
+    ((buffer->first_ip)[buffer->size]).ip = ip;
+    //micro optimization: we set the struct to 0 exept for the ip
+    memset(((void *)(buffer->first_ip + buffer->size) + sizeof(uint32_t)), 0, sizeof(IP_SEND_RATE) - sizeof(uint32_t));
+    buffer->size++;
+    return 0;
+}
+
+
+int ip_rate_get(IP_RATE_ARRAY *restrict const buffer,const size_t index , IP_SEND_RATE **restrict const data) {
+    if (buffer == NULL) return 1;
+    if (index >= buffer->size) return 1;
+    *data = &((buffer->first_ip)[index]);
+    return 0;
+}
+
+
+int ip_rate_set(IP_RATE_ARRAY *restrict buffer,const size_t index ,const IP_SEND_RATE *restrict const data) {
+    if (buffer == NULL || index >= buffer->size || data == NULL) return 1;
+
+    memcpy(buffer->first_ip + index ,data, sizeof(IP_SEND_RATE));
+
+    return 0;
+}
+
+
+int ip_rate_sort(IP_RATE_ARRAY *restrict buffer) {
+    if (buffer == NULL) return 1;
+
+    qsort(buffer->first_ip, buffer->size, 1,ip_rate_cmp);
+    return 0;
+}
+
+int ip_rate_cmp(const void *s1, const void *s2) {
+    IP_SEND_RATE *ip1 = (IP_SEND_RATE *)s1;
+    IP_SEND_RATE *ip2 = (IP_SEND_RATE *)s2;
+    return memcmp(&(ip1->ip), &(ip2->ip), sizeof(uint32_t));
+}
+
+int ip_rate_search(IP_RATE_ARRAY *restrict buffer, const uint32_t ip, size_t *const index) {
+    size_t bttm, mid, top;
+
+    if (buffer->size == 0) return -1;
+
+    bttm = 0;
+    top = buffer->size;
+
+    while (top > 1){
+        mid = top / 2;
+
+        if (ip >= (buffer->first_ip)[bttm + mid].ip)
+            bttm += mid;
+
+        top -= mid;
+    }
+
+    if (ip == (buffer->first_ip)[bttm].ip) {
+        if (index != NULL) *index = bttm;
+        return 1;
+    }
+    return 0;
 }
