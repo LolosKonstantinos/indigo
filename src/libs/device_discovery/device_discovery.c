@@ -361,8 +361,14 @@ uint8_t ip_in_any_subnet(const IP_SUBNET addr, const IP_SUBNET *p_addrs, const s
 
 //todo: continue error handling from here
 
-int send_discovery_packets(const int port, const uint32_t multicast_addr, SOCKET_LL *sockets, EFLAG *flag,
-    const uint32_t pCount, const int32_t msec) {
+int send_discovery_packets(
+    const int port,
+    const uint32_t multicast_addr,
+    SOCKET_LL *sockets,
+    EFLAG *flag,
+    const uint32_t pCount,
+    const int32_t msec
+    ) {
     //temporary variables for memory allocation
     SEND_INFO temp_info = {0}, *sInfo = NULL;
     size_t infolen = 0;
