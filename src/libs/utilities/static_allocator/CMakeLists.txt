@@ -1,0 +1,3 @@
+add_library(static_allocator SHARED static_allocator.c)
+
+target_link_libraries(static_allocator PUBLIC static_allocator_includes)
