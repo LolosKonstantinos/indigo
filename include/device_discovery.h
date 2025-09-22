@@ -13,7 +13,7 @@
 #define DEVICE_TIME_UNTIL_DISCONNECTED 90
 
 //for device discovery
-#define DISCOVERY_PORT 2693
+#define PORT 2693
 #define MULTICAST_ADDR "239.255.49.152"
 
 //used for discovery packet
@@ -27,11 +27,11 @@
  */
 
 //message types
-#define MSG_INIT_PACKET 0x01
-#define MSG_INIT_REC 0x02
-#define MSG_SIGNING_REQUEST 0x03
-#define MSG_SIGNING_RESPONSE 0x04
-#define MSG_ERR 0xff
+#define MSG_INIT_PACKET         0x01
+#define MSG_RESEND              0x02
+#define MSG_SIGNING_REQUEST     0x03
+#define MSG_SIGNING_RESPONSE    0x04
+#define MSG_ERR                 0xff
 //more types may be added
 
 #define PAC_VERSION 1
@@ -60,13 +60,13 @@
 #define DPAC_DATA_BYTES 128
 #define DPAC_MIN_BYTES 7
 #define DPAC_MAX_BYTES sizeof(DPAC)
-//the packet that is sent to the multicast group
-typedef struct discovery_packet{
+//the packet that is sent for everything, device discovery, signature handshakes, file chunks, etc.
+typedef struct udp_packet{
     uint32_t magic_number;
     unsigned char pac_version;
     unsigned char pac_type;
     char data[DPAC_DATA_BYTES];
-}DPAC;
+}PACKET;
 
 //for get_discovery_sockets()
 typedef struct SOCKET_LL_NODE {
@@ -87,25 +87,26 @@ typedef struct IP_SUBNET {
 }IP_SUBNET;
 
 //for device discovery system and queue
-typedef struct DISCOVERED_DEVICE {
-    char hostname[DPAC_DATA_BYTES];
+typedef struct packet_info {
     time_t timestamp;
     struct sockaddr_in address;
     uint8_t mac_address[6];
     uint8_t mac_address_len;
-}DISCOVERED_DEVICE;
+    SOCKET socket;
+    PACKET packet;
+}PACKET_INFO;
 
-typedef struct DISCOVERED_DEVICE_NODE {
-    DISCOVERED_DEVICE device;
-    struct DISCOVERED_DEVICE_NODE *next;
-}DISCOVERED_DEVICE_NODE, DEVICE_NODE;
+typedef struct PACKET_INFO_NODE {
+    PACKET_INFO packet;
+    struct PACKET_INFO_NODE *next;
+}PACKET_INFO_NODE, PACKET_NODE;
 
 
-typedef struct DISCOVERED_DEVICE_LIST {
-    DEVICE_NODE *head;
+typedef struct PACKET_INFO_LIST {
+    PACKET_NODE *head;
     pthread_mutex_t mutex;
     pthread_cond_t cond;
-}DISCOVERED_DEVICE_LIST, DEVICE_LIST;
+}PACKET_INFO_LIST, PACKET_LIST;
 
 #define INDIGO_IP_STATE_DEFAULT 0
 #define INDIGO_IP_STATE_SOFT_BANNED 1
@@ -178,7 +179,7 @@ typedef struct PACKET_HANDLER_ARGS {
     EFLAG *flag;
     EFLAG *wake;
     QUEUE *queue;
-    DEVICE_LIST *devices;
+    PACKET_LIST *devices;
 }PACKET_HANDLER_ARGS;
 
 typedef struct SIGNING_SERVICE_ARGS {
@@ -189,7 +190,7 @@ typedef struct MANAGER_ARGS {
     int port;
     uint32_t multicast_addr;
     EFLAG *flag;
-    DEVICE_LIST *devices;
+    PACKET_LIST *devices;
 }MANAGER_ARGS;
 
 
@@ -227,9 +228,12 @@ uint8_t ip_in_any_subnet(IP_SUBNET addr, const IP_SUBNET *p_addrs, size_t num_ad
 ///                                                ///
 //////////////////////////////////////////////////////
 
+//todo: check and remove redundant code (there is a comment saying "temporary")
 int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets, EFLAG *flag, uint32_t pCount, int32_t msec);
 int register_single_discovery_receiver(SOCKET sock, RECV_INFO **info);
 int register_multiple_discovery_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, EFLAG *flag);
+
+int send_packet(int port, uint32_t addr, SOCKET socket, PACKET *packet, EFLAG *flag);
 
 
 /////////////////////////////////////////////////////////////
@@ -238,7 +242,7 @@ int register_multiple_discovery_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, 
 ///                                                       ///
 /////////////////////////////////////////////////////////////
 
-void prep_discovery_packet(DPAC *packet, const unsigned pac_type);
+void build_packet(PACKET *packet, const unsigned pac_type, void* data);
 int create_handle_array_from_send_info(const SEND_INFO *info, size_t infolen, HANDLE **handles, size_t *hCount);
 void free_send_info(const SEND_INFO *info);
 int allocate_recv_info(RECV_INFO **info);
@@ -251,14 +255,14 @@ void free_recv_info(const RECV_INFO *info);
 ///                                                    ///
 //////////////////////////////////////////////////////////
 
-/*this thread manages all the device discovery threads,
+/*this thread manages all the application's threads (apart from small worker threads that can be used by any thread),
  *it's responsible for creating the other threads and handling their errors
  *and moving resources between threads*/
 int *discovery_manager_thread(MANAGER_ARGS *args);
 
 int *send_discovery_thread(SEND_ARGS *args);
 int *recv_discovery_thread(RECV_ARGS *args);
-int *discovery_packet_handler_thread(PACKET_HANDLER_ARGS *args);
+int *packet_handler_thread(PACKET_HANDLER_ARGS *args);
 int* interface_updater_thread(INTERFACE_UPDATE_ARGS* args);
 
 /*this thread function is called by the packet handler when there is a signing request*/
@@ -274,11 +278,11 @@ int *signing_service_thread(SEND_ARGS *args);
 #define init_device_discovery create_device_discovery_manager_thread
 int cancel_device_discovery(pthread_t tid, EFLAG *flag);
 
-int create_device_discovery_manager_thread(MANAGER_ARGS **args, int port, uint32_t multicast_address, DEVICE_LIST *devices, pthread_t *tid);
+int create_device_discovery_manager_thread(MANAGER_ARGS **args, int port, uint32_t multicast_address, PACKET_LIST *devices, pthread_t *tid);
 int create_discovery_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, SOCKET_LL *sockets, EFLAG *wake_mngr, pthread_t *tid);
 int create_discovery_receiving_thread(RECV_ARGS **args, SOCKET_LL *sockets, QUEUE *queue, EFLAG *wake_mngr, pthread_t *tid);
 int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint32_t multicast_address, EFLAG *wake_mngr, SOCKET_LL *sockets, pthread_t *tid);
-int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, DEVICE_LIST *dev_list, pthread_t *tid);
+int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, PACKET_LIST *dev_list, pthread_t *tid);
 
 
 /////////////////////////////////////////////////////////////////
@@ -297,7 +301,7 @@ void free_recv_array(const RECV_ARRAY *info);
 ///                                                              ///
 ////////////////////////////////////////////////////////////////////
 
-void print_discovered_device_info(const DISCOVERED_DEVICE *dev, FILE *stream);
+void print_discovered_device_info(const PACKET_INFO *dev, FILE *stream);
 
 
 //////////////////////////////////////////////////////////////
@@ -308,8 +312,8 @@ void print_discovered_device_info(const DISCOVERED_DEVICE *dev, FILE *stream);
 
 //they are thread unsafe, first lock the mutex and then use
 
-int remove_device(DEVICE_LIST *devices, const DISCOVERED_DEVICE *dev);
-DEVICE_NODE *device_exists(const DEVICE_LIST *devices, const DISCOVERED_DEVICE *dev);
+int remove_device(PACKET_LIST *devices, const PACKET_INFO *dev);
+PACKET_NODE *device_exists(const PACKET_LIST *devices, const PACKET_INFO *dev);
 
 /////////////////////////////////////////////////////////////////
 ///                                                           ///

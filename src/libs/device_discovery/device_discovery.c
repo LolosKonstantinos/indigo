@@ -7,6 +7,7 @@
 #include "indigo_errors.h"
 #include <stdlib.h>
 #include <errno.h>
+#include <sodium.h>
 
 
 /*Creates a link list of sockets used for device discovery
@@ -384,10 +385,10 @@ int send_discovery_packets(
 
     struct timespec ts;
 
-    DPAC packet;
+    PACKET packet;
     int routine_ret = 0;
 
-    prep_discovery_packet(&packet, MSG_INIT_PACKET);
+    build_packet(&packet, MSG_INIT_PACKET, 0);
 
     while (1) {
         pthread_mutex_lock(&sockets->mutex);
@@ -415,7 +416,7 @@ int send_discovery_packets(
             temp_info.buf = temp;
             temp_info.buf->buf = NULL;
 
-            temp = malloc(sizeof(DPAC));
+            temp = malloc(sizeof(PACKET));
             if (temp == NULL) {
                 fprintf(stderr, "malloc() failed in send_discovery_packets()\n");
                 pthread_mutex_unlock(&sockets->mutex);
@@ -423,8 +424,8 @@ int send_discovery_packets(
                 goto cleanup;
             }
             temp_info.buf->buf = temp;
-            memcpy(temp_info.buf->buf, &packet, sizeof(DPAC));
-            temp_info.buf->len = sizeof(DPAC);
+            memcpy(temp_info.buf->buf, &packet, sizeof(PACKET));
+            temp_info.buf->len = sizeof(PACKET);
 
             temp = malloc(sizeof(OVERLAPPED));
             if (temp == NULL) {
@@ -813,20 +814,162 @@ int register_multiple_discovery_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, 
 }
 
 
+int send_packet(int port, uint32_t addr, SOCKET socket, PACKET *packet, EFLAG *flag) {
+    SEND_INFO temp_info;
+    void *temp;
+    int ret_val;
+    DWORD wait_ret;
+    uint32_t flag_val = 0;
+    int routine_ret = 0;
+
+    while (1) {
+        temp = calloc(1,sizeof(struct sockaddr_in));
+        if (temp == NULL) {
+            fprintf(stderr, "malloc() failed in send_discovery_packets()\n");
+            routine_ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+            goto cleanup;
+        }
+        temp_info.dest = temp;
+
+        temp_info.dest->sin_family = AF_INET;
+        temp_info.dest->sin_addr.S_un.S_addr = addr;
+        temp_info.dest->sin_port = port;
+
+        temp = malloc(sizeof(WSABUF));
+        if (temp == NULL) {
+            fprintf(stderr, "malloc() failed in send_discovery_packets()\n");
+            routine_ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+            goto cleanup;
+        }
+        temp_info.buf = temp;
+        temp_info.buf->buf = NULL;
+
+        temp = malloc(sizeof(PACKET));
+        if (temp == NULL) {
+            fprintf(stderr, "malloc() failed in send_discovery_packets()\n");
+            routine_ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+            goto cleanup;
+        }
+        temp_info.buf->buf = temp;
+        memcpy(temp_info.buf->buf, &packet, sizeof(PACKET));
+        temp_info.buf->len = sizeof(PACKET);
+
+        temp = malloc(sizeof(OVERLAPPED));
+        if (temp == NULL) {
+            fprintf(stderr, "malloc() failed in send_discovery_packets()\n");
+            routine_ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+            goto cleanup;
+        }
+        temp_info.overlapped = temp;
+        temp_info.overlapped->hEvent = WSACreateEvent();
+        if (temp_info.overlapped->hEvent == INVALID_HANDLE_VALUE) {
+            fprintf(stderr, "WSACreateEvent() failed in send_discovery_packets()\n");
+            routine_ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+            goto cleanup;
+        }
+
+        temp = malloc(sizeof(DWORD));
+        if (temp == NULL) {
+            fprintf(stderr, "malloc() failed in send_discovery_packets()\n");
+            routine_ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+            goto cleanup;
+        }
+        temp_info.bytes = temp;
+
+
+        flag_val = get_event_flag(flag);
+        if (flag_val & EF_OVERRIDE_IO) {
+            free_send_info(&temp_info);
+            wait_on_flag_condition(flag, EF_OVERRIDE_IO, OFF);
+            break;
+        }
+        if (flag_val & EF_TERMINATION) goto cleanup;
+
+        ret_val = WSASendTo(socket,
+            temp_info.buf,
+            1,
+            temp_info.bytes,
+            MSG_DONTROUTE,
+            (struct sockaddr *)(temp_info.dest),
+            sizeof(struct sockaddr),
+            temp_info.overlapped,
+            NULL);
+
+        if (ret_val == SOCKET_ERROR) {
+            if (WSAGetLastError() != WSA_IO_PENDING) {
+                fprintf(stderr, "WSASendTo() failed in send_discovery_packets(): %d\n",WSAGetLastError());
+                routine_ret = INDIGO_ERROR_WINLIB_ERROR;
+                goto cleanup;
+            }
+        }
+
+        if (flag_val & EF_OVERRIDE_IO) {
+            free_send_info(&temp_info);
+            wait_on_flag_condition(flag, EF_OVERRIDE_IO, OFF);
+            continue;
+        }
+
+
+        wait_ret = WaitForSingleObject(temp_info.overlapped->hEvent, 100);
+        if (wait_ret == WSA_WAIT_FAILED) {
+            fprintf(stderr, "WaitForMultipleObjects() failed in send_discovery_packets(): %d\n", WSAGetLastError());
+            routine_ret = INDIGO_ERROR_WINLIB_ERROR ;
+            goto cleanup;
+        }
+        if (wait_ret == WSA_WAIT_TIMEOUT) {
+            wait_ret = WaitForSingleObject(temp_info.overlapped->hEvent, 150);
+            if (wait_ret == WAIT_OBJECT_0) continue;
+
+            if (wait_ret == WAIT_FAILED) {
+                fprintf(stderr, "WaitForSingleObject() failed in send_discovery_packets(): %d\n", WSAGetLastError());
+                goto cleanup;
+            }
+
+            if (wait_ret == WAIT_TIMEOUT) {
+                CancelIo(temp_info.overlapped->hEvent);
+            }
+        }
+
+        if (flag_val & EF_OVERRIDE_IO) continue;
+
+
+        free_send_info(&temp_info);
+        return 0;
+    }
+    cleanup:
+
+    flag_val = get_event_flag(flag);
+    if (flag_val & EF_TERMINATION) return -1;
+
+    free_send_info(&temp_info);
+    return routine_ret;
+}
+
+
 /////////////////////////////////////////////////////////////
 ///                                                       ///
 ///                  IO_HELPER_FUNCTIONS                  ///
 ///                                                       ///
 /////////////////////////////////////////////////////////////
 
-void prep_discovery_packet(DPAC *packet, const unsigned pac_type) {
-    memset(packet, 0, sizeof(DPAC));
-    packet->magic_number = MAGIC_NUMBER;
-    packet->pac_version = PAC_VERSION;
-    packet->pac_type = pac_type;
-    //todo: we will use the username
-    if (gethostname(packet->data, DPAC_DATA_BYTES) != 0 ) {
-        strcpy(packet->data, "unknown_hostname");
+void build_packet(PACKET * restrict packet, const unsigned pac_type,const void * restrict data) {
+    if (pac_type == MSG_INIT_PACKET) {
+        memset(packet, 0, sizeof(PACKET));
+        packet->magic_number = MAGIC_NUMBER;
+        packet->pac_version = PAC_VERSION;
+        packet->pac_type = pac_type;
+        //todo: we will use the username
+        if (gethostname(packet->data, DPAC_DATA_BYTES) != 0 ) {
+            strcpy(packet->data, "unknown_hostname");
+        }
+    }
+    else{
+        if (!data) return;
+        memset(packet, 0, sizeof(PACKET));
+        packet->magic_number = MAGIC_NUMBER;
+        packet->pac_version = PAC_VERSION;
+        packet->pac_type = pac_type;
+        memcpy(packet->data, data, DPAC_DATA_BYTES);
     }
 }
 
@@ -915,7 +1058,7 @@ int allocate_recv_info(RECV_INFO **info) {
     (*info)->buf = temp;
     (*info)->buf->buf = NULL;
 
-    temp = malloc(sizeof (DPAC));
+    temp = malloc(sizeof (PACKET));
     if (temp == NULL) {
         fprintf(stderr, "malloc() failed in allocate_recv_info()\n");
 
@@ -928,7 +1071,7 @@ int allocate_recv_info(RECV_INFO **info) {
         return 1;
     }
     (*info)->buf->buf = temp;
-    (*info)->buf->len = sizeof (DPAC);
+    (*info)->buf->len = sizeof (PACKET);
 
     temp = malloc(sizeof (OVERLAPPED));
     if (temp == NULL) {
@@ -1031,7 +1174,7 @@ int allocate_recv_info_fields(RECV_INFO *info) {
     info->buf = temp;
     info->buf->buf = NULL;
 
-    temp = malloc(sizeof (DPAC));
+    temp = malloc(sizeof (PACKET));
     if (temp == NULL) {
         fprintf(stderr, "malloc() failed in allocate_recv_info()\n");
 
@@ -1042,7 +1185,7 @@ int allocate_recv_info_fields(RECV_INFO *info) {
         return 1;
     }
     info->buf->buf = temp;
-    info->buf->len = sizeof (DPAC);
+    info->buf->len = sizeof (PACKET);
 
     temp = malloc(sizeof (OVERLAPPED));
     if (temp == NULL) {
@@ -1262,8 +1405,8 @@ int *recv_discovery_thread(RECV_ARGS *args) {
     HANDLE *handles = NULL;
     size_t hCount;
 
-    DPAC pack;
-    DISCOVERED_DEVICE device;
+    PACKET pack;
+    PACKET_INFO packet_info;
 
     uint32_t flag_val;
     DWORD wait_ret;
@@ -1432,65 +1575,104 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                 return process_return;
             }
 
-            if (wait_ret == WAIT_OBJECT_0)
-            {
+            if (wait_ret == WAIT_OBJECT_0){
                 //we received on that socket
                 recv_info = (info.head) + i - 2;
 
                 //check the packet we received
 
-                if ((*(recv_info->bytes_recv) > sizeof(DPAC)) || (*(recv_info->bytes_recv) < DPAC_MIN_BYTES)){
+                if ((*(recv_info->bytes_recv) > sizeof(PACKET)) || (*(recv_info->bytes_recv) < DPAC_MIN_BYTES)){
                     WSAResetEvent(handles[i]);
+                    if (register_single_discovery_receiver(recv_info->socket,&recv_info)) {
+                        set_event_flag(args->flag, EF_TERMINATION);
+                        set_event_flag(args->wake, EF_WAKE_MANAGER);
+                        *process_return = INDIGO_ERROR_WINLIB_ERROR;
+                        free_recv_array(&info);
+                        free(handles);
+                        return process_return;
+                    }
                     continue;
                 }
-                //todo: when blocking an ip make sure you block the ip on that network
-                //todo: if the system is connected on more than 1 network then banning one ip,
-                //todo: the ban applies on the origin network
+
+                /*todo: when blocking an ip make sure you block the ip on that network
+                        todo: if the system is connected on more than 1 network then banning one ip,
+                        todo: the ban applies on the origin network
+                        todo: you can do that by blocking the ip on that socket*/
 
                 //todo: the else is in case the ip is found for the first time
+                //here we just check if the ip is banned, we do not evaluate if it should be banned
                 if(ip_rate_search(ip_rates, ((struct sockaddr_in *)(recv_info->source))->sin_addr.S_un.S_addr, &rate_idx)) {
                     ip_rate_get(ip_rates, rate_idx, &ip_send_rate);
-                    switch (ip_send_rate->state) {
-                        case INDIGO_IP_STATE_DEFAULT:
-                            current_time = time(NULL);
-                            if (current_time - ip_send_rate->last_request < SIGNATURE_REQUEST_MAX_PER_IP_INTERVAL) {
-                                ip_send_rate->last_request = current_time;
-                                ip_send_rate->state = INDIGO_IP_STATE_HARD_BANNED;
-                                break;
-                            }
-                            ip_send_rate->last_request = current_time;
-                            break;
-                        case INDIGO_IP_STATE_SOFT_BANNED:
-                            current_time = time(NULL);
-                            if (current_time - ip_send_rate->last_request < SIGNATURE_REQUEST_MAX_PER_IP_INTERVAL) {
-                                ip_send_rate->last_request = current_time;
-                                ip_send_rate->state = INDIGO_IP_STATE_HARD_BANNED;
-                                break;
-                            }
-                            break;
-                            //todo: let the discovery packets free for all, limit later to a max of 100 ms
-                        case INDIGO_IP_STATE_HARD_BANNED:
-                            break;
-                        default:
-                            fprintf(stderr,"\ninvalid ip state\n");
-                            break;
+                    if (ip_send_rate->state == INDIGO_IP_STATE_SOFT_BANNED){
+                        if (time(NULL) > ip_send_rate->ignore_until) {
+                            ip_send_rate->ignore_until = 0;
+                            ip_send_rate->state = INDIGO_IP_STATE_DEFAULT;
+                        }
                     }
                 }
-                memset(&pack,0,sizeof(DPAC));
+                if (ip_send_rate->state != INDIGO_IP_STATE_DEFAULT) {
+                    if (register_single_discovery_receiver(recv_info->socket,&recv_info)) {
+                        set_event_flag(args->flag, EF_TERMINATION);
+                        set_event_flag(args->wake, EF_WAKE_MANAGER);
+                        *process_return = INDIGO_ERROR_WINLIB_ERROR;
+                        free_recv_array(&info);
+                        free(handles);
+                        return process_return;
+                    }
+                    continue;
+                }
+
+                memset(&pack,0,sizeof(PACKET));
                 memcpy(&pack,recv_info->buf->buf,*(recv_info->bytes_recv));
 
                 if (pack.magic_number != MAGIC_NUMBER){
                     WSAResetEvent(handles[i]);
+                    if (register_single_discovery_receiver(recv_info->socket,&recv_info)) {
+                        set_event_flag(args->flag, EF_TERMINATION);
+                        set_event_flag(args->wake, EF_WAKE_MANAGER);
+                        *process_return = INDIGO_ERROR_WINLIB_ERROR;
+                        free_recv_array(&info);
+                        free(handles);
+                        return process_return;
+                    }
+                    continue;
+                }
+
+                switch (pack.pac_type) {
+                    case MSG_INIT_PACKET:
+                        current_time = time(NULL);
+                    //todo impose 100ms interval, and soft ban for 10s
+                        ip_send_rate->last_dis_packet = current_time;
+                        break;
+                    case MSG_SIGNING_REQUEST:
+                        current_time = time(NULL);
+                        if (current_time - ip_send_rate->last_request > SIGNATURE_REQUEST_MAX_PER_IP_INTERVAL) {
+                            ip_send_rate->state = INDIGO_IP_STATE_HARD_BANNED;
+                        }
+                        ip_send_rate->last_request = current_time;
+                        break;
+                    default:
+                        break;
+                }
+                if (ip_send_rate->state != INDIGO_IP_STATE_DEFAULT) {
+                    if (register_single_discovery_receiver(recv_info->socket,&recv_info)) {
+                        set_event_flag(args->flag, EF_TERMINATION);
+                        set_event_flag(args->wake, EF_WAKE_MANAGER);
+                        *process_return = INDIGO_ERROR_WINLIB_ERROR;
+                        free_recv_array(&info);
+                        free(handles);
+                        return process_return;
+                    }
                     continue;
                 }
 
                 //initialize the device info
-                memcpy(device.hostname,pack.data,DPAC_DATA_BYTES);
-                memcpy(&device.address,recv_info->source,sizeof(struct sockaddr_in));
-                device.timestamp = time(NULL);
+                memcpy(&packet_info,&pack, sizeof(PACKET));
+                memcpy(&packet_info.address,recv_info->source,sizeof(struct sockaddr_in));
+                packet_info.timestamp = time(NULL);
 
                 //push the packet to be processed
-                if (queue_push(args->queue,&device,sizeof(DISCOVERED_DEVICE),QET_NEW_DEVICE)) {
+                if (queue_push(args->queue,&packet_info,sizeof(PACKET_INFO),QET_NEW_PACKET)) {
                     set_event_flag(args->flag, EF_TERMINATION);
                     set_event_flag(args->wake, EF_WAKE_MANAGER);
                     *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
@@ -1498,7 +1680,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                     free(handles);
                     return process_return;
                 }
-                set_event_flag(args->flag, EF_NEW_DEVICE);
+                set_event_flag(args->flag, EF_NEW_PACKET);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
 
                 //reset and re-receive
@@ -1521,7 +1703,8 @@ int *recv_discovery_thread(RECV_ARGS *args) {
     return process_return;
 }
 
-int *discovery_packet_handler_thread(PACKET_HANDLER_ARGS *args) {
+//todo: re-write the packet handler, we need to handle every type of packet
+int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     uint32_t flag_val = 0;
     QNODE *node;
 
@@ -1531,8 +1714,16 @@ int *discovery_packet_handler_thread(PACKET_HANDLER_ARGS *args) {
 
     time_t curr_time;
     struct timespec ts;
+    time_t lowest_time = 0, time_diff;
 
-    DEVICE_NODE device, *temp_dev, *found_dev;
+    unsigned char iterations_until_cleanup = 10;
+
+    unsigned char nonce[16];
+
+
+    PACKET_NODE *temp_dev, *found_dev;
+    PACKET_INFO packet_info;
+    PACKET packet;
 
 
     int *process_return = NULL;
@@ -1556,102 +1747,128 @@ int *discovery_packet_handler_thread(PACKET_HANDLER_ARGS *args) {
         if (flag_val & EF_TERMINATION) {
             break;
         }
-        if (flag_val & EF_NEW_DEVICE) {
-            reset_single_event(args->flag, EF_NEW_DEVICE);
+        if (flag_val & EF_NEW_PACKET) {
+            reset_single_event(args->flag, EF_NEW_PACKET);
 
             node = queue_pop(args->queue,QOPT_NON_BLOCK);
 
             if (node == NULL) continue;
 
-            if (node->type != QET_NEW_DEVICE) {
+            if (node->type != QET_NEW_PACKET) {
                 //probably an error but good to check
                 destroy_qnode(node);
                 continue;
             }
 
-            memcpy(&(device.device),node->buf,sizeof(DISCOVERED_DEVICE));
+            memcpy(&(packet_info),node->buf,sizeof(PACKET_INFO));
 
             destroy_qnode(node);
 
-            mac_address_len = 6;
-            mac_address_len = 6;
-            mac_address = calloc(1,mac_address_len);
-            if (mac_address == NULL) {
-                fprintf(stderr, "malloc() failed in device_discovery_receiving\n");
-                set_event_flag(args->flag, EF_TERMINATION);
-                set_event_flag(args->wake, EF_WAKE_MANAGER);
-                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                return process_return;
+            switch (packet_info.packet.pac_type) {
+                case MSG_INIT_PACKET:
+                    mac_address_len = 6;
+                    mac_address = calloc(1, mac_address_len);
+                    if (mac_address == NULL) {
+                        fprintf(stderr, "malloc() failed in device_discovery_receiving\n");
+                        set_event_flag(args->flag, EF_TERMINATION);
+                        set_event_flag(args->wake, EF_WAKE_MANAGER);
+                        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                        return process_return;
+                    }
+
+                    if (SendARP(packet_info.address.sin_addr.S_un.S_addr,INADDR_ANY, mac_address, p_mac_address_len)
+                        != NO_ERROR) {
+                        set_event_flag(args->flag, EF_TERMINATION);
+                        set_event_flag(args->wake, EF_WAKE_MANAGER);
+                        *process_return = INDIGO_ERROR_WINLIB_ERROR;
+                        free(mac_address);
+                        return process_return;
+                        }
+
+                    memcpy(packet_info.mac_address, mac_address, mac_address_len);
+                    packet_info.mac_address_len = mac_address_len;
+
+                    free(mac_address);
+
+                    pthread_mutex_lock(&(args->devices->mutex));
+
+                    found_dev = device_exists(args->devices, &(packet_info));
+                    if (found_dev != NULL) {
+                        found_dev->packet.timestamp = time(NULL); //renew the timestamp
+                        pthread_mutex_unlock(&args->devices->mutex);
+                        continue;
+                    }
+
+                    temp_dev = malloc(sizeof(PACKET_NODE));
+                    if (temp_dev == NULL) {
+                        set_event_flag(args->flag, EF_TERMINATION);
+                        set_event_flag(args->wake, EF_WAKE_MANAGER);
+                        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                        return process_return;
+                    }
+                    memcpy(&(temp_dev->packet), &packet_info, sizeof(PACKET_INFO));
+
+                    temp_dev->next = args->devices->head;
+                    args->devices->head = temp_dev;
+
+                    pthread_mutex_unlock(&(args->devices->mutex));
+
+                    //send signing request
+                    randombytes_buf(nonce,16);
+                    build_packet(&packet,MSG_SIGNING_REQUEST,nonce);
+                    send_packet((int)htonl(PORT),temp_dev->packet.address.sin_addr.S_un.S_addr,
+                        temp_dev->packet.socket,&packet, args->flag);
+
+                    break;
+                case MSG_SIGNING_REQUEST:
+                    //todo: sign the nonce and send the signature with the public key
+                case MSG_SIGNING_RESPONSE:
+                    //todo: verify the signature and store the public key to the device node
+                default:
+                    break;
             }
 
-            if (SendARP(device.device.address.sin_addr.S_un.S_addr,INADDR_ANY,mac_address,p_mac_address_len) != NO_ERROR) {
-                set_event_flag(args->flag, EF_TERMINATION);
-                set_event_flag(args->wake, EF_WAKE_MANAGER);
-                *process_return = INDIGO_ERROR_WINLIB_ERROR;
-                free(mac_address);
-                return process_return;
+            //here if there are more packets in the queue we go back up to process them,
+            //but we don't want to have ghost devises,
+            //so in case there are too many packets we refresh the list once per 10 packets processed
+            if (iterations_until_cleanup > 0) {
+                iterations_until_cleanup--;
+                if (!queue_is_empty(args->queue)) continue;
             }
+            else iterations_until_cleanup = 10;
 
-            memcpy(device.device.mac_address,mac_address,mac_address_len);
-            device.device.mac_address_len = mac_address_len;
+            /////////////////////////////////////////
+            ///  phase 2: update the device list  ///
+            /////////////////////////////////////////
 
-            free(mac_address);
-
-            print_discovered_device_info(&device.device,stdout);
+            curr_time = time(NULL);
 
             pthread_mutex_lock(&(args->devices->mutex));
-
-            found_dev = device_exists(args->devices,&(device.device));
-            if (found_dev != NULL) {
-                found_dev->device.timestamp = time(NULL);//renew the timestamp
-                pthread_mutex_unlock(&args->devices->mutex);
-                continue;
+            lowest_time = curr_time - args->devices->head->packet.timestamp;
+            for (PACKET_NODE *temp = args->devices->head; temp != NULL; temp = temp->next) {
+                time_diff = curr_time - temp->packet.timestamp;
+                if (time_diff > DEVICE_TIME_UNTIL_DISCONNECTED)
+                    remove_device(args->devices,&(temp->packet));
+                if (time_diff < lowest_time) lowest_time = time_diff;
             }
-
-
-            temp_dev = malloc(sizeof(DEVICE_NODE));
-            if (temp_dev == NULL) {
-                set_event_flag(args->flag, EF_TERMINATION);
-                set_event_flag(args->wake, EF_WAKE_MANAGER);
-                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                return process_return;
-            }
-            memcpy(temp_dev,&device,sizeof(DEVICE_NODE));
-
-            temp_dev->next = args->devices->head;
-            args->devices->head = temp_dev;
-
             pthread_mutex_unlock(&(args->devices->mutex));
+
+            //there is no need to sleep if there is more stuff to do
+            if (!queue_is_empty(args->queue)) continue;
+
+            /////////////////////////////////////////////
+            ///  phase 3: wait a little and go again  ///
+            /////////////////////////////////////////////
+            clock_gettime(CLOCK_REALTIME,&ts);
+            ts.tv_sec +=lowest_time;
+
+            pthread_mutex_lock(&args->flag->mutex);
+            pthread_cond_timedwait(&args->flag->cond,&args->flag->mutex,&ts);
+            pthread_mutex_unlock(&args->flag->mutex);
+
         }
-
-        /////////////////////////////////////////
-        ///  phase 2: update the device list  ///
-        /////////////////////////////////////////
-
-        curr_time = time(NULL);
-
-        pthread_mutex_lock(&(args->devices->mutex));
-        for (DEVICE_NODE *temp = args->devices->head; temp != NULL; temp = temp->next) {
-            if ((curr_time - temp->device.timestamp) > DEVICE_TIME_UNTIL_DISCONNECTED) {
-                remove_device(args->devices,&(temp->device));
-            }
-        }
-        pthread_mutex_unlock(&(args->devices->mutex));
-
-        /////////////////////////////////////////////
-        ///  phase 3: wait a little and go again  ///
-        /////////////////////////////////////////////
-
-        clock_gettime(CLOCK_REALTIME,&ts);
-        ts.tv_sec +=1;
-
-        pthread_mutex_lock(&args->flag->mutex);
-        pthread_cond_timedwait(&args->flag->cond,&args->flag->mutex,&ts);
-        pthread_mutex_unlock(&args->flag->mutex);
-
     }
-
-    return process_return;
+        return process_return;
 }
 
 int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
@@ -1957,7 +2174,7 @@ int *discovery_manager_thread(MANAGER_ARGS *args) {
             goto cleanup;
         }
         //in this case we just forward to the packet handler
-        if (flag_val & EF_NEW_DEVICE) {
+        if (flag_val & EF_NEW_PACKET) {
             qnode_pop = queue_pop(queue_receiver, QOPT_NON_BLOCK);
             if (qnode_pop != NULL) {
                 if (queue_push(queue_handler,qnode_pop->buf,qnode_pop->size,qnode_pop->type)) {
@@ -1965,7 +2182,7 @@ int *discovery_manager_thread(MANAGER_ARGS *args) {
                     goto cleanup;
                 }
                 destroy_qnode(qnode_pop);
-                update_event_flag(handler_args->flag, EF_NEW_DEVICE);
+                update_event_flag(handler_args->flag, EF_NEW_PACKET);
             }
         }
 
@@ -2150,7 +2367,7 @@ int cancel_device_discovery(pthread_t tid, EFLAG *flag) {
     return val;
 }
 
-int create_device_discovery_manager_thread(MANAGER_ARGS **args, int port, uint32_t multicast_address, DEVICE_LIST *devices, pthread_t *tid){
+int create_device_discovery_manager_thread(MANAGER_ARGS **args, int port, uint32_t multicast_address, PACKET_LIST *devices, pthread_t *tid){
     pthread_t thread;
 
     MANAGER_ARGS *manager_args = malloc(sizeof(MANAGER_ARGS));
@@ -2310,7 +2527,7 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
     return 0;
 }
 
-int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, DEVICE_LIST *dev_list, pthread_t *tid){
+int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, PACKET_LIST *dev_list, pthread_t *tid){
     pthread_t thread;
 
     PACKET_HANDLER_ARGS *handler_args = malloc(sizeof(INTERFACE_UPDATE_ARGS));
@@ -2332,7 +2549,7 @@ int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, Q
     handler_args->wake = wake_mngr;
     handler_args->flag = flag;
 
-    if (pthread_create(&thread, NULL, (void *)(&discovery_packet_handler_thread), handler_args)) {
+    if (pthread_create(&thread, NULL, (void *)(&packet_handler_thread), handler_args)) {
         free_event_flag(flag);
         free(handler_args);
         return 1;
@@ -2380,16 +2597,16 @@ void free_recv_array(const RECV_ARRAY *info) {
 ///                                                              ///
 ////////////////////////////////////////////////////////////////////
 
-void print_discovered_device_info(const DISCOVERED_DEVICE *dev, FILE *stream) {
+void print_discovered_device_info(const PACKET_INFO *dev, FILE *stream) {
     char addr_str[INET_ADDRSTRLEN];
     struct sockaddr_in address = dev->address;
     inet_ntop(AF_INET,&(address.sin_addr.S_un.S_addr),addr_str,INET_ADDRSTRLEN);
 
     fprintf(stream, "Hostname: ");
 
-    for (int i = 0; i < MAX_HOSTNAME_LEN; i++) {
-        if ((dev->hostname[i]) != '\0')fprintf(stream, "%c", dev->hostname[i]);
-    }
+    // for (int i = 0; i < MAX_HOSTNAME_LEN; i++) {
+    //     if ((dev->hostname[i]) != '\0')fprintf(stream, "%c", dev->hostname[i]);
+    // }
     fprintf(stream, "\n");
 
     fprintf(stream, "IP Address: %s\n",addr_str);
@@ -2412,15 +2629,15 @@ void print_discovered_device_info(const DISCOVERED_DEVICE *dev, FILE *stream) {
 ///                                                        ///
 //////////////////////////////////////////////////////////////
 
-int remove_device(DEVICE_LIST *devices, const DISCOVERED_DEVICE *dev) {
+int remove_device(PACKET_LIST *devices, const PACKET_INFO *dev) {
     if (devices == NULL) return 1;
 
 
-    DEVICE_NODE *prev = NULL;
-    DEVICE_NODE *curr = devices->head;
+    PACKET_NODE *prev = NULL;
+    PACKET_NODE *curr = devices->head;
 
     while (curr != NULL) {
-        if (memcmp(curr->device.mac_address, dev->mac_address, 6) == 0) {
+        if (memcmp(curr->packet.mac_address, dev->mac_address, 6) == 0) {
             if (prev == NULL) {
                 devices->head = curr->next;
                 free(curr);
@@ -2438,11 +2655,11 @@ int remove_device(DEVICE_LIST *devices, const DISCOVERED_DEVICE *dev) {
     return -1;
 }
 
-DEVICE_NODE *device_exists(const DEVICE_LIST *devices, const DISCOVERED_DEVICE *dev) {
+PACKET_NODE *device_exists(const PACKET_LIST *devices, const PACKET_INFO *dev) {
     if (devices == NULL) return NULL;
 
-    for (DEVICE_NODE *curr = devices->head; curr != NULL; curr = curr->next) {
-        if (memcmp(curr->device.mac_address, dev->mac_address, 6) == 0) return curr;
+    for (PACKET_NODE *curr = devices->head; curr != NULL; curr = curr->next) {
+        if (memcmp(curr->packet.mac_address, dev->mac_address, 6) == 0) return curr;
     }
     return NULL;
 }

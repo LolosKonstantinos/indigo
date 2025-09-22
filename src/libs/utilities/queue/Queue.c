@@ -156,7 +156,6 @@ QNODE *queue_pop(QUEUE *queue, QOPT option) {
     pthread_mutex_lock(&queue->mutex);
 
 
-
     //block until there is a new node
     while ((queue->firstNode == NULL) && (option == QOPT_BLOCK)) {
         pthread_cond_wait(&queue->cond, &queue->mutex);

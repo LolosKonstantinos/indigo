@@ -123,7 +123,7 @@ int load_psw_salt(unsigned char **salt) {
     if (salt == NULL) return INDIGO_ERROR_INVALID_PARAM;
 
     file_name = malloc(strlen(INDIGO_PSW_DIR) + strlen("/salt.dat") + 1);
-    if (file_name == NULL) return INDIGO_ERROR_MEMORY_ERROR;
+    if (file_name == NULL) return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     strcpy(file_name, INDIGO_PSW_DIR);
     strcat(file_name, "/salt.dat");
 
@@ -298,7 +298,7 @@ int save_password_hash(const char* password, const uint64_t psw_len) {
     if (password == NULL || psw_len == 0) return INDIGO_ERROR_INVALID_PARAM;
 
     psw_hash = (char *)malloc(crypto_pwhash_STRBYTES +1);
-    if (psw_hash == NULL) return INDIGO_ERROR_MEMORY_ERROR;
+    if (psw_hash == NULL) return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
 
     ret = load_key_derivation_settings(&psw_settings);
     if (ret != INDIGO_SUCCESS) {
@@ -356,7 +356,7 @@ int load_password_hash(char** hash) {
     file_name = malloc(strlen(INDIGO_PSW_DIR) + strlen(INDIGO_PSW_HASH_FILE_NAME) + 1);
     if (file_name == NULL) {
         *hash = NULL;
-        return INDIGO_ERROR_MEMORY_ERROR;
+        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
     strcpy(file_name, INDIGO_PSW_DIR);
     strcat(file_name, INDIGO_PSW_HASH_FILE_NAME);
@@ -387,7 +387,7 @@ int load_password_hash(char** hash) {
         free(psw_hash);
         fclose(fp);
         *hash = NULL;
-        return INDIGO_ERROR_MEMORY_ERROR;
+        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
 
     fread(psw_hash, 1, crypto_pwhash_STRBYTES, fp);
@@ -432,7 +432,7 @@ int create_signing_key_pair(const unsigned char* const master_key) {
 
 
     cipher = (unsigned char *)malloc(crypto_secretbox_MACBYTES + sizeof(SIGNING_KEY_PAIR));
-    if (cipher == NULL) return INDIGO_ERROR_MEMORY_ERROR;
+    if (cipher == NULL) return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
 
     nonce = (unsigned char *)malloc(crypto_secretbox_NONCEBYTES);
 
@@ -453,7 +453,7 @@ int create_signing_key_pair(const unsigned char* const master_key) {
     }
 
     file_name = malloc(strlen(INDIGO_KEY_DIR) + strlen(INDIGO_SIGN_KEY_FILE_NAME) + 1);
-    if (file_name == NULL) return INDIGO_ERROR_MEMORY_ERROR;
+    if (file_name == NULL) return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     strcpy(file_name, INDIGO_PSW_DIR);
     strcat(file_name, INDIGO_SIGN_KEY_FILE_NAME);
 
@@ -484,7 +484,7 @@ int load_signing_key_pair(SIGNING_KEY_PAIR *key_pair,const unsigned char* master
     int ret = 0;
 
     file_name = malloc(strlen(INDIGO_KEY_DIR) + strlen(INDIGO_SIGN_KEY_FILE_NAME) + 1);
-    if (file_name == NULL) return INDIGO_ERROR_MEMORY_ERROR;
+    if (file_name == NULL) return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     strcpy(file_name, INDIGO_PSW_DIR);
     strcat(file_name, INDIGO_SIGN_KEY_FILE_NAME);
 
@@ -507,13 +507,13 @@ int load_signing_key_pair(SIGNING_KEY_PAIR *key_pair,const unsigned char* master
     cipher = (unsigned char *)malloc(crypto_secretbox_KEYBYTES + sizeof(SIGNING_KEY_PAIR));
     if (cipher == NULL) {
         fclose(fp);
-        return INDIGO_ERROR_MEMORY_ERROR;
+        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
     nonce = (unsigned char *)malloc(crypto_secretbox_NONCEBYTES);
     if (nonce == NULL) {
         fclose(fp);
         free(cipher);
-        return INDIGO_ERROR_MEMORY_ERROR;
+        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
 
     fread(nonce, 1, crypto_secretbox_NONCEBYTES, fp);
@@ -538,3 +538,7 @@ int load_signing_key_pair(SIGNING_KEY_PAIR *key_pair,const unsigned char* master
     return INDIGO_SUCCESS;
 }
 
+int sign_buffer(const SIGNING_KEY_PAIR *key_pair, const unsigned char* buffer, uint64_t buffer_len,
+                                                  unsigned char *signed_buffer, uint64_t *signed_len) {
+    return crypto_sign(signed_buffer, signed_len,buffer, buffer_len, key_pair->secret);
+}
