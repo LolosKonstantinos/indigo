@@ -5,16 +5,6 @@
 #ifndef INDIGO_ERRORS_H
 #define INDIGO_ERRORS_H
 
-static unsigned int indigo_last_error = 0;
-
-inline unsigned int indigo_get_last_error() {
-    return indigo_last_error;
-}
-
-inline void indigo_set_error(unsigned int err) {
-    indigo_last_error = err;
-}
-
 #define INDIGO_SUCCESS 0
 #define INDIGO_ERROR 1
 

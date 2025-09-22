@@ -242,7 +242,7 @@ int send_packet(int port, uint32_t addr, SOCKET socket, PACKET *packet, EFLAG *f
 ///                                                       ///
 /////////////////////////////////////////////////////////////
 
-void build_packet(PACKET *packet, const unsigned pac_type, void* data);
+void build_packet(PACKET * restrict packet, const unsigned pac_type,const void * restrict data);
 int create_handle_array_from_send_info(const SEND_INFO *info, size_t infolen, HANDLE **handles, size_t *hCount);
 void free_send_info(const SEND_INFO *info);
 int allocate_recv_info(RECV_INFO **info);

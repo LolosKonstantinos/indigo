@@ -65,11 +65,11 @@ int init_session(int port, uint32_t address,SESSION *session) {
 
 //generate the session keys
     public_key = sodium_malloc(crypto_box_PUBLICKEYBYTES);
-    if (public_key == NULL) return INDIGO_ERROR_MEMORY_ERROR;
+    if (public_key == NULL) return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     secret_key = sodium_malloc(crypto_box_SECRETKEYBYTES);
     if (secret_key == NULL) {
         sodium_free(public_key);
-        return INDIGO_ERROR_MEMORY_ERROR;
+        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
     ret = crypto_box_keypair(public_key, secret_key);
     if (ret != 0) {
@@ -170,7 +170,7 @@ int send_key_exchange_packet(const SOCKET *sock,const uint32_t addr,const int po
 
     buf.buf = malloc(SESSION_PACKET_SIZE);
     if (buf.buf == NULL) {
-        return INDIGO_ERROR_MEMORY_ERROR;
+        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
     memcpy(buf.buf, packet, SESSION_PACKET_SIZE);
     buf.len = SESSION_PACKET_SIZE;
@@ -238,7 +238,7 @@ int wait_for_key_exchange_packet(const SOCKET *sock, uint32_t addr, int port, SE
 
     buf.buf = malloc(SESSION_PACKET_SIZE);
     if (buf.buf == NULL) {
-        return INDIGO_ERROR_MEMORY_ERROR;
+        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
 
     overlapped.hEvent = WSACreateEvent();
@@ -312,7 +312,7 @@ int wait_for_key_exchange_packet(const SOCKET *sock, uint32_t addr, int port, SE
         case seskey:
             *data = malloc(32);
             if (*data == NULL) {
-                return INDIGO_ERROR_MEMORY_ERROR;
+                return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
             }
             memcpy(*data,((SESSION_KEY *)pmsg)->key,32);
             *size = 32;
@@ -321,7 +321,7 @@ int wait_for_key_exchange_packet(const SOCKET *sock, uint32_t addr, int port, SE
         case sesnonce:
             *data = malloc(64);
             if (*data == NULL) {
-                return INDIGO_ERROR_MEMORY_ERROR;
+                return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
             }
             memcpy(*data,((SESSION_NONCE *)pmsg)->nonce,64);
             *size = 64;
@@ -330,7 +330,7 @@ int wait_for_key_exchange_packet(const SOCKET *sock, uint32_t addr, int port, SE
         case sessigned_key:
             *data = malloc(32 + crypto_sign_BYTES);
             if (*data == NULL) {
-                return INDIGO_ERROR_MEMORY_ERROR;
+                return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
             }
             memcpy(*data,((SESSION_SIGNED_KEY *)pmsg)->key,32 + crypto_sign_BYTES);
             *size = 32 + crypto_sign_BYTES;
@@ -339,7 +339,7 @@ int wait_for_key_exchange_packet(const SOCKET *sock, uint32_t addr, int port, SE
         case sessigned_nonce:
             *data = malloc(64 + crypto_sign_BYTES);
             if (*data == NULL) {
-                return INDIGO_ERROR_MEMORY_ERROR;
+                return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
             }
             memcpy(*data,((SESSION_SIGNED_NONCE *)pmsg)->nonce,64 + crypto_sign_BYTES);
             *size = 64 + crypto_sign_BYTES;
@@ -368,7 +368,7 @@ int session_message_new(void ** msg, uint16_t type, void *data, uint16_t size) {
     *msg = malloc(SESSION_PACKET_SIZE);
 
     if (*msg == NULL) {
-        return INDIGO_ERROR_MEMORY_ERROR;
+        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
 
     if (type < seskey && type > seserr) {

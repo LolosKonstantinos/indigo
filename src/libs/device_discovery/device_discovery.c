@@ -29,13 +29,11 @@ SOCKET_NODE *get_discovery_sockets(const int port, const uint32_t multicast_addr
     err = get_compatible_interfaces(&p_ip_subnet, &addr_count);
     if (err != INDIGO_SUCCESS) {
         fprintf(stderr, "get_compatible_interfaces failed in get_discovery_sockets\n");
-        indigo_set_error(err);
         return NULL;
     }
 
     if (p_ip_subnet == NULL) {
         fprintf(stderr, "NO VALID INTERFACE FOUND...\n");
-        indigo_set_error(INDIGO_ERROR_NO_ADDRESS_FOUND);
         return NULL;
     }
 
@@ -46,7 +44,7 @@ SOCKET_NODE *get_discovery_sockets(const int port, const uint32_t multicast_addr
             fprintf(stderr, "Failed to create disc node\n");
             free_discv_sock_ll(first_sock);
             free(p_ip_subnet);
-            indigo_set_error(INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
+
             return NULL;
         }
 
@@ -72,17 +70,6 @@ SOCKET_NODE *get_discovery_sockets(const int port, const uint32_t multicast_addr
             free_discv_sock_ll(first_sock);
             free(p_ip_subnet);
             err = WSAGetLastError();
-            switch (err) {
-            case WSANOTINITIALISED:
-                indigo_set_error(INDIGO_ERROR_WINSOCK2_NOT_INITIALIZED);
-                break;
-            case WSAENETDOWN:
-                indigo_set_error(INDIGO_ERROR_NETWORK_SUBSYS_DOWN);
-                break;
-            default:
-                indigo_set_error(INDIGO_ERROR_INVALID_STATE);
-                break;
-            }
             return NULL;
         }
 
@@ -92,17 +79,6 @@ SOCKET_NODE *get_discovery_sockets(const int port, const uint32_t multicast_addr
             perror("Failed to add membership");
             free_discv_sock_ll(first_sock);
             free(p_ip_subnet);
-            switch (err) {
-            case WSANOTINITIALISED:
-                indigo_set_error(INDIGO_ERROR_WINSOCK2_NOT_INITIALIZED);
-                break;
-            case WSAENETDOWN:
-                indigo_set_error(INDIGO_ERROR_NETWORK_SUBSYS_DOWN);
-                break;
-            default:
-                indigo_set_error(INDIGO_ERROR_INVALID_STATE);
-                break;
-            }
             return NULL;
         }
 
@@ -111,17 +87,6 @@ SOCKET_NODE *get_discovery_sockets(const int port, const uint32_t multicast_addr
             perror("Failed to set multicast loop");
             free_discv_sock_ll(first_sock);
             free(p_ip_subnet);
-            switch (err) {
-            case WSANOTINITIALISED:
-                indigo_set_error(INDIGO_ERROR_WINSOCK2_NOT_INITIALIZED);
-                break;
-            case WSAENETDOWN:
-                indigo_set_error(INDIGO_ERROR_NETWORK_SUBSYS_DOWN);
-                break;
-            default:
-                indigo_set_error(INDIGO_ERROR_INVALID_STATE);
-                break;
-            }
             return NULL;
         }
     }
@@ -851,7 +816,7 @@ int send_packet(int port, uint32_t addr, SOCKET socket, PACKET *packet, EFLAG *f
             goto cleanup;
         }
         temp_info.buf->buf = temp;
-        memcpy(temp_info.buf->buf, &packet, sizeof(PACKET));
+        memcpy(temp_info.buf->buf, packet, sizeof(PACKET));
         temp_info.buf->len = sizeof(PACKET);
 
         temp = malloc(sizeof(OVERLAPPED));
@@ -1967,7 +1932,7 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
                 //no discovery sockets, no device discovery
                 set_event_flag(args->flag, EF_TERMINATION | EF_ERROR);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
-                *process_return = (int)indigo_get_last_error();
+                *process_return = INDIGO_ERROR_NO_ADDRESS_FOUND;
                 pthread_mutex_unlock(&(args->sockets->mutex));
                 printf("DEBUG: update exit\n");
                 fflush(stdout);
