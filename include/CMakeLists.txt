@@ -24,7 +24,7 @@ target_include_directories(path_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(event_flag_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(queue_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(buffer_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
-target_include_directories(mempool INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(mempool_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 
 
 target_include_directories(indigo_errors INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})

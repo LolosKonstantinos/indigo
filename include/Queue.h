@@ -31,10 +31,10 @@ typedef enum queue_options {
  *even though it is harder to use as the queue doesn't store a specific data type, it can be more versatile
  */
 typedef struct QNODE {
+ struct QNODE *next;
  void *buf; //if the buffer contains a pointer to another buffer or other heap data ==> MEMORY LEAK!
  size_t size;//size of the buffer
  QET type;
- struct QNODE *next;
 } QNODE;
 
 typedef struct QUEUE {

@@ -65,13 +65,14 @@ typedef struct udp_packet{
     uint32_t magic_number;
     unsigned char pac_version;
     unsigned char pac_type;
+    int16_t alignment;
     char data[DPAC_DATA_BYTES];
 }PACKET;
 
 //for get_discovery_sockets()
 typedef struct SOCKET_LL_NODE {
-    SOCKET sock;
     struct SOCKET_LL_NODE *next;
+    SOCKET sock;
 }SOCKET_LL_NODE, SOCKET_NODE;
 
 typedef struct SOCKET_LL {
@@ -92,13 +93,15 @@ typedef struct packet_info {
     struct sockaddr_in address;
     uint8_t mac_address[6];
     uint8_t mac_address_len;
+    uint8_t alignment;
     SOCKET socket;
     PACKET packet;
+
 }PACKET_INFO;
 
 typedef struct PACKET_INFO_NODE {
-    PACKET_INFO packet;
     struct PACKET_INFO_NODE *next;
+    PACKET_INFO packet;
 }PACKET_INFO_NODE, PACKET_NODE;
 
 
@@ -113,11 +116,11 @@ typedef struct PACKET_INFO_LIST {
 #define INDIGO_IP_STATE_HARD_BANNED 2
 
 typedef struct IP_SEND_RATE {
-    uint32_t ip;
     time_t last_dis_packet;
     time_t last_request;
-    uint8_t state;
     time_t ignore_until;
+    uint32_t ip;
+    uint8_t state;
 }IP_SEND_RATE;
 
 typedef struct IP_RATE_ARRAY {
