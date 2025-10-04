@@ -1,3 +1,5 @@
 add_subdirectory(device_discovery)
 add_subdirectory(file_transfer)
 add_subdirectory(utilities)
+add_subdirectory(gui)
+add_subdirectory(cli)

@@ -1,3 +1,6 @@
+add_subdirectory(gui)
+add_subdirectory(cli)
+
 # Create an interface target to hold the include directories.
 add_library(dev_disc_includes INTERFACE device_discovery.h)
 

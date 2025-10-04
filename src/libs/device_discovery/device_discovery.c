@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <sodium.h>
 
+//todo split this library to the device discovery and the receiving and managing part
 
 /*Creates a link list of sockets used for device discovery
  *the sockets are bound to IPs of different subnets covering the maximum network area.
