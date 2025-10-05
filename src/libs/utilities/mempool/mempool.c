@@ -476,7 +476,7 @@ void free_extension_list_manual(mempool_t *pool, EXT_HANDLE handle) {
         }
         else if (*(void **)curr == NULL) {
             private->last_free_cell = curr;
-
+        }
     }
 
     curr = private->first_free_cell;
