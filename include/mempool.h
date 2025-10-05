@@ -32,15 +32,13 @@ struct mempool {
     int (*is_full)(const mempool_t *);
     float (*get_capacity)(const mempool_t *);
     size_t (*get_mempool_size)(const mempool_t *);
-    size_t (*get_cell_size)(const mempool_t *);
 
     struct mempool_private *private;
 };
 
 typedef struct mempool_attr {
     float growth_factor;
-    char small_cell_size;
-    char dynamic_pool_size;
+    char dynamic_pool;
 }mempool_attr;
 
 //init and destroy functionalities
@@ -52,14 +50,8 @@ void free_mempool(mempool_t * pool);
 //allocators and deallocators
 
 //default dynamic pool
-void *dalloc_default(mempool_t *pool);
-void dfree_default(mempool_t *pool, void *cell);
-
-
-//static pool (both are true constant time)
-void *salloc(mempool_t *pool);
-void sfree(mempool_t *pool, void *cell);
-
+void *dalloc(mempool_t *pool);
+void dfree(mempool_t *pool, void *cell);
 
 //extension utilities
 int memextend_list(mempool_t *pool);
@@ -68,12 +60,9 @@ EXT_HANDLE memextend_list_manual(mempool_t* pool, size_t cell_count);
 void free_extension_list_manual(mempool_t *pool, EXT_HANDLE handle);
 void remove_extension_list(mempool_t *pool, ext_ll *ext);
 
-int memextend_tree(mempool_t *pool);
-
-//tree extension utils (only for true exp growth)
-int insert_ext(mempool_t *pool, ext_tree *ext);
-int delete_ext(mempool_t *pool, ext_tree *ext);
-ext_tree *find_ext(mempool_t *pool, ext_tree *ext);
+//static pool (both are true constant time)
+void *salloc(mempool_t *pool);
+void sfree(mempool_t *pool, void *cell);
 
 //universal utilities
 int is_full(const mempool_t *pool);

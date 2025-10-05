@@ -37,7 +37,7 @@ int load_key_derivation_settings(PSW_HASH_SETTINGS *settings);
 
 int save_password_hash(const char* password, const uint64_t psw_len);
 int load_password_hash(char** hash);
-int cmp_password_hash(char* psw, uint64_t psw_len);
+int cmp_password_hash(const char* psw, uint64_t psw_len);
 
 int create_signing_key_pair(const unsigned char* master_key);
 int load_signing_key_pair(SIGNING_KEY_PAIR *key_pair,const unsigned char* master_key);

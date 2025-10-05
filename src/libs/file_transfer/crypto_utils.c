@@ -398,8 +398,8 @@ int load_password_hash(char** hash) {
     return INDIGO_SUCCESS;
 }
 
-//this function returns 0 on success 1 on invalid signature and -1 on invalid input
-int cmp_password_hash(char* psw, uint64_t psw_len) {
+//this function returns 0 on success, 1 on invalid signature and -1 on invalid input
+int cmp_password_hash(const char* psw, const uint64_t psw_len) {
     char *stored_hash = NULL;
     int ret = 0;
 
