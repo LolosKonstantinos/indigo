@@ -7,6 +7,7 @@
 
 #include <stdlib.h>
 
+
 #define MEMPOOL_MAX_SIZE (1<<30) //limit pool size to 1 GiB
 #define MEMPOOL_MAX_EXTENSION_SIZE (1<<30) //limit each extension to 1 GiB
 
