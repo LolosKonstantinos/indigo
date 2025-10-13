@@ -6,7 +6,7 @@
 #define MEMPOOL_H
 
 #include <stdlib.h>
-
+#include <pthread.h>
 
 #define MEMPOOL_MAX_SIZE (1<<30) //limit pool size to 1 GiB
 #define MEMPOOL_MAX_EXTENSION_SIZE (1<<30) //limit each extension to 1 GiB
@@ -30,11 +30,12 @@ struct mempool {
     memextend extend;
     free_ext free_extension;
 
-    int (*is_full)(const mempool_t *);
     float (*get_capacity)(const mempool_t *);
-    size_t (*get_mempool_size)(const mempool_t *);
 
     struct mempool_private *private;
+
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
 };
 
 typedef struct mempool_attr {
@@ -66,11 +67,11 @@ void *salloc(mempool_t *pool);
 void sfree(mempool_t *pool, void *cell);
 
 //universal utilities
-int is_full(const mempool_t *pool);
-float get_capacity(const mempool_t *pool);
-size_t get_mempool_size(const mempool_t *pool);
-size_t get_cell_size(const mempool_t *pool);
-size_t get_cell_count(const mempool_t *pool);
+int is_full(mempool_t* pool);
+size_t get_capacity(mempool_t* pool);
+size_t get_mempool_size(mempool_t *pool);
+size_t get_cell_size(mempool_t *pool);
+size_t get_cell_count(mempool_t *pool);
 
 //todo
 void optimise_mempool(mempool_t *pool);

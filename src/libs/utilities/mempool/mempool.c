@@ -30,7 +30,6 @@ struct mempool_private {
 
     uint8_t flags;         //flag attributes for the pool
 
-    uint16_t zero;
 
     void *ext;//the root of an AVL tree of extensions or the first node of linked list
 };
@@ -80,10 +79,12 @@ mempool_t *new_mempool(const size_t cell_count, size_t cell_size, const mempool_
         return NULL;
     }
 
+    //initialize the mutex
+    pthread_mutex_init(&pool->mutex, NULL);
+    pthread_cond_init(&pool->cond, NULL);
+
     //initialize the universal functions
-    pool->is_full = is_full;
     pool->get_capacity = get_capacity;
-    pool->get_mempool_size = get_mempool_size;
 
     //initialize the standard members
     private->cell_size = cell_size;
@@ -169,6 +170,7 @@ void free_mempool(mempool_t *pool)  {
     mempool_private_t *private;
 
     if (pool == NULL) return;
+    pthread_mutex_lock(&pool->mutex);
 
     private = pool->private;
 
@@ -185,9 +187,15 @@ void free_mempool(mempool_t *pool)  {
             free(prev);
         }
     }
+
     //free the pool structure
     free(private);
+    pthread_mutex_unlock(&pool->mutex);
+
+    pthread_mutex_destroy(&pool->mutex);
+    pthread_cond_destroy(&pool->cond);
     free(pool);
+
 }
 
 
@@ -199,6 +207,7 @@ void *dalloc(mempool_t *pool) {
 
 
     if (pool == NULL) return NULL;
+    pthread_mutex_lock(&pool->mutex);
 
     private = pool->private;
 
@@ -218,7 +227,7 @@ void *dalloc(mempool_t *pool) {
         ext = *(void **)data_addr;
         ext->capacity--;
     }
-
+    pthread_mutex_unlock(&pool->mutex);
     return cell;
 }
 
@@ -227,6 +236,8 @@ void dfree(mempool_t *pool, void *cell) {
     mempool_private_t *private;
     uintptr_t data_addr;
     if (pool == NULL || cell == NULL) return;
+
+    pthread_mutex_lock(&pool->mutex);
 
     private = pool->private;
 
@@ -270,6 +281,7 @@ void dfree(mempool_t *pool, void *cell) {
         }
         else private->flags |= MEMPOOL_FLAG_EMPTY_EXTENSION;
     }
+    pthread_mutex_unlock(&pool->mutex);
 }
 
 
@@ -278,6 +290,8 @@ void *salloc(mempool_t *pool) {
     mempool_private_t *private;
 
     if (pool == NULL) return NULL;
+
+    pthread_mutex_lock(&pool->mutex);
 
     private = pool->private;
 
@@ -293,6 +307,8 @@ void *salloc(mempool_t *pool) {
 
     private->capacity++;
 
+    pthread_mutex_unlock(&pool->mutex);
+
     return cell;
 }
 
@@ -300,12 +316,14 @@ void sfree(mempool_t *pool, void *cell) {
     mempool_private_t *private;
 
     if (pool == NULL || cell == NULL) return;
-
+    pthread_mutex_lock(&pool->mutex);
     private = pool->private;
 
     memcpy(cell,&(private->first_free_cell), sizeof(void *));
     private->first_free_cell = cell;
     private->capacity--;
+
+    pthread_mutex_unlock(&pool->mutex);
 }
 
 
@@ -318,6 +336,9 @@ int memextend_list(mempool_t *pool) {
     void *curr_cell, *next_cell;
 
     if (pool == NULL) return -1;
+
+    pthread_mutex_lock(&pool->mutex);
+
     private = pool->private;
 
     cell_count = get_cell_count(pool);
@@ -376,6 +397,7 @@ int memextend_list(mempool_t *pool) {
     *(void **)curr_cell = ext->data + sizeof(void *);
     private->last_free_cell = ext->data + sizeof(void *) + (ext_cells - 1) * private->cell_size;
 
+    pthread_mutex_unlock(&pool->mutex);
 
     return 0;
 }
@@ -388,6 +410,9 @@ EXT_HANDLE memextend_list_manual(mempool_t* pool, size_t cell_count) {
     void *curr_cell, *next_cell;
 
     if (pool == NULL) return NULL;
+
+    pthread_mutex_lock(&pool->mutex);
+
     private = pool->private;
 
 
@@ -416,7 +441,7 @@ EXT_HANDLE memextend_list_manual(mempool_t* pool, size_t cell_count) {
     ext->next = private->ext;
     private->ext = ext;
 
-    //initialize the extenion
+    //initialize the extension
     ext->first_free_cell = ext->data + sizeof(void *);
     ext->capacity = cell_count;
     ext->handle = ext;
@@ -445,6 +470,7 @@ EXT_HANDLE memextend_list_manual(mempool_t* pool, size_t cell_count) {
     *(void **)curr_cell = ext->data + sizeof(void *);
     private->last_free_cell = ext->data + sizeof(void *) + (cell_count - 1) * private->cell_size;
 
+    pthread_mutex_unlock(&pool->mutex);
     return ext->handle;
 }
 
@@ -455,6 +481,8 @@ void free_extension_list_manual(mempool_t *pool, EXT_HANDLE handle) {
     uintptr_t data_addr;
 
     if (pool == NULL || handle == NULL) return;
+
+    pthread_mutex_lock(&pool->mutex);
 
     private = pool->private;
     ext = handle;
@@ -503,6 +531,7 @@ void free_extension_list_manual(mempool_t *pool, EXT_HANDLE handle) {
 
     _aligned_free(ext->data);
     free(ext);
+    pthread_mutex_unlock(&pool->mutex);
 }
 
 void remove_extension_list(mempool_t *pool, ext_ll *ext) {
@@ -512,6 +541,8 @@ void remove_extension_list(mempool_t *pool, ext_ll *ext) {
     uintptr_t data_addr;
 
     if (pool == NULL || ext == NULL) return;
+
+    pthread_mutex_lock(&pool->mutex);
 
     private = pool->private;
 
@@ -560,54 +591,70 @@ void remove_extension_list(mempool_t *pool, ext_ll *ext) {
 
     _aligned_free(ext->data);
     free(ext);
+
+    pthread_mutex_unlock(&pool->mutex);
 }
 
-int is_full(const mempool_t *pool) {
+int is_full(mempool_t* pool) {
+    int result;
     if (pool == NULL) return 0;
+    pthread_mutex_lock(&pool->mutex);
     mempool_private_t *private = pool->private;
-    return private->first_free_cell == NULL;
+    result = private->first_free_cell == NULL;
+    pthread_mutex_unlock(&pool->mutex);
+    return result;
 }
 
-size_t get_mempool_size(const mempool_t *pool) {
+size_t get_mempool_size(mempool_t *pool) {
     size_t size = 0;
     mempool_private_t *private;
     if (pool == NULL) return -1;
+    pthread_mutex_lock(&pool->mutex);
     private = pool->private;
     size += private->cell_count * private->cell_size;
     for (ext_ll *ext = private->ext; ext != NULL; ext = ext->next) {
         size += ext->cell_count * private->cell_size;
     }
+    pthread_mutex_unlock(&pool->mutex);
     return  size;
 }
 
-float get_capacity(const mempool_t *pool) {
+size_t get_capacity(mempool_t* pool) {
     size_t capacity = 0;
     mempool_private_t *private;
     if (pool == NULL) return 0;
+    pthread_mutex_lock(&pool->mutex);
     private = pool->private;
     capacity = private->capacity;
     for (ext_ll *ext = private->ext; ext != NULL; ext = ext->next) {
         capacity += ext->capacity;
     }
+    pthread_mutex_unlock(&pool->mutex);
     return capacity;
 }
 
-size_t get_cell_size(const mempool_t *pool) {
+size_t get_cell_size(mempool_t *pool) {
     mempool_private_t *private;
+    size_t cell_size = 0;
     if (pool == NULL) return 0;
+    pthread_mutex_lock(&pool->mutex);
     private = pool->private;
-    return private->cell_size;
+    cell_size = private->cell_size;
+    pthread_mutex_unlock(&pool->mutex);
+    return cell_size;
 }
 
-size_t get_cell_count(const mempool_t *pool) {
+size_t get_cell_count(mempool_t *pool) {
     size_t cell_count = 0;
     mempool_private_t *private;
     if (pool == NULL) return 0;
+    pthread_mutex_lock(&pool->mutex);
     private = pool->private;
 
     cell_count = private->cell_count;
     for (ext_ll *ext = private->ext; ext != NULL; ext = ext->next) {
         cell_count += ext->cell_count;
     }
+    pthread_mutex_unlock(&pool->mutex);
     return cell_count;
 }
