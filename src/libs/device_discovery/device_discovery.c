@@ -642,14 +642,14 @@ int send_discovery_packets(
     return routine_ret;
 }
 
-int register_single_discovery_receiver(SOCKET sock, RECV_INFO **info) {
+int register_single_receiver(SOCKET sock, RECV_INFO **info, mempool_t* mempool) {
     RECV_INFO *temp_info;
 
     int recv_ret;
 
 
     if (*info == NULL) {
-        if (allocate_recv_info(&temp_info)) {
+        if (allocate_recv_info(&temp_info, mempool)) {
             fprintf(stderr, "allocate_recv_info() failed in send_discovery_packets()\n");
             return 1;
         }
@@ -671,7 +671,7 @@ int register_single_discovery_receiver(SOCKET sock, RECV_INFO **info) {
         if (recv_ret == SOCKET_ERROR) {
             if (WSAGetLastError() != WSA_IO_PENDING) {
                 fprintf(stderr,"WSARecvFrom() failed in register_single_discovery_receiver(): %d\n", WSAGetLastError());
-                free_recv_info(temp_info);
+                free_recv_info(temp_info, mempool);
                 free(temp_info);
                 return 1;
             }
@@ -700,7 +700,7 @@ int register_single_discovery_receiver(SOCKET sock, RECV_INFO **info) {
     return 0;
 }
 
-int register_multiple_discovery_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, EFLAG *flag) {
+int register_multiple_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, mempool_t* mempool, EFLAG *flag) {
     void *temp = NULL;
     RECV_INFO *tempinf = NULL;
 
@@ -724,7 +724,7 @@ int register_multiple_discovery_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, 
             }
             info->head = temp;
 
-            if (allocate_recv_info_fields(info->head + info->size)) {
+            if (allocate_recv_info_fields(info->head + info->size, mempool)) {
                 fprintf(stderr, "allocate_recv_info_fields() failed in register_multiple_discovery_receivers()\n");
                 temp = realloc(info->head, (info->size) * sizeof(RECV_INFO)); // we decrease the size by one
                 if (temp == NULL) {
@@ -746,7 +746,7 @@ int register_multiple_discovery_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, 
 
             flag_val = get_event_flag(flag);
             if (flag_val & EF_OVERRIDE_IO) {
-                free_recv_array(info);
+                free_recv_array(info, mempool);
                 wait_on_flag_condition(flag, EF_OVERRIDE_IO, OFF);
                 break;
             }
@@ -925,7 +925,7 @@ void build_packet(PACKET * restrict packet, const unsigned pac_type,const void *
         packet->pac_version = PAC_VERSION;
         packet->pac_type = pac_type;
         //todo: we will use the username
-        if (gethostname(packet->data, DPAC_DATA_BYTES) != 0 ) {
+        if (gethostname(packet->data, PAC_DATA_BYTES) != 0 ) {
             strcpy(packet->data, "unknown_hostname");
         }
     }
@@ -935,7 +935,7 @@ void build_packet(PACKET * restrict packet, const unsigned pac_type,const void *
         packet->magic_number = MAGIC_NUMBER;
         packet->pac_version = PAC_VERSION;
         packet->pac_type = pac_type;
-        memcpy(packet->data, data, DPAC_DATA_BYTES);
+        memcpy(packet->data, data, PAC_DATA_BYTES);
     }
 }
 
@@ -973,7 +973,7 @@ void free_send_info(const SEND_INFO *info) {
     }
 }
 
-int allocate_recv_info(RECV_INFO **info) {
+int allocate_recv_info(RECV_INFO **info, mempool_t* mempool) {
     void *temp;
 
     if (info == NULL) return 1;
@@ -1024,9 +1024,9 @@ int allocate_recv_info(RECV_INFO **info) {
     (*info)->buf = temp;
     (*info)->buf->buf = NULL;
 
-    temp = malloc(sizeof (PACKET));
+    temp = mempool->alloc(mempool);
     if (temp == NULL) {
-        fprintf(stderr, "malloc() failed in allocate_recv_info()\n");
+        fprintf(stderr, "mempool alloc failed in allocate_recv_info()\n");
 
         free((*info)->buf);
         free((*info)->fromLen);
@@ -1037,13 +1037,13 @@ int allocate_recv_info(RECV_INFO **info) {
         return 1;
     }
     (*info)->buf->buf = temp;
-    (*info)->buf->len = sizeof (PACKET);
+    (*info)->buf->len = PAC_DATA_BYTES + sizeof(PACKET_INFO);
 
     temp = malloc(sizeof (OVERLAPPED));
     if (temp == NULL) {
         fprintf(stderr, "malloc() failed in allocate_recv_info()\n");
 
-        free((*info)->buf->buf);
+        mempool->free(mempool,(*info)->buf->buf);
         free((*info)->buf);
         free((*info)->fromLen);
         free((*info)->source);
@@ -1058,7 +1058,7 @@ int allocate_recv_info(RECV_INFO **info) {
         fprintf(stderr, "WSACreateEvent failed in allocate_recv_info()\n");
 
         free((*info)->overlapped);
-        free((*info)->buf->buf);
+        mempool->free(mempool,(*info)->buf->buf);
         free((*info)->buf);
         free((*info)->fromLen);
         free((*info)->source);
@@ -1074,7 +1074,7 @@ int allocate_recv_info(RECV_INFO **info) {
 
         WSACloseEvent((*info)->overlapped->hEvent);
         free((*info)->overlapped);
-        free((*info)->buf->buf);
+        mempool->free(mempool,(*info)->buf->buf);
         free((*info)->buf);
         free((*info)->fromLen);
         free((*info)->source);
@@ -1092,7 +1092,7 @@ int allocate_recv_info(RECV_INFO **info) {
         free((*info)->flags);
         WSACloseEvent((*info)->overlapped->hEvent);
         free((*info)->overlapped);
-        free((*info)->buf->buf);
+        mempool->free(mempool,(*info)->buf->buf);
         free((*info)->buf);
         free((*info)->fromLen);
         free((*info)->source);
@@ -1108,7 +1108,7 @@ int allocate_recv_info(RECV_INFO **info) {
     return 0;
 }
 
-int allocate_recv_info_fields(RECV_INFO *info) {
+int allocate_recv_info_fields(RECV_INFO *info, mempool_t* mempool) {
     void *temp;
 
     if (info == NULL) return 1;
@@ -1140,7 +1140,7 @@ int allocate_recv_info_fields(RECV_INFO *info) {
     info->buf = temp;
     info->buf->buf = NULL;
 
-    temp = malloc(sizeof (PACKET));
+    temp = mempool->alloc(mempool);
     if (temp == NULL) {
         fprintf(stderr, "malloc() failed in allocate_recv_info()\n");
 
@@ -1151,13 +1151,13 @@ int allocate_recv_info_fields(RECV_INFO *info) {
         return 1;
     }
     info->buf->buf = temp;
-    info->buf->len = sizeof (PACKET);
+    info->buf->len = PAC_DATA_BYTES + sizeof(PACKET_INFO);
 
     temp = malloc(sizeof (OVERLAPPED));
     if (temp == NULL) {
         fprintf(stderr, "malloc() failed in allocate_recv_info()\n");
 
-        free(info->buf->buf);
+        mempool->free(mempool,info->buf->buf);
         free(info->buf);
         free(info->fromLen);
         free(info->source);
@@ -1171,7 +1171,7 @@ int allocate_recv_info_fields(RECV_INFO *info) {
         fprintf(stderr, "WSACreateEvent failed in allocate_recv_info()\n");
 
         free(info->overlapped);
-        free(info->buf->buf);
+        mempool->free(mempool,info->buf->buf);
         free(info->buf);
         free(info->fromLen);
         free(info->source);
@@ -1184,7 +1184,7 @@ int allocate_recv_info_fields(RECV_INFO *info) {
 
         WSACloseEvent(info->overlapped->hEvent);
         free(info->overlapped);
-        free(info->buf->buf);
+        mempool->free(mempool,info->buf->buf);
         free(info->buf);
         free(info->fromLen);
         free(info->source);
@@ -1199,7 +1199,7 @@ int allocate_recv_info_fields(RECV_INFO *info) {
         free(info->flags);
         WSACloseEvent(info->overlapped->hEvent);
         free(info->overlapped);
-        free(info->buf->buf);
+        mempool->free(mempool,info->buf->buf);
         free(info->buf);
         free(info->fromLen);
         free(info->source);
@@ -1213,12 +1213,12 @@ int allocate_recv_info_fields(RECV_INFO *info) {
     return 0;
 }
 
-void free_recv_info(const RECV_INFO *info) {
+void free_recv_info(const RECV_INFO *info, mempool_t* mempool) {
     if (info == NULL) return;
 
 
     if (info->buf) {
-        free(info->buf->buf);
+        mempool->free(mempool,info->buf->buf);
         free(info->buf);
     }
     if (info->overlapped) {
@@ -1372,7 +1372,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
     size_t hCount;
 
     PACKET pack;
-    PACKET_INFO packet_info;
+    PACKET_INFO *packet_info;
 
     uint32_t flag_val;
     DWORD wait_ret;
@@ -1404,7 +1404,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
     }
 
     //register all the sockets for receiving
-    ret = register_multiple_discovery_receivers(args->sockets,&info,args->flag);
+    ret = register_multiple_receivers(args->sockets,&info,args->mempool, args->flag);
     if (ret > 0) {
         set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
@@ -1424,7 +1424,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
     if (ret) {
         set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
-        free_recv_array(&info);
+        free_recv_array(&info, args->mempool);
         *process_return = ret;
         return process_return;
     }
@@ -1441,14 +1441,14 @@ int *recv_discovery_thread(RECV_ARGS *args) {
 
         if (flag_val & EF_OVERRIDE_IO) {
             free(handles);
-            free_recv_array(&info);
+            free_recv_array(&info, args->mempool);
             info.head = NULL;
             info.size = 0;
             hCount = 0;
 
             wait_on_flag_condition(args->flag, EF_OVERRIDE_IO, OFF);
 
-            ret = register_multiple_discovery_receivers(args->sockets,&info,args->flag);
+            ret = register_multiple_receivers(args->sockets,&info, args->mempool, args->flag);
             if (ret > 0) {
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
@@ -1469,7 +1469,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
             if (ret) {
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
-                free_recv_array(&info);
+                free_recv_array(&info, args->mempool);
                 *process_return = ret;
                 return process_return;
             }
@@ -1479,7 +1479,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
         }
         else if (flag_val & EF_TERMINATION) {
             free(handles);
-            free_recv_array(&info);
+            free_recv_array(&info, args->mempool);
             *process_return = 0;
             return process_return;
         }
@@ -1503,7 +1503,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
             set_event_flag(args->wake, EF_WAKE_MANAGER);
 
             free(handles);
-            free_recv_array(&info);
+            free_recv_array(&info, args->mempool);
 
             *process_return = 1;
             return process_return;
@@ -1514,7 +1514,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
         //the termination handle is signaled
         if (wait_ret == 0) {
             free(handles);
-            free_recv_array(&info);
+            free_recv_array(&info, args->mempool);
 
             *process_return = 0;
             return process_return;
@@ -1535,7 +1535,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                 printf("WaitForSingleObject() failed in recv_discovery_thread: %d\n", WSAGetLastError());
                 fflush(stdout);
                 free(handles);
-                free_recv_array(&info);
+                free_recv_array(&info, args->mempool);
 
                 *process_return = 0;
                 return process_return;
@@ -1547,13 +1547,13 @@ int *recv_discovery_thread(RECV_ARGS *args) {
 
                 //check the packet we received
 
-                if ((*(recv_info->bytes_recv) > sizeof(PACKET)) || (*(recv_info->bytes_recv) < DPAC_MIN_BYTES)){
+                if ((*(recv_info->bytes_recv) > sizeof(PACKET)) || (*(recv_info->bytes_recv) < PAC_MIN_BYTES)){
                     WSAResetEvent(handles[i]);
-                    if (register_single_discovery_receiver(recv_info->socket,&recv_info)) {
+                    if (register_single_receiver(recv_info->socket,&recv_info, args->mempool)) {
                         set_event_flag(args->flag, EF_TERMINATION);
                         set_event_flag(args->wake, EF_WAKE_MANAGER);
                         *process_return = INDIGO_ERROR_WINLIB_ERROR;
-                        free_recv_array(&info);
+                        free_recv_array(&info, args->mempool);
                         free(handles);
                         return process_return;
                     }
@@ -1565,9 +1565,10 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                         todo: the ban applies on the origin network
                         todo: you can do that by blocking the ip on that socket*/
 
-                //todo: the else is in case the ip is found for the first time
                 //here we just check if the ip is banned, we do not evaluate if it should be banned
-                if(ip_rate_search(ip_rates, ((struct sockaddr_in *)(recv_info->source))->sin_addr.S_un.S_addr, &rate_idx)) {
+                if(ip_rate_search(
+                    ip_rates, ((struct sockaddr_in *)(recv_info->source))->sin_addr.S_un.S_addr, &rate_idx)) {
+
                     ip_rate_get(ip_rates, rate_idx, &ip_send_rate);
                     if (ip_send_rate->state == INDIGO_IP_STATE_SOFT_BANNED){
                         if (time(NULL) > ip_send_rate->ignore_until) {
@@ -1577,33 +1578,39 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                     }
                 }
                 if (ip_send_rate->state != INDIGO_IP_STATE_DEFAULT) {
-                    if (register_single_discovery_receiver(recv_info->socket,&recv_info)) {
+                    if (register_single_receiver(recv_info->socket,&recv_info, args->mempool)) {
                         set_event_flag(args->flag, EF_TERMINATION);
                         set_event_flag(args->wake, EF_WAKE_MANAGER);
                         *process_return = INDIGO_ERROR_WINLIB_ERROR;
-                        free_recv_array(&info);
+                        free_recv_array(&info, args->mempool);
                         free(handles);
                         return process_return;
                     }
                     continue;
                 }
 
-                memset(&pack,0,sizeof(PACKET));
-                memcpy(&pack,recv_info->buf->buf,*(recv_info->bytes_recv));
+                //todo we do not copy any data. we just pass the buffer that we received on and allocate a new one
 
+                //todo prolly redundant
+                memset(&pack,0,sizeof(PACKET));
+                //everything we need to know is in the first 6 bytes, the rest is redundant
+                memcpy(&pack,recv_info->buf->buf,6);
+
+                //check the magic number (not an absolut way to check if a packet is for us but will prolly work)
                 if (pack.magic_number != MAGIC_NUMBER){
                     WSAResetEvent(handles[i]);
-                    if (register_single_discovery_receiver(recv_info->socket,&recv_info)) {
+                    if (register_single_receiver(recv_info->socket,&recv_info, args->mempool)) {
                         set_event_flag(args->flag, EF_TERMINATION);
                         set_event_flag(args->wake, EF_WAKE_MANAGER);
                         *process_return = INDIGO_ERROR_WINLIB_ERROR;
-                        free_recv_array(&info);
+                        free_recv_array(&info, args->mempool);
                         free(handles);
                         return process_return;
                     }
                     continue;
                 }
 
+                //impose a ban if needed (to avoid ddos)
                 switch (pack.pac_type) {
                     case MSG_INIT_PACKET:
                         current_time = time(NULL);
@@ -1621,28 +1628,37 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                         break;
                 }
                 if (ip_send_rate->state != INDIGO_IP_STATE_DEFAULT) {
-                    if (register_single_discovery_receiver(recv_info->socket,&recv_info)) {
+                    if (register_single_receiver(recv_info->socket,&recv_info, args->mempool)) {
                         set_event_flag(args->flag, EF_TERMINATION);
                         set_event_flag(args->wake, EF_WAKE_MANAGER);
                         *process_return = INDIGO_ERROR_WINLIB_ERROR;
-                        free_recv_array(&info);
+                        free_recv_array(&info, args->mempool);
                         free(handles);
                         return process_return;
                     }
                     continue;
                 }
 
-                //initialize the device info
-                memcpy(&packet_info,&pack, sizeof(PACKET));
-                memcpy(&packet_info.address,recv_info->source,sizeof(struct sockaddr_in));
-                packet_info.timestamp = time(NULL);
+                //we need to push the pointer to the received date (recv_info->buf->buf)
 
                 //push the packet to be processed
-                if (queue_push(args->queue,&packet_info,sizeof(PACKET_INFO),QET_NEW_PACKET)) {
+                //the buffer has enough space for the packet and metadata (packet_info)
+                //(its like a struct, but it's not),
+                //I've agreed that we don't need a struct, and I will mess up like real fag
+
+                //here we put the packet info at the end of the buffer that we received (there is enough space)
+                packet_info = (void *)recv_info->buf->buf + sizeof(PACKET);
+                packet_info->packet = recv_info->buf->buf;
+                packet_info->address = *((struct sockaddr_in *)recv_info->source);
+                packet_info->socket = recv_info->socket;
+                packet_info->timestamp = time(NULL);
+
+
+                if (queue_push(args->queue,recv_info->buf->buf,QET_NEW_PACKET)) {
                     set_event_flag(args->flag, EF_TERMINATION);
                     set_event_flag(args->wake, EF_WAKE_MANAGER);
                     *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                    free_recv_array(&info);
+                    free_recv_array(&info, args->mempool);
                     free(handles);
                     return process_return;
                 }
@@ -1652,11 +1668,22 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                 //reset and re-receive
                 WSAResetEvent(handles[i]);
 
-                if (register_single_discovery_receiver(recv_info->socket,&recv_info)) {
+                //we need to allocate a new buffer for receiving from the pool
+                recv_info->buf->buf = args->mempool->alloc(args->mempool);
+                if (recv_info->buf->buf == NULL) {
+                    set_event_flag(args->flag, EF_TERMINATION);
+                    set_event_flag(args->wake, EF_WAKE_MANAGER);
+                    *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                    free_recv_array(&info, args->mempool);
+                    free(handles);
+                    return process_return;
+                }
+
+                if (register_single_receiver(recv_info->socket,&recv_info, args->mempool)) {
                     set_event_flag(args->flag, EF_TERMINATION);
                     set_event_flag(args->wake, EF_WAKE_MANAGER);
                     *process_return = INDIGO_ERROR_WINLIB_ERROR;
-                    free_recv_array(&info);
+                    free_recv_array(&info, args->mempool);
                     free(handles);
                     return process_return;
                 }
@@ -1664,7 +1691,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
         }
     }
     free(handles);
-    free_recv_array(&info);
+    free_recv_array(&info, args->mempool);
     *process_return = 0;
     return process_return;
 }
@@ -1688,8 +1715,9 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
 
 
     PACKET_NODE *temp_dev, *found_dev;
-    PACKET_INFO packet_info;
-    PACKET packet;
+    PACKET_INFO* packet_info;
+    PACKET *packet;
+    PACKET_HEADER packet_header;
 
 
     int *process_return = NULL;
@@ -1726,11 +1754,14 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                 continue;
             }
 
-            memcpy(&(packet_info),node->buf,sizeof(PACKET_INFO));
+            packet = node->data;
+            packet_info = node->data + sizeof(PACKET);
 
             destroy_qnode(node);
 
-            switch (packet_info.packet.pac_type) {
+            memcpy(&packet_header, packet, sizeof(packet_header));
+            //todo handle all types of packets
+            switch (packet_header.pac_type) {
                 case MSG_INIT_PACKET:
                     mac_address_len = 6;
                     mac_address = calloc(1, mac_address_len);
@@ -1742,7 +1773,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         return process_return;
                     }
 
-                    if (SendARP(packet_info.address.sin_addr.S_un.S_addr,INADDR_ANY, mac_address, p_mac_address_len)
+                    if (SendARP(packet_info->address.sin_addr.S_un.S_addr,INADDR_ANY, mac_address, p_mac_address_len)
                         != NO_ERROR) {
                         set_event_flag(args->flag, EF_TERMINATION);
                         set_event_flag(args->wake, EF_WAKE_MANAGER);
@@ -1751,14 +1782,14 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         return process_return;
                         }
 
-                    memcpy(packet_info.mac_address, mac_address, mac_address_len);
-                    packet_info.mac_address_len = mac_address_len;
+                    memcpy(packet_info->mac_address, mac_address, mac_address_len);
+                    packet_info->mac_address_len = mac_address_len;
 
                     free(mac_address);
 
                     pthread_mutex_lock(&(args->devices->mutex));
 
-                    found_dev = device_exists(args->devices, &(packet_info));
+                    found_dev = device_exists(args->devices, packet_info);
                     if (found_dev != NULL) {
                         found_dev->packet.timestamp = time(NULL); //renew the timestamp
                         pthread_mutex_unlock(&args->devices->mutex);
@@ -1781,18 +1812,29 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
 
                     //send signing request
                     randombytes_buf(nonce,16);
-                    build_packet(&packet,MSG_SIGNING_REQUEST,nonce);
+                    build_packet(packet,MSG_SIGNING_REQUEST,nonce);
                     send_packet((int)htonl(PORT),temp_dev->packet.address.sin_addr.S_un.S_addr,
-                        temp_dev->packet.socket,&packet, args->flag);
+                        temp_dev->packet.socket,packet, args->flag);
 
                     break;
                 case MSG_SIGNING_REQUEST:
                     //todo: sign the nonce and send the signature with the public key
                 case MSG_SIGNING_RESPONSE:
                     //todo: verify the signature and store the public key to the device node
+                case MSG_RESEND:
+                case MSG_FILE_CHUNK:
+                case MSG_STOP_FILE_TRANSMISSION:
+                case MSG_PAUSE_FILE_TRANSMISSION:
+                case MSG_CONTINUE_FILE_TRANSMISSION:
+                case MSG_ERR:
                 default:
                     break;
             }
+
+            //we no longer need the packet
+            args->mempool->free(args->mempool,packet);
+            packet = NULL;
+            packet_info = NULL;
 
             //here if there are more packets in the queue we go back up to process them,
             //but we don't want to have ghost devises,
@@ -2000,7 +2042,7 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
     return process_return;
 }
 
-int *discovery_manager_thread(MANAGER_ARGS *args) {
+int *thread_manager_thread(MANAGER_ARGS *args) {
     //for the thread creation
     pthread_t tid_send = pthread_self(),
     tid_receive = pthread_self(),
@@ -2009,7 +2051,10 @@ int *discovery_manager_thread(MANAGER_ARGS *args) {
 
     int *send_ret = NULL, *receive_ret = NULL, *update_ret = NULL, *handler_ret = NULL;
 
-    QUEUE *queue_receiver = NULL, *queue_handler = NULL;
+    QUEUE *packet_queue = NULL;
+
+    mempool_t *mempool = NULL; //the pool used for receiving
+    mempool_attr pool_attr;
 
     //the thread args
     SEND_ARGS *send_args = NULL;
@@ -2060,27 +2105,26 @@ int *discovery_manager_thread(MANAGER_ARGS *args) {
     }
     sockets->head = temp;
 
-    //create the queues
-    queue_receiver = (QUEUE *)malloc(sizeof(QUEUE));
-    if (queue_receiver == NULL) {
+    //create the packet queue
+    packet_queue = (QUEUE *)malloc(sizeof(QUEUE));
+    if (packet_queue == NULL) {
         fprintf(stderr, "Failed to allocate memory for queue_receiving\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
-    if (init_queue(queue_receiver)) {
+    if (init_queue(packet_queue)) {
         fprintf(stderr, "init_queue failed\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
 
-    queue_handler = (QUEUE *)malloc(sizeof(QUEUE));
-    if (queue_handler == NULL) {
-        fprintf(stderr, "Failed to allocate memory for queue_receiving\n");
-        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-    if (init_queue(queue_handler)) {
-        fprintf(stderr, "init_queue failed\n");
+    //create the memory pool
+    pool_attr.dynamic_pool = 1;
+    pool_attr.growth_factor = 1;
+    //the initial mempool is about 1MiB, it may be extended automatically if needed
+    mempool = new_mempool(1<<10, sizeof(PACKET) + sizeof(PACKET_INFO), &pool_attr);
+    if (!mempool) {
+        fprintf(stderr, "Failed to create mempool\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
@@ -2092,13 +2136,13 @@ int *discovery_manager_thread(MANAGER_ARGS *args) {
         goto cleanup;
     }
 
-    if (create_packet_handler_thread(&handler_args, args->flag, queue_handler, args->devices, &tid_handler)) {
+    if (create_packet_handler_thread(&handler_args, args->flag, packet_queue, mempool, args->devices, &tid_handler)) {
         fprintf(stderr, "create_packet_handler_thread failed\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
 
-    if (create_discovery_receiving_thread(&recv_args, sockets, queue_receiver, args->flag, &tid_receive)) {
+    if (create_receiving_thread(&recv_args, sockets, packet_queue, mempool, args->flag, &tid_receive)) {
         fprintf(stderr, "create_discovery_receiving_thread failed\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
@@ -2139,11 +2183,12 @@ int *discovery_manager_thread(MANAGER_ARGS *args) {
             //for now, we terminate the whole operation, later we may pause or continue as we are
             goto cleanup;
         }
+        //todo remove since the packet handler communicates directly with the receiver
         //in this case we just forward to the packet handler
         if (flag_val & EF_NEW_PACKET) {
-            qnode_pop = queue_pop(queue_receiver, QOPT_NON_BLOCK);
+            qnode_pop = queue_pop(packet_queue, QOPT_NON_BLOCK);
             if (qnode_pop != NULL) {
-                if (queue_push(queue_handler,qnode_pop->buf,qnode_pop->size,qnode_pop->type)) {
+                if (queue_push(packet_queue,qnode_pop->data,qnode_pop->type)) {
                     destroy_qnode(qnode_pop);
                     goto cleanup;
                 }
@@ -2210,7 +2255,7 @@ int *discovery_manager_thread(MANAGER_ARGS *args) {
     //receive args
     WSACloseEvent(recv_args->termination_handle);
     WSACloseEvent(recv_args->wake_handle);
-    free_event_flag(recv_args->flag); //todo here it crashes
+    free_event_flag(recv_args->flag);
     free(recv_args);
 
     //update args
@@ -2226,11 +2271,11 @@ int *discovery_manager_thread(MANAGER_ARGS *args) {
     pthread_cond_destroy(&sockets->cond);
     free_discv_sock_ll(sockets->head);
 
-    destroy_queue(queue_handler);
-    destroy_queue(queue_receiver);
+    destroy_queue(packet_queue);
 
-    free(queue_handler);
-    free(queue_receiver);
+    free_mempool(mempool);
+
+    free(packet_queue);
 
     free_event_flag(args->flag);
     free(args);
@@ -2294,10 +2339,10 @@ int *discovery_manager_thread(MANAGER_ARGS *args) {
     pthread_cond_destroy(&sockets->cond);
     free_discv_sock_ll(sockets->head);
 
-    destroy_queue(queue_handler);
-    destroy_queue(queue_receiver);
-    free(queue_handler);
-    free(queue_receiver);
+    destroy_queue(packet_queue);
+    free(packet_queue);
+
+    free(mempool);
 
     free_event_flag(args->flag);
     free(args);
@@ -2333,7 +2378,7 @@ int cancel_device_discovery(pthread_t tid, EFLAG *flag) {
     return val;
 }
 
-int create_device_discovery_manager_thread(MANAGER_ARGS **args, int port, uint32_t multicast_address, PACKET_LIST *devices, pthread_t *tid){
+int create_thread_manager_thread(MANAGER_ARGS **args, int port, uint32_t multicast_address, PACKET_LIST *devices, pthread_t *tid){
     pthread_t thread;
 
     MANAGER_ARGS *manager_args = malloc(sizeof(MANAGER_ARGS));
@@ -2355,7 +2400,7 @@ int create_device_discovery_manager_thread(MANAGER_ARGS **args, int port, uint32
     manager_args->multicast_addr = multicast_address;
     manager_args->devices = devices;
 
-    if (pthread_create(&thread, NULL, (void *)(&discovery_manager_thread), manager_args)) {
+    if (pthread_create(&thread, NULL, (void *)(&thread_manager_thread), manager_args)) {
         free_event_flag(flag);
         free(*args);
         return 1;
@@ -2401,7 +2446,9 @@ int create_discovery_sending_thread(SEND_ARGS **args, int port, uint32_t multica
     return 0;
 }
 
-int create_discovery_receiving_thread(RECV_ARGS **args, SOCKET_LL *sockets, QUEUE *queue, EFLAG *wake_mngr, pthread_t *tid){
+int create_receiving_thread(
+    RECV_ARGS **args, SOCKET_LL *sockets, QUEUE *queue, mempool_t* mempool, EFLAG *wake_mngr, pthread_t *tid){
+
     pthread_t thread;
 
     RECV_ARGS *recv_args = malloc(sizeof(RECV_ARGS));
@@ -2437,6 +2484,7 @@ int create_discovery_receiving_thread(RECV_ARGS **args, SOCKET_LL *sockets, QUEU
     }
 
     recv_args->queue = queue;
+    recv_args->mempool = mempool;
     recv_args->sockets = sockets;
     recv_args->wake = wake_mngr;
     recv_args->flag = flag;
@@ -2493,7 +2541,9 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
     return 0;
 }
 
-int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, PACKET_LIST *dev_list, pthread_t *tid){
+int create_packet_handler_thread(
+    PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, mempool_t* mempool, PACKET_LIST *dev_list, pthread_t *tid){
+
     pthread_t thread;
 
     PACKET_HANDLER_ARGS *handler_args = malloc(sizeof(INTERFACE_UPDATE_ARGS));
@@ -2511,6 +2561,7 @@ int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, Q
     }
 
     handler_args->queue = queue;
+    handler_args->mempool = mempool;
     handler_args->devices = dev_list;
     handler_args->wake = wake_mngr;
     handler_args->flag = flag;
@@ -2549,9 +2600,9 @@ int create_handle_array_from_recv_info(const RECV_ARRAY *info, HANDLE **handles,
     return 0;
 }
 
-void free_recv_array(const RECV_ARRAY *info) {
+void free_recv_array(const RECV_ARRAY *info, mempool_t* mempool) {
     for (int i = 0; i < info->size; i++) {
-        free_recv_info(&(info->head[i]));
+        free_recv_info(&(info->head[i]), mempool);
     }
     free(info->head);
 }

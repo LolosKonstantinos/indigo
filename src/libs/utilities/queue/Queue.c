@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-
+//todo: use mempool for the queue
 //
 //general purpose queue
 //
@@ -67,7 +67,7 @@ void destroy_queue(QUEUE *queue) {
     while (curr != NULL) {
         prev = curr;
         curr = curr->next;
-        free(prev->buf);
+        free(prev->data);
         free(prev);
     }
 
@@ -86,21 +86,21 @@ void destroy_queue(QUEUE *queue) {
 }
 
 QNODE *create_qnode() {
-    QNODE *node = (QNODE *)calloc(1,sizeof(QNODE));
+    QNODE *node =  malloc(sizeof QNODE);
     if (node == NULL) {
         perror("error allocating memory for queue node");
         return NULL;
     }
+    memset(node, 0, sizeof QNODE);
     return node;
 }
 
 void destroy_qnode(QNODE *node) {
     if (node == NULL) return;
-    free(node->buf);
     free(node);
 }
 
-uint8_t queue_push(QUEUE *queue, const void *data, size_t size, QET type) {
+uint8_t queue_push(QUEUE *queue, void * const data, QET type) {
     QNODE *temp = NULL;
 
     if (queue == NULL) return 1;
@@ -114,33 +114,37 @@ uint8_t queue_push(QUEUE *queue, const void *data, size_t size, QET type) {
         return 1;
     }
 
-    if (data != NULL) {
-        temp->buf = malloc(size);
-        if (temp->buf == NULL) {
-            perror("error allocating memory for queue node");
-            pthread_mutex_unlock(&queue->mutex);
-            destroy_qnode(temp);
-            return 1;
-        }
-        memcpy(temp->buf, data, size);
-        temp->size = size;
-    }
-    else {
-        temp->buf = NULL;
-        temp->size = 0;
-    }
-        temp->type = type;
-        temp->next = NULL;
+    //the code below is an implementation of a more general purpose queue it's a lil slower tho
+     /*if (data != NULL) {
+         temp->data = malloc(size);
+         if (temp->data == NULL) {
+             perror("error allocating memory for queue node");
+             pthread_mutex_unlock(&queue->mutex);
+             destroy_qnode(temp);
+             return 1;
+         }
+         memcpy(temp->data, data, size);
+         temp->size = size;
+     }
+     else {
+         temp->data = NULL;
+         temp->size = 0;
+    }*/
 
+    temp->data = data;
+    temp->type = type;
+    temp->next = NULL;
 
-    if (queue->firstNode == NULL) {
-        queue->firstNode = temp;
-        queue->lastNode = temp;
-    }
-    else {
+    if (queue->firstNode != NULL) {
         queue->lastNode->next = temp;
         queue->lastNode = temp;
     }
+    else {
+        queue->firstNode = temp;
+        queue->lastNode = temp;
+    }
+
+
     queue->qsize++;
     pthread_cond_signal(&queue->cond);
     pthread_mutex_unlock(&queue->mutex);
@@ -201,14 +205,6 @@ QNODE *queue_peek(QUEUE *queue) {
     }
     memcpy(ret_node, temp, sizeof(QNODE));
 
-    ret_node->buf = malloc(temp->size);
-    if (ret_node->buf == NULL) {
-        perror("error allocating memory for queue node");
-        pthread_mutex_unlock(&queue->mutex);
-        destroy_qnode(ret_node);
-        return NULL;
-    }
-    memcpy(ret_node->buf, temp->buf, temp->size);
     pthread_mutex_unlock(&queue->mutex);
     return ret_node;
 }
@@ -228,7 +224,7 @@ void queue_remove_front(QUEUE *queue) {
     if (queue->firstNode == NULL) queue->lastNode = NULL;
     queue->qsize--;
 
-    free(temp->buf);
+    free(temp->data);
     free(temp);
 
     pthread_mutex_unlock(&queue->mutex);

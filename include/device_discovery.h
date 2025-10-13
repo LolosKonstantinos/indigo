@@ -27,11 +27,15 @@
  */
 
 //message types
-#define MSG_INIT_PACKET         0x01
-#define MSG_RESEND              0x02
-#define MSG_SIGNING_REQUEST     0x03
-#define MSG_SIGNING_RESPONSE    0x04
-#define MSG_ERR                 0xff
+#define MSG_INIT_PACKET                 0x01
+#define MSG_RESEND                      0x02
+#define MSG_SIGNING_REQUEST             0x03
+#define MSG_SIGNING_RESPONSE            0x04
+#define MSG_FILE_CHUNK                  0x05
+#define MSG_STOP_FILE_TRANSMISSION      0x06
+#define MSG_PAUSE_FILE_TRANSMISSION     0x07
+#define MSG_CONTINUE_FILE_TRANSMISSION  0x08
+#define MSG_ERR                         0xff
 //more types may be added
 
 #define PAC_VERSION 1
@@ -56,18 +60,26 @@
 #include <pthread.h>
 #include "Queue.h"
 #include "event_flags.h"
+#include "mempool.h"
 
-#define DPAC_DATA_BYTES 128
-#define DPAC_MIN_BYTES 7
-#define DPAC_MAX_BYTES sizeof(DPAC)
+#define PAC_DATA_BYTES (1<<10)
+#define PAC_MIN_BYTES 7
+#define PAC_MAX_BYTES sizeof(PACKET)
 //the packet that is sent for everything, device discovery, signature handshakes, file chunks, etc.
+//it's a little big but since the buffer is at the end there is no need to send the whole thing
 typedef struct udp_packet{
     uint32_t magic_number;
-    unsigned char pac_version;
     unsigned char pac_type;
-    int16_t alignment;
-    char data[DPAC_DATA_BYTES];
+    unsigned char pac_version;
+    int16_t zero;
+    char data[PAC_DATA_BYTES];
 }PACKET;
+
+typedef struct udp_packet_header {
+    uint32_t magic_number;
+    unsigned char pac_type;
+    unsigned char pac_version;
+}PACKET_HEADER;
 
 //for get_discovery_sockets()
 typedef struct SOCKET_LL_NODE {
@@ -95,7 +107,7 @@ typedef struct packet_info {
     uint8_t mac_address_len;
     uint8_t alignment;
     SOCKET socket;
-    PACKET packet;
+    void * packet;
 
 }PACKET_INFO;
 
@@ -167,6 +179,7 @@ typedef struct RECV_ARGS {
     EFLAG *wake;
     HANDLE termination_handle;
     HANDLE wake_handle;
+    mempool_t *mempool;
 }RECV_ARGS;
 
 typedef struct INTERFACE_UPDATE_ARGS {
@@ -183,6 +196,7 @@ typedef struct PACKET_HANDLER_ARGS {
     EFLAG *wake;
     QUEUE *queue;
     PACKET_LIST *devices;
+    mempool_t *mempool;
 }PACKET_HANDLER_ARGS;
 
 typedef struct SIGNING_SERVICE_ARGS {
@@ -231,10 +245,10 @@ uint8_t ip_in_any_subnet(IP_SUBNET addr, const IP_SUBNET *p_addrs, size_t num_ad
 ///                                                ///
 //////////////////////////////////////////////////////
 
-//todo: check and remove redundant code (there is a comment saying "temporary")
+//todo check and remove redundant code (there is a comment saying "temporary")
 int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets, EFLAG *flag, uint32_t pCount, int32_t msec);
-int register_single_discovery_receiver(SOCKET sock, RECV_INFO **info);
-int register_multiple_discovery_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, EFLAG *flag);
+int register_single_receiver(SOCKET sock, RECV_INFO **info, mempool_t* mempool);
+int register_multiple_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, mempool_t* mempool, EFLAG *flag);
 
 int send_packet(int port, uint32_t addr, SOCKET socket, PACKET *packet, EFLAG *flag);
 
@@ -248,9 +262,9 @@ int send_packet(int port, uint32_t addr, SOCKET socket, PACKET *packet, EFLAG *f
 void build_packet(PACKET * restrict packet, const unsigned pac_type,const void * restrict data);
 int create_handle_array_from_send_info(const SEND_INFO *info, size_t infolen, HANDLE **handles, size_t *hCount);
 void free_send_info(const SEND_INFO *info);
-int allocate_recv_info(RECV_INFO **info);
-int allocate_recv_info_fields(RECV_INFO *info);
-void free_recv_info(const RECV_INFO *info);
+int allocate_recv_info(RECV_INFO **info, mempool_t* mempool);
+int allocate_recv_info_fields(RECV_INFO *info, mempool_t* mempool);
+void free_recv_info(const RECV_INFO *info, mempool_t* mempool);
 
 //////////////////////////////////////////////////////////
 ///                                                    ///
@@ -261,7 +275,7 @@ void free_recv_info(const RECV_INFO *info);
 /*this thread manages all the application's threads (apart from small worker threads that can be used by any thread),
  *it's responsible for creating the other threads and handling their errors
  *and moving resources between threads*/
-int *discovery_manager_thread(MANAGER_ARGS *args);
+int *thread_manager_thread(MANAGER_ARGS *args);
 
 int *send_discovery_thread(SEND_ARGS *args);
 int *recv_discovery_thread(RECV_ARGS *args);
@@ -281,11 +295,11 @@ int *signing_service_thread(SEND_ARGS *args);
 #define init_device_discovery create_device_discovery_manager_thread
 int cancel_device_discovery(pthread_t tid, EFLAG *flag);
 
-int create_device_discovery_manager_thread(MANAGER_ARGS **args, int port, uint32_t multicast_address, PACKET_LIST *devices, pthread_t *tid);
+int create_thread_manager_thread(MANAGER_ARGS **args, int port, uint32_t multicast_address, PACKET_LIST *devices, pthread_t *tid);
 int create_discovery_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, SOCKET_LL *sockets, EFLAG *wake_mngr, pthread_t *tid);
-int create_discovery_receiving_thread(RECV_ARGS **args, SOCKET_LL *sockets, QUEUE *queue, EFLAG *wake_mngr, pthread_t *tid);
+int create_receiving_thread(RECV_ARGS **args, SOCKET_LL *sockets, QUEUE *queue, mempool_t* mempool, EFLAG *wake_mngr, pthread_t *tid);
 int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint32_t multicast_address, EFLAG *wake_mngr, SOCKET_LL *sockets, pthread_t *tid);
-int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, PACKET_LIST *dev_list, pthread_t *tid);
+int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, mempool_t* mempool, PACKET_LIST *dev_list, pthread_t *tid);
 
 
 /////////////////////////////////////////////////////////////////
@@ -295,7 +309,7 @@ int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, Q
 /////////////////////////////////////////////////////////////////
 
 int create_handle_array_from_recv_info(const RECV_ARRAY *info, HANDLE **handles, size_t *hCount);
-void free_recv_array(const RECV_ARRAY *info);
+void free_recv_array(const RECV_ARRAY *info, mempool_t* mempool);
 
 
 ////////////////////////////////////////////////////////////////////

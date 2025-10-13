@@ -32,8 +32,7 @@ typedef enum queue_options {
  */
 typedef struct QNODE {
  struct QNODE *next;
- void *buf; //if the buffer contains a pointer to another buffer or other heap data ==> MEMORY LEAK!
- size_t size;//size of the buffer
+ void *data;
  QET type;
 } QNODE;
 
@@ -55,7 +54,7 @@ QNODE *create_qnode();
 void destroy_qnode(QNODE *node);
 
 //add and get from the queue
-uint8_t queue_push(QUEUE *queue, const void *data, size_t size, QET type);
+uint8_t queue_push(QUEUE *queue, void * data, QET type);
 QNODE *queue_pop(QUEUE *queue, QOPT option);
 QNODE *queue_peek(QUEUE *queue);
 void queue_remove_front(QUEUE *queue);
