@@ -1365,6 +1365,7 @@ int *send_discovery_thread(SEND_ARGS *args) {
 }
 
 int *recv_discovery_thread(RECV_ARGS *args) {
+    //todo: if we actually do the packet dropping we need a hash table to hold the expected packets
     RECV_ARRAY info = {0};
     RECV_INFO *recv_info = NULL;
 
@@ -1382,6 +1383,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
     size_t rate_idx = 0;
     IP_SEND_RATE *ip_send_rate = NULL;
 
+
     time_t current_time = 0;
 
     int *process_return = NULL;
@@ -1395,6 +1397,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
     }
     *process_return = 0;
 
+    //create the ip rate array
     ip_rates = ip_rate_array_new();
     if (ip_rates == NULL) {
         set_event_flag(args->flag, EF_TERMINATION);
@@ -1403,18 +1406,21 @@ int *recv_discovery_thread(RECV_ARGS *args) {
         return process_return;
     }
 
+
     //register all the sockets for receiving
     ret = register_multiple_receivers(args->sockets,&info,args->mempool, args->flag);
     if (ret > 0) {
         set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
         *process_return = ret;
+        ip_rate_array_free(ip_rates);
         return process_return;
     }
     if (ret == -1) {
         flag_val = get_event_flag(args->flag);
         if(flag_val & EF_TERMINATION){
             *process_return = 0;
+            ip_rate_array_free(ip_rates);
             return process_return;
         }
     }
@@ -1426,6 +1432,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
         set_event_flag(args->wake, EF_WAKE_MANAGER);
         free_recv_array(&info, args->mempool);
         *process_return = ret;
+        ip_rate_array_free(ip_rates);
         return process_return;
     }
 
@@ -1453,6 +1460,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
                 *process_return = ret;
+                ip_rate_array_free(ip_rates);
                 return process_return;
             }
 
@@ -1460,6 +1468,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                 flag_val = get_event_flag(args->flag);
                 if(flag_val & EF_TERMINATION){
                     *process_return = 0;
+                    ip_rate_array_free(ip_rates);
                     return process_return;
                 }
             }
@@ -1471,6 +1480,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
                 free_recv_array(&info, args->mempool);
                 *process_return = ret;
+                ip_rate_array_free(ip_rates);
                 return process_return;
             }
 
@@ -1481,6 +1491,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
             free(handles);
             free_recv_array(&info, args->mempool);
             *process_return = 0;
+            ip_rate_array_free(ip_rates);
             return process_return;
         }
 
@@ -1506,6 +1517,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
             free_recv_array(&info, args->mempool);
 
             *process_return = 1;
+            ip_rate_array_free(ip_rates);
             return process_return;
         }
 
@@ -1517,6 +1529,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
             free_recv_array(&info, args->mempool);
 
             *process_return = 0;
+            ip_rate_array_free(ip_rates);
             return process_return;
         }
 
@@ -1538,6 +1551,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                 free_recv_array(&info, args->mempool);
 
                 *process_return = 0;
+                ip_rate_array_free(ip_rates);
                 return process_return;
             }
 
@@ -1555,6 +1569,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                         *process_return = INDIGO_ERROR_WINLIB_ERROR;
                         free_recv_array(&info, args->mempool);
                         free(handles);
+                        ip_rate_array_free(ip_rates);
                         return process_return;
                     }
                     continue;
@@ -1584,15 +1599,12 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                         *process_return = INDIGO_ERROR_WINLIB_ERROR;
                         free_recv_array(&info, args->mempool);
                         free(handles);
+                        ip_rate_array_free(ip_rates);
                         return process_return;
                     }
                     continue;
                 }
 
-                //todo we do not copy any data. we just pass the buffer that we received on and allocate a new one
-
-                //todo prolly redundant
-                memset(&pack,0,sizeof(PACKET));
                 //everything we need to know is in the first 6 bytes, the rest is redundant
                 memcpy(&pack,recv_info->buf->buf,6);
 
@@ -1605,12 +1617,14 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                         *process_return = INDIGO_ERROR_WINLIB_ERROR;
                         free_recv_array(&info, args->mempool);
                         free(handles);
+                        ip_rate_array_free(ip_rates);
                         return process_return;
                     }
                     continue;
                 }
 
                 //impose a ban if needed (to avoid ddos)
+                //update expected packets
                 switch (pack.pac_type) {
                     case MSG_INIT_PACKET:
                         current_time = time(NULL);
@@ -1634,12 +1648,13 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                         *process_return = INDIGO_ERROR_WINLIB_ERROR;
                         free_recv_array(&info, args->mempool);
                         free(handles);
+                        ip_rate_array_free(ip_rates);
                         return process_return;
                     }
                     continue;
                 }
 
-                //we need to push the pointer to the received date (recv_info->buf->buf)
+                //we need to push the pointer to the received data (recv_info->buf->buf)
 
                 //push the packet to be processed
                 //the buffer has enough space for the packet and metadata (packet_info)
@@ -1660,6 +1675,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                     *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                     free_recv_array(&info, args->mempool);
                     free(handles);
+                    ip_rate_array_free(ip_rates);
                     return process_return;
                 }
                 set_event_flag(args->flag, EF_NEW_PACKET);
@@ -1676,6 +1692,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                     *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                     free_recv_array(&info, args->mempool);
                     free(handles);
+                    ip_rate_array_free(ip_rates);
                     return process_return;
                 }
 
@@ -1685,6 +1702,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                     *process_return = INDIGO_ERROR_WINLIB_ERROR;
                     free_recv_array(&info, args->mempool);
                     free(handles);
+                    ip_rate_array_free(ip_rates);
                     return process_return;
                 }
             }
@@ -1692,6 +1710,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
     }
     free(handles);
     free_recv_array(&info, args->mempool);
+    ip_rate_array_free(ip_rates);
     *process_return = 0;
     return process_return;
 }
@@ -1815,6 +1834,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                     build_packet(packet,MSG_SIGNING_REQUEST,nonce);
                     send_packet((int)htonl(PORT),temp_dev->packet.address.sin_addr.S_un.S_addr,
                         temp_dev->packet.socket,packet, args->flag);
+                    //todo: add a singing expected packet to the list
 
                     break;
                 case MSG_SIGNING_REQUEST:
@@ -2769,3 +2789,11 @@ int ip_rate_search(IP_RATE_ARRAY *restrict buffer, const uint32_t ip, size_t *co
     }
     return 0;
 }
+
+////////////////////////////////////////////////////////////////////
+///                                                              ///
+///                  EXPECTED_PACKET_UTILITIES                   ///
+///                                                              ///
+////////////////////////////////////////////////////////////////////
+
+//use hash table

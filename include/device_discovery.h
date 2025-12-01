@@ -81,6 +81,18 @@ typedef struct udp_packet_header {
     unsigned char pac_version;
 }PACKET_HEADER;
 
+typedef struct expected_packet {
+    SOCKET socket;
+    uint32_t address;
+    unsigned char type;
+    unsigned char zero[3];
+}exp_pack_t;
+
+typedef struct expected_packet_array {
+    exp_pack_t *packets;
+    uint64_t size;
+}exp_pack_array;
+
 //for get_discovery_sockets()
 typedef struct SOCKET_LL_NODE {
     struct SOCKET_LL_NODE *next;
@@ -105,10 +117,9 @@ typedef struct packet_info {
     struct sockaddr_in address;
     uint8_t mac_address[6];
     uint8_t mac_address_len;
-    uint8_t alignment;
+    uint8_t zero;
     SOCKET socket;
     void * packet;
-
 }PACKET_INFO;
 
 typedef struct PACKET_INFO_NODE {
@@ -292,7 +303,6 @@ int *signing_service_thread(SEND_ARGS *args);
 ///                                                             ///
 ///////////////////////////////////////////////////////////////////
 
-#define init_device_discovery create_device_discovery_manager_thread
 int cancel_device_discovery(pthread_t tid, EFLAG *flag);
 
 int create_thread_manager_thread(MANAGER_ARGS **args, int port, uint32_t multicast_address, PACKET_LIST *devices, pthread_t *tid);
@@ -337,7 +347,7 @@ PACKET_NODE *device_exists(const PACKET_LIST *devices, const PACKET_INFO *dev);
 ///                  IP_SEND_RATE_UTILITIES                   ///
 ///                                                           ///
 /////////////////////////////////////////////////////////////////
-
+//todo use a hash table
 IP_RATE_ARRAY *ip_rate_array_new();
 void ip_rate_array_free(IP_RATE_ARRAY *array);
 int ip_rate_add(IP_RATE_ARRAY *buffer,const uint32_t ip);
@@ -346,5 +356,12 @@ int ip_rate_set(IP_RATE_ARRAY *restrict buffer,const size_t index ,const IP_SEND
 int ip_rate_sort(IP_RATE_ARRAY *restrict buffer);
 int ip_rate_cmp(const void *s1, const void *s2);
 int ip_rate_search(IP_RATE_ARRAY *restrict buffer, const uint32_t ip, size_t *const index);
+
+////////////////////////////////////////////////////////////////////
+///                                                              ///
+///                  EXPECTED_PACKET_UTILITIES                   ///
+///                                                              ///
+////////////////////////////////////////////////////////////////////
+//todo use hash table
 
 #endif //INDIGO_DEVICE_DISCOVERY_H
