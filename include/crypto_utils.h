@@ -5,24 +5,31 @@
 #ifndef CRYPTO_UTILS_H
 #define CRYPTO_UTILS_H
 
-#endif //CRYPTO_UTILS_H
+
 
 #include <stdint.h>
+#include <sodium.h>
 
 #define INDIGO_FILE_NOT_FOUND 0x02
 #define INDIGO_FILE_NOT_AUTHORIZED 0x03
 
 #define INDIGO_PSW_HASH_TIMELIMIT_UPPER 5
 #define INDIGO_PSW_HASH_TIMELIMIT_LOWER 3
+#define INDIGO_NONCE_SIZE 16
 
-#define INDIGO_CRYPTO_DIR "config/crypto/"
-#define INDIGO_PSW_DIR "config/crypto/psw/"
-#define INDIGO_KEY_DIR "config/crypto/key/"
-#define INDIGO_SIGN_KEY_FILE_NAME "sign.dat"
-#define INDIGO_PSW_HASH_FILE_NAME "psw-hash.txt"
-#define INDIGO_PSW_HASH_SETTINGS_FILE "psw-hash-settings.dat"
+#define INDIGO_CRYPTO_DIR               "config/crypto/"
+#define INDIGO_PSW_DIR                  "config/crypto/psw/"
+#define INDIGO_KEY_DIR                  "config/crypto/key/"
+#define INDIGO_SIGN_KEY_FILE_NAME       "sign.dat"
+#define INDIGO_PSW_HASH_FILE_NAME       "psw-hash.txt"
+#define INDIGO_PSW_HASH_SETTINGS_FILE   "psw-hash-settings.dat"
 
 typedef struct PSW_HASH_SETTINGS PSW_HASH_SETTINGS;
+
+struct SIGNING_KEY_PAIR {
+    unsigned char public[crypto_sign_PUBLICKEYBYTES];
+    unsigned char secret[crypto_sign_SECRETKEYBYTES];
+};
 typedef struct SIGNING_KEY_PAIR SIGNING_KEY_PAIR;
 
 /*derive a symmetric key based on the user password*/
@@ -44,3 +51,5 @@ int load_signing_key_pair(SIGNING_KEY_PAIR *key_pair,const unsigned char* master
 int sign_buffer(const SIGNING_KEY_PAIR *key_pair, const unsigned char* buffer, uint64_t buffer_len,
                                                   unsigned char *signed_buffer, uint64_t *signed_len);
 int delete_signing_key_pair();
+
+#endif //CRYPTO_UTILS_H

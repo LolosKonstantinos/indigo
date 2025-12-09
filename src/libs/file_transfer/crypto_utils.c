@@ -18,11 +18,6 @@ struct PSW_HASH_SETTINGS {
     unsigned char time_cost;
 };
 
-struct SIGNING_KEY_PAIR {
-    unsigned char public[crypto_sign_PUBLICKEYBYTES];
-    unsigned char secret[crypto_sign_SECRETKEYBYTES];
-};
-
 int derive_master_key(const char* psw, const uint64_t psw_len, void** master_key) {
     uint64_t mem_cost = crypto_pwhash_MEMLIMIT_MIN;
     unsigned char time_cost = crypto_pwhash_OPSLIMIT_MIN;
@@ -64,6 +59,9 @@ int derive_master_key(const char* psw, const uint64_t psw_len, void** master_key
         1<<mem_cost,
         crypto_pwhash_ALG_ARGON2ID13);
     if (ret == -1) goto cleanup;
+
+    //make the master key inaccessible
+    sodium_mprotect_noaccess(out_key);
 
     *master_key = out_key;
 
@@ -443,9 +441,9 @@ int create_signing_key_pair(const unsigned char* const master_key) {
         free(cipher);
         return INDIGO_ERROR_SODIUM_ERROR;
     }
-
+    sodium_mprotect_readonly((void *) master_key);
     ret = crypto_secretbox_easy(cipher, (unsigned char *)(&key_pair),sizeof(SIGNING_KEY_PAIR),nonce,master_key);
-
+    sodium_mprotect_noaccess((void *) master_key);
     if (ret != 0) {
         free(cipher);
         free(nonce);
@@ -519,11 +517,13 @@ int load_signing_key_pair(SIGNING_KEY_PAIR *key_pair,const unsigned char* master
     fread(nonce, 1, crypto_secretbox_NONCEBYTES, fp);
     fread(cipher, 1, crypto_secretbox_KEYBYTES + sizeof(SIGNING_KEY_PAIR), fp);
 
+    sodium_mprotect_readonly((void *) master_key);
     ret =  crypto_secretbox_open_easy((unsigned char *)key_pair,
         cipher,
         crypto_secretbox_KEYBYTES + sizeof(SIGNING_KEY_PAIR) ,
         nonce,
         master_key);
+    sodium_mprotect_noaccess((void *) master_key);
 
     if (ret != 0) {
         fclose(fp);

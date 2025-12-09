@@ -86,12 +86,12 @@ void destroy_queue(QUEUE *queue) {
 }
 
 QNODE *create_qnode() {
-    QNODE *node =  malloc(sizeof QNODE);
+    QNODE *node =  malloc(sizeof (QNODE));
     if (node == NULL) {
         perror("error allocating memory for queue node");
         return NULL;
     }
-    memset(node, 0, sizeof QNODE);
+    memset(node, 0, sizeof (QNODE));
     return node;
 }
 

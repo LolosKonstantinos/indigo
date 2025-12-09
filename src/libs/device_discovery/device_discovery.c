@@ -8,8 +8,10 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <sodium.h>
+#include "crypto_utils.h"
 
 //todo split this library to the device discovery and the receiving and managing part
+//todo ip banning should be done to the kernel level
 
 /*Creates a link list of sockets used for device discovery
  *the sockets are bound to IPs of different subnets covering the maximum network area.
@@ -930,11 +932,11 @@ void build_packet(PACKET * restrict packet, const unsigned pac_type,const void *
         }
     }
     else{
-        if (!data) return;
         memset(packet, 0, sizeof(PACKET));
         packet->magic_number = MAGIC_NUMBER;
         packet->pac_version = PAC_VERSION;
         packet->pac_type = pac_type;
+        if (!data) return;
         memcpy(packet->data, data, PAC_DATA_BYTES);
     }
 }
@@ -1365,7 +1367,7 @@ int *send_discovery_thread(SEND_ARGS *args) {
 }
 
 int *recv_discovery_thread(RECV_ARGS *args) {
-    //todo: if we actually do the packet dropping we need a hash table to hold the expected packets
+    //todo we need a hash table to hold the expected packets
     RECV_ARRAY info = {0};
     RECV_INFO *recv_info = NULL;
 
@@ -1730,13 +1732,16 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
 
     unsigned char iterations_until_cleanup = 10;
 
-    unsigned char nonce[16];
+    unsigned char nonce[INDIGO_NONCE_SIZE];
+    unsigned char signed_nonce[crypto_sign_BYTES + INDIGO_NONCE_SIZE];
 
 
     PACKET_NODE *temp_dev, *found_dev;
     PACKET_INFO* packet_info;
     PACKET *packet;
     PACKET_HEADER packet_header;
+
+    int ret = 0; //general purpose return variable
 
 
     int *process_return = NULL;
@@ -1779,6 +1784,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
             destroy_qnode(node);
 
             memcpy(&packet_header, packet, sizeof(packet_header));
+
             //todo handle all types of packets
             switch (packet_header.pac_type) {
                 case MSG_INIT_PACKET:
@@ -1830,7 +1836,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                     pthread_mutex_unlock(&(args->devices->mutex));
 
                     //send signing request
-                    randombytes_buf(nonce,16);
+                    randombytes_buf(nonce,INDIGO_NONCE_SIZE);
                     build_packet(packet,MSG_SIGNING_REQUEST,nonce);
                     send_packet((int)htonl(PORT),temp_dev->packet.address.sin_addr.S_un.S_addr,
                         temp_dev->packet.socket,packet, args->flag);
@@ -1838,9 +1844,41 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
 
                     break;
                 case MSG_SIGNING_REQUEST:
-                    //todo: sign the nonce and send the signature with the public key
+                    //sign the nonce and send the signature with the public key and a new nonce
+                    if (sign_buffer(args->signing_keys, packet->data, INDIGO_NONCE_SIZE,signed_nonce,NULL)) {
+                        //IDK do something
+                        continue;
+                    }
+                    build_packet(packet, MSG_SIGNING_RESPONSE, NULL);
+
+                    memcpy(packet->data, signed_nonce, sizeof(signed_nonce));
+
+                    sodium_mprotect_readonly(args->signing_keys);
+                    memcpy(packet->data + sizeof(signed_nonce), args->signing_keys->public
+                        , sizeof(args->signing_keys->public));
+                    sodium_mprotect_noaccess(args->signing_keys);
+
+                    randombytes_buf(nonce,INDIGO_NONCE_SIZE);
+                    memcpy(packet->data + sizeof(signed_nonce) + crypto_sign_PUBLICKEYBYTES,nonce
+                        , INDIGO_NONCE_SIZE);
+                //todo set the an expected packet, keep the nonce we sent
+                //todo: make sure all override flags are risen in the thread_manager
+                    send_packet((int)htonl(PORT),packet_info->address.sin_addr.S_un.S_addr,packet_info->socket
+                        ,packet,args->flag);
+                    break;
                 case MSG_SIGNING_RESPONSE:
                     //todo: verify the signature and store the public key to the device node
+
+                    ret = crypto_sign_open(nonce,NULL, packet->data, INDIGO_NONCE_SIZE + crypto_sign_BYTES
+                    ,(unsigned char *)(packet->data + sizeof(signed_nonce) + crypto_sign_PUBLICKEYBYTES));
+                    if (ret) {
+                        //todo: mark this device to be blocked, or just ghost, or send error message
+                    }
+
+                    //todo check the nonce with the nonce we sent to be signed and then proceed
+                    //todo better send error message, track the failed attempts and then ban
+
+                    //todo if we haven't verified this device send a signing request
                 case MSG_RESEND:
                 case MSG_FILE_CHUNK:
                 case MSG_STOP_FILE_TRANSMISSION:
@@ -2095,7 +2133,7 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
 
     int *process_return = NULL;
 
-//_________________________________________HERE STARTS THE FUNCTIONS LOGIC____________________________________________//
+/*_________________________________________HERE STARTS THE FUNCTIONS LOGIC____________________________________________*/
     //allocate memory for the return value
     process_return = malloc(sizeof(uint8_t));
     if (process_return == NULL) {
@@ -2156,7 +2194,7 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
         goto cleanup;
     }
 
-    if (create_packet_handler_thread(&handler_args, args->flag, packet_queue, mempool, args->devices, &tid_handler)) {
+    if (create_packet_handler_thread(&handler_args, args->flag, packet_queue, mempool, args->devices, args->master_key, &tid_handler)) {
         fprintf(stderr, "create_packet_handler_thread failed\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
@@ -2562,7 +2600,8 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
 }
 
 int create_packet_handler_thread(
-    PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, mempool_t* mempool, PACKET_LIST *dev_list, pthread_t *tid){
+    PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, mempool_t* mempool, PACKET_LIST *dev_list, void*
+    master_key, pthread_t *tid){
 
     pthread_t thread;
 
@@ -2579,6 +2618,19 @@ int create_packet_handler_thread(
         free(handler_args);
         return 1;
     }
+    handler_args->signing_keys = sodium_malloc(sizeof(SIGNING_KEY_PAIR));
+    if (!(handler_args->signing_keys)) {
+        fprintf(stderr, "malloc() failed in create_interface_updater_thread\n");
+        free(handler_args);
+        return 1;
+    }
+
+    if (load_signing_key_pair(handler_args->signing_keys, master_key) != INDIGO_SUCCESS) {
+        fprintf(stderr,"load_signing_key_pair() failed in create_interface_updater_thread\n");
+        free(handler_args);
+        return 1;
+    }
+    sodium_mprotect_noaccess(handler_args->signing_keys);
 
     handler_args->queue = queue;
     handler_args->mempool = mempool;

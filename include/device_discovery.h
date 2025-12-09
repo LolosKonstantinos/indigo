@@ -31,10 +31,11 @@
 #define MSG_RESEND                      0x02
 #define MSG_SIGNING_REQUEST             0x03
 #define MSG_SIGNING_RESPONSE            0x04
-#define MSG_FILE_CHUNK                  0x05
-#define MSG_STOP_FILE_TRANSMISSION      0x06
-#define MSG_PAUSE_FILE_TRANSMISSION     0x07
-#define MSG_CONTINUE_FILE_TRANSMISSION  0x08
+#define MSG_FILE_SENDING_REQUEST        0x05
+#define MSG_FILE_CHUNK                  0x06
+#define MSG_STOP_FILE_TRANSMISSION      0x07
+#define MSG_PAUSE_FILE_TRANSMISSION     0x08
+#define MSG_CONTINUE_FILE_TRANSMISSION  0x09
 #define MSG_ERR                         0xff
 //more types may be added
 
@@ -61,6 +62,7 @@
 #include "Queue.h"
 #include "event_flags.h"
 #include "mempool.h"
+#include "crypto_utils.h"
 
 #define PAC_DATA_BYTES (1<<10)
 #define PAC_MIN_BYTES 7
@@ -93,6 +95,12 @@ typedef struct expected_packet_array {
     uint64_t size;
 }exp_pack_array;
 
+typedef struct file_info {
+    size_t file_size;
+    wchar_t *file_name;
+    size_t file_name_size; //the size in bytes
+} file_info_t;
+
 //for get_discovery_sockets()
 typedef struct SOCKET_LL_NODE {
     struct SOCKET_LL_NODE *next;
@@ -119,7 +127,7 @@ typedef struct packet_info {
     uint8_t mac_address_len;
     uint8_t zero;
     SOCKET socket;
-    void * packet;
+    void * packet; //may not need it as when we send the received buffer the packet is already in there
 }PACKET_INFO;
 
 typedef struct PACKET_INFO_NODE {
@@ -208,6 +216,7 @@ typedef struct PACKET_HANDLER_ARGS {
     QUEUE *queue;
     PACKET_LIST *devices;
     mempool_t *mempool;
+    SIGNING_KEY_PAIR *signing_keys;
 }PACKET_HANDLER_ARGS;
 
 typedef struct SIGNING_SERVICE_ARGS {
@@ -219,6 +228,7 @@ typedef struct MANAGER_ARGS {
     uint32_t multicast_addr;
     EFLAG *flag;
     PACKET_LIST *devices;
+    void *master_key;
 }MANAGER_ARGS;
 
 
@@ -309,7 +319,7 @@ int create_thread_manager_thread(MANAGER_ARGS **args, int port, uint32_t multica
 int create_discovery_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, SOCKET_LL *sockets, EFLAG *wake_mngr, pthread_t *tid);
 int create_receiving_thread(RECV_ARGS **args, SOCKET_LL *sockets, QUEUE *queue, mempool_t* mempool, EFLAG *wake_mngr, pthread_t *tid);
 int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint32_t multicast_address, EFLAG *wake_mngr, SOCKET_LL *sockets, pthread_t *tid);
-int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, mempool_t* mempool, PACKET_LIST *dev_list, pthread_t *tid);
+int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, mempool_t* mempool, PACKET_LIST *dev_list, void* master_key, pthread_t *tid);
 
 
 /////////////////////////////////////////////////////////////////
