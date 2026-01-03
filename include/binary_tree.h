@@ -13,9 +13,9 @@ typedef struct tree_priv_t tree_priv_t;
 typedef struct tree_t tree_t;
 typedef struct tree_node_t tree_node_t;
 
-typedef int(*tree_insert)(tree_t, void *);
-typedef int(*tree_remove)(tree_t, void *);
-typedef int(*tree_search)(tree_t, void *);
+typedef int(*tree_insert)(tree_t *, void *);
+typedef int(*tree_remove)(tree_t *, void *);
+typedef void*(*tree_search)(tree_t *, void *);
 
 struct tree_t{
     tree_insert  insert;
@@ -24,12 +24,7 @@ struct tree_t{
     tree_priv_t *priv;
 };
 
-typedef struct tree_attr {
-    size_t data_size;
-    cmp_f cmp;
-}tree_attr_t;
-
-int new_tree(tree_t *t, cmp_f cmp);
+int new_tree(tree_t* t, cmp_f cmp, size_t data_size);
 void free_tree(tree_t *t);
 tree_node_t *new_node();
 
@@ -40,7 +35,7 @@ int avl_insert_copy(tree_t *t, void* data);
 
 int avl_delete(tree_t *t, void* data);
 
-int avl_search(tree_t *t, void* data);
+void* avl_search(tree_t* t, void* data);
 
 /*AVL HELPERS*/
 tree_node_t** avl_balance(tree_node_t** stack, tree_node_t** top, tree_priv_t* tree);

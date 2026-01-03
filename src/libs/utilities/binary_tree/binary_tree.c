@@ -24,9 +24,9 @@
 struct tree_priv_t {
     tree_node_t *root;
     size_t data_size;
-    size_t node_count;
-    uint32_t height;
     cmp_f cmp;          // the function based on which we do struct comparison
+    uint32_t height;
+    unsigned char zero[4];
 };
 
 //the direction and balance factor fields are kinda useless,
@@ -42,30 +42,23 @@ struct tree_node_t {
 };
 
 
-int new_tree(tree_t **t, cmp_f cmp, size_t data_size) {
-    tree_t *tree;
-
-    if (!t || !cmp) {
+int new_tree(tree_t* t, cmp_f cmp, size_t data_size) {
+    if (!t || !cmp || !data_size) {
         return -1;
     }
-    tree = *t;
-    tree = calloc(1, sizeof(struct tree_t));
-    if (!tree) {
-        return 1;
-    }
-    tree->priv = calloc(1, sizeof(struct tree_priv_t));
-    if (!tree->priv) {
-        free(tree);
+
+    t->priv = calloc(1, sizeof(tree_priv_t));
+    if (!t->priv) {
         return 1;
     }
 
-    tree->priv->cmp = cmp;
-    tree->priv->root = NULL;
-    tree->priv->data_size = data_size;
+    t->priv->cmp = cmp;
+    t->priv->root = NULL;
+    t->priv->data_size = data_size;
 
-    tree->search = avl_search;
-    tree->remove = avl_delete;
-    tree->insert = avl_insert_copy;
+    t->search = avl_search;
+    t->remove = avl_delete;
+    t->insert = avl_insert_copy;
 
     return 0;
 }
@@ -75,7 +68,7 @@ void free_tree(tree_t *t) {
     if (!t) return;
     priv = t->priv;
 
-    stack = malloc(sizeof(tree_node_t *) * ((1 << priv->height) + 2));
+    stack = malloc(sizeof(tree_node_t *) * (priv->height + 2));
     top = stack - 1;
 
     *(++top) = priv->root;
@@ -87,7 +80,6 @@ void free_tree(tree_t *t) {
         free(temp);
     }
     free(priv);
-    free(t);
     free(stack);
 }
 
@@ -179,22 +171,22 @@ int avl_insert_copy(tree_t *t, void* data) {
     if (!node) {
         return 1;
     }
+    node->data = malloc(priv->data_size);
+    if (!node->data) {
+        free(node);
+        return 1;
+    }
+    memcpy(node->data, data, priv->data_size);
 
     stack = malloc(sizeof(tree_node_t *) * (priv->height + 2));
     if (!stack) {
+        free(node->data);
         free(node);
         return 1;
     }
     top = stack - 1;
 
     if (!priv->root) {
-        node->data = malloc(priv->data_size);
-        if (!node->data) {
-            free(node);
-            free(stack);
-            return 1;
-        }
-        memcpy(node->data, data, priv->data_size);
         priv->root = node;
         free(stack);
         return 0;
@@ -206,6 +198,7 @@ int avl_insert_copy(tree_t *t, void* data) {
         cmp_res = priv->cmp(data, temp->data);
         if (cmp_res == 0) {
             //if the node already exists we do not re-insert it
+            free(node->data);
             free(node);
             free(stack);
             return 0;
@@ -229,14 +222,6 @@ int avl_insert_copy(tree_t *t, void* data) {
             temp = temp->left;
         }
     }
-
-    node->data = malloc(priv->data_size);
-    if (!node->data) {
-        free(node);
-        free(stack);
-        return 1;
-    }
-    memcpy(node->data, data, priv->data_size);
 
     avl_balance(stack, top, priv);
 
@@ -287,10 +272,9 @@ int avl_delete(tree_t *t, void* data) {
     //delete the node (based on the children it has)
     if (!(node->left || node->right)) {
         //if it has no children
-        free(node->data);
-        free(node);
         if (!prev || direction == TREE_ROOT) {
             priv->root = NULL;
+            priv->height = 0;
         }
         else if (direction == TREE_LEFT) {
             prev->left = NULL;
@@ -377,19 +361,15 @@ int avl_delete(tree_t *t, void* data) {
         if (!temp->right) temp->right = node->right;
         if (!temp->left) temp->left = node->left;
 
-        free(node->data);
-        free(node);
     }
     else {
         //if it has only one child
         if (node->left) temp = node->left;
         else temp = node->right;
 
-        free(node->data);
-        free(node);
-
         if (!prev || direction == TREE_ROOT) {
             priv->root = temp;
+            priv->height = temp? temp->height:0;
         }
         else if (direction == TREE_LEFT) {
             prev->left = temp;
@@ -399,29 +379,35 @@ int avl_delete(tree_t *t, void* data) {
         }
 
     }
-    if (top > stack) {
-        while (top) top = avl_balance(stack, top, priv);
+
+    if (top >= stack) {
+        while (top)
+            top = avl_balance(stack, top, priv);
     }
     free(stack);
+    free(node->data);
+    free(node);
     return 0;
 }
 
-int avl_search(tree_t *t, void* data) {
+void* avl_search(tree_t* t, void* data) {
     tree_node_t *node;
     int cmp_res;
     cmp_f cmp;
 
-    if (!t || !data) return -1;
+    if (!t || !data) return NULL;
     node = t->priv->root;
     cmp = t->priv->cmp;
 
     while (node != NULL) {
         cmp_res = cmp(data, node->data);
-        if (cmp_res == 0) return 1;
+        if (cmp_res == 0) {
+            return node->data;
+        }
         if (cmp_res < 0) node = node->left;
         else node = node->right;
     }
-    return 0;
+    return NULL;
 }
 
 
@@ -554,7 +540,7 @@ tree_node_t** avl_balance(tree_node_t** stack, tree_node_t** top, tree_priv_t* t
     tree_node_t *heavy_child, **node, **ret_node;
 
     if (!stack || !top || !tree) return NULL;
-
+    if (!(tree->root)) return NULL;
     node = top;
 
     while (node >= stack) {
@@ -573,7 +559,7 @@ tree_node_t** avl_balance(tree_node_t** stack, tree_node_t** top, tree_priv_t* t
         }
         else {
             (*node)->height = 1 + ((*node)->right->height > (*node)->left->height ? (*node)->right->height : (*node)->left->height);
-            (*node)->bf = (char)((*node)->right->height - (*node)->left->height);
+            (*node)->bf = (char)((int64_t)(*node)->right->height - (int64_t)(*node)->left->height);
         }
 
         if (abs((int)((*node)->bf)) > 1) //the first node we find unbalanced
@@ -623,7 +609,9 @@ tree_node_t** avl_balance(tree_node_t** stack, tree_node_t** top, tree_priv_t* t
         (*node)->height = GET_HEIGHT(*node);
         --node;
     }
-    tree->height = tree->root->height;
+
+    if (tree->root) tree->height = tree->root->height;
+    else tree->height = 0;
 
     if (ret_node < stack) return NULL;
     return ret_node;
