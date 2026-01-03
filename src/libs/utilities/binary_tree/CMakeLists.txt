@@ -1,0 +1,3 @@
+add_library(binary_tree SHARED binary_tree.c)
+
+target_link_libraries(binary_tree PUBLIC binary_tree_includes)

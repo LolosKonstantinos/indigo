@@ -16,6 +16,8 @@ add_library(event_flag_includes INTERFACE event_flags.h)
 add_library(queue_includes INTERFACE Queue.h)
 add_library(buffer_includes INTERFACE buffer.h)
 add_library(mempool_includes INTERFACE mempool.h)
+add_library(binary_tree_includes INTERFACE binary_tree.h)
+add_library(hash_table_includes INTERFACE hash_table.h)
 add_library(indigo_errors INTERFACE indigo_errors.h)
 
 
@@ -28,6 +30,7 @@ target_include_directories(event_flag_includes INTERFACE ${CMAKE_CURRENT_SOURCE_
 target_include_directories(queue_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(buffer_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(mempool_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
-
+target_include_directories(binary_tree_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(hash_table_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_include_directories(indigo_errors INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
