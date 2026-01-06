@@ -46,7 +46,7 @@ SESSION *session_new() {
     if (session == NULL) {
         return NULL;
     }
-    memset(session, 0, sizeof(SESSION));
+    memset(session, 0, sizeof(SESSION)); //todo use sodium's zero memory function
     return session;
 }
 

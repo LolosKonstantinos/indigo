@@ -1,26 +1,28 @@
 //
-// Created by Constantin on 02/01/2026.
+// Created by Constantin on 06/01/2026.
 //
 
 #ifndef HASH_TABLE_H
 #define HASH_TABLE_H
+
+#include "hash_functions.h"
 #include <stdint.h>
 
-typedef int (*hashFunction)(const char *, unsigned int);
+typedef struct hash_table_priv hash_table_priv;
 
-typedef struct dynamic_perfect_hash_table_priv dynamic_perfect_hash_table_priv, dpht_priv;
-typedef struct first_level_ht_node first_level_ht_node;
-typedef struct dpht {
-    dynamic_perfect_hash_table_priv *priv;
-}dpHashTable;
+typedef struct hash_table_t {
+    hash_table_priv *private;
+}hash_table_t;
 
-/*__________________________________________________HASH_FUNCTIONS____________________________________________________*/
-unsigned int MurMurHash(const char *str, unsigned int length);
-unsigned int FastHash(const char *str,unsigned int length);
+hash_table_t *new_hash_table();
+void delete_hash_table(hash_table_t *ht);
 
-uint64_t fasthash64(const void *buf, size_t len, uint64_t seed);
-void MurmurHash3_x86_32 ( const void * key, int len,
-                          uint32_t seed, void * out );
+int hash_table_insert(hash_table_t *ht, void *key, void *data);
+void *hash_table_search(hash_table_t *ht, void *key);
+int hash_table_delete(hash_table_t *ht, void *key);
 
+int hash_table_resize(hash_table_t *ht, size_t new_size);
 
+int hash_table_bucket_insert(hash_table_priv *table, unsigned char *bucket, void *key, void *data);
+int is_zero(unsigned char *buf, size_t size);
 #endif //HASH_TABLE_H

@@ -37,6 +37,8 @@ typedef struct SESSION SESSION;
 
 
 SESSION *session_new();
+void session_destroy(SESSION *session);
+
 int init_session(int port, uint32_t address, SESSION *session);
 
 

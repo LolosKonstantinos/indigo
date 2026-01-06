@@ -2849,3 +2849,13 @@ int ip_rate_search(IP_RATE_ARRAY *restrict buffer, const uint32_t ip, size_t *co
 ////////////////////////////////////////////////////////////////////
 
 //use hash table
+
+int cmp_exp_pack(void* pack1, void* pack2) {
+//todo: the function should have a the return logic of memcmp
+    exp_pack_t *exp_pack1 = (exp_pack_t *)pack1, exp_pack_t *exp_pack2 = (exp_pack_t *)pack2;
+    if ((exp_pack1->socket == exp_pack2->socket) &&
+        (exp_pack1->address == exp_pack2->address) &&
+        (exp_pack1->type == exp_pack2->type) &&
+        (memcmp(exp_pack1->packet_id, exp_pack2->packet_id, 16) == 0)) return 0;
+    return memcmp(exp_pack1->packet_id, exp_pack2->packet_id, 16);//problematic
+}

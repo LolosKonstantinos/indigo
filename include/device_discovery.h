@@ -84,15 +84,18 @@ typedef struct udp_packet_header {
 }PACKET_HEADER;
 
 typedef struct expected_packet {
+    time_t timestamp;
+    unsigned char packet_id[16];
     SOCKET socket;
     uint32_t address;
     unsigned char type;
+
     unsigned char zero[3];
 }exp_pack_t;
 
 typedef struct expected_packet_array {
     exp_pack_t *packets;
-    uint64_t size;
+    size_t size;
 }exp_pack_array;
 
 typedef struct file_info {
@@ -218,10 +221,6 @@ typedef struct PACKET_HANDLER_ARGS {
     mempool_t *mempool;
     SIGNING_KEY_PAIR *signing_keys;
 }PACKET_HANDLER_ARGS;
-
-typedef struct SIGNING_SERVICE_ARGS {
-    EFLAG *flag;
-}SIGNING_SERVICE_ARGS;
 
 typedef struct MANAGER_ARGS {
     int port;
@@ -373,5 +372,8 @@ int ip_rate_search(IP_RATE_ARRAY *restrict buffer, const uint32_t ip, size_t *co
 ///                                                              ///
 ////////////////////////////////////////////////////////////////////
 //todo use hash table
+int push_expected_packet(exp_pack_t *exp_pack); //copies the packet
+exp_pack_t *search_exp_pack(exp_pack_t *exp_pack);
+int cmp_exp_pack(void* pack1, void* pack2);
 
 #endif //INDIGO_DEVICE_DISCOVERY_H

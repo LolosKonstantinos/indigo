@@ -1,177 +1,149 @@
 //
-// Created by Constantin on 02/01/2026.
+// Created by Constantin on 06/01/2026.
 //
 #include "hash_table.h"
 
-struct dynamic_perfect_hash_table_priv {
-    hashFunction hash;
-    first_level_ht_node *hash_table;
-    size_t cell_count;
-    size_t cell_size;
-    size_t bucket_count;                //the total amount of elements stored
-    uint8_t hash_bit_length;
-    uint32_t key_length;
+#include <stdlib.h>
+#include <string.h>
+
+typedef int (*cmpFunction)(void *, void *);
+
+struct hash_table_priv {
+    hashFunction hash;          //kinda useless, we always use MurMurHash anyway
+    cmpFunction cmp;
+    unsigned char *table;                //the array of the hash table
+    size_t data_size;           //the number of bytes of the data part of the bucket
+    size_t bucket_count;        //the total number of buckets on the first level
+    uint32_t key_length;        //the number of bytes of the key part of the buckets
+    uint8_t hash_bit_length;    //the nuber of bits we use out of the 32 we get from the hashfunction
+    unsigned char zero[3];
 };
 
 
+hash_table_t *new_hash_table() {
 
-/*__________________________________________________HASH_FUNCTIONS____________________________________________________*/
-unsigned int MurMurHash(const char *str, unsigned int length) {
-    uint32_t hash;
+}
+void delete_hash_table(hash_table_t *ht) {
 
-    MurmurHash3_x86_32(str, length, 0x7FFFFFFF, &hash);
-    return hash;
 }
 
-unsigned int FastHash(const char *str, unsigned int length) {
-    uint64_t hash = fasthash64(str,length,0x7FFFFFFF);
-    return hash - (hash >> 32);
+int hash_table_insert(hash_table_t *ht, void *key, void *data){
+    //the hash table should have a size of (at least) n^2 where n is the number of buckets
+    size_t new_size, old_size;
+    hash_table_priv *priv;
+    int hash_code;
+    unsigned char *bucket, *new_bucket, *new_table;
+
+    if (!ht || !key || !data) {
+        return 0;
+    }
+    priv = ht->private;
+
+    new_size = (sizeof(size_t) * 8) - __builtin_clzll((priv->bucket_count+1) * (priv->bucket_count+1) - 1);
+    old_size = (sizeof(size_t) * 8 - __builtin_clzll(priv->bucket_count * priv->bucket_count - 1));
+    if (old_size >= new_size) {
+        //we don't need to allocate more memory
+        hash_code = priv->hash(key,priv->key_length);
+        hash_code &= (1<<priv->hash_bit_length) - 1;
+        bucket = priv->table + hash_code * (priv->data_size + priv->key_length + sizeof(void *));
+        /*if the key is 0 then the bucket is empty and ready to use*/
+        if (is_zero(bucket + sizeof(void *), priv->key_length)) {
+            memcpy(bucket + sizeof(void *), key, priv->key_length);
+            memcpy(bucket + sizeof(void *) + priv->key_length, data, priv->data_size);
+        }
+        else {
+            new_bucket = malloc(priv->data_size + priv->key_length + sizeof(void *));
+            if (!new_bucket) return 1;
+
+            /*insert the bucket to the linked list*/
+            memcpy(new_bucket, bucket,sizeof(void *));
+            memcpy(bucket, &new_bucket, sizeof(void *));
+
+            memcpy(new_bucket + sizeof(void *), key, priv->key_length);
+            memcpy(new_bucket + sizeof(void *) + priv->key_length, data, priv->data_size);
+        }
+    }
+    else {
+        /*we need to resize the hash table (allocate a new table and move all the previous buckets to the new table)*/
+        new_table = malloc(new_size * (sizeof(void *) + priv->key_length + priv->data_size));
+        if (!new_table) return 1;
+        priv->hash_bit_length += 1;
+        for (size_t i = 0; i < old_size; i++) {
+            bucket = priv->table + i * (sizeof(void*) + priv->key_length+priv->data_size);
+            if (is_zero(bucket + sizeof(void *), priv->key_length)) continue;
+
+            for (unsigned char * b = bucket; b != NULL; b = *(void**)b) {
+                hash_code = priv->hash((char *)b + sizeof(void*),priv->key_length);
+                hash_code &= (1<<priv->hash_bit_length) - 1;
+
+                new_bucket = new_table + hash_code * (priv->data_size + priv->key_length + sizeof(void *));
+                if (hash_table_bucket_insert(priv,new_bucket,b + sizeof(void *),b + sizeof(void *) + priv->key_length)){
+                    free(new_table);
+                    priv->hash_bit_length -= 1;
+                    return 1;
+                }
+            }
+        }
+
+        free(priv->table);
+        priv->table = new_table;
+
+        /*the old table has been resized, now we insert the new element*/
+
+        hash_code = priv->hash(key,priv->key_length);
+        hash_code &= (1<<priv->hash_bit_length) - 1;
+        bucket = priv->table + hash_code * (priv->data_size + priv->key_length + sizeof(void *));
+        hash_table_bucket_insert(priv,bucket,key,data);
+    }
+    priv->bucket_count++;
+    return 0;
+}
+void *hash_table_search(hash_table_t *ht, void *key) {
+
+}
+int hash_table_delete(hash_table_t *ht, void *key) {
+
 }
 
-//fasthash
+int hash_table_bucket_insert(hash_table_priv *table, unsigned char *bucket, void *key, void *data) {
+    unsigned char *new_bucket;
 
-#define mix(h) ({					\
-(h) ^= (h) >> 23;		\
-(h) *= 0x2127599bf4325c37ULL;	\
-(h) ^= (h) >> 47; })
+    if (is_zero(bucket + sizeof(void *), table->key_length)) {
+        memcpy(bucket + sizeof(void *), key, table->key_length);
+        memcpy(bucket + sizeof(void *) + table->key_length, data, table->data_size);
+    }
+    else {
+        new_bucket = malloc(table->data_size + table->key_length + sizeof(void *));
+        if (!new_bucket) return 1;
 
-uint64_t fasthash64(const void *buf, size_t len, uint64_t seed)
-{
-    const uint64_t    m = 0x880355f21e6d1965ULL;
-    const uint64_t *pos = (const uint64_t *)buf;
-    const uint64_t *end = pos + (len / 8);
-    const unsigned char *pos2;
-    uint64_t h = seed ^ (len * m);
-    uint64_t v;
+        /*insert the bucket to the linked list*/
+        memcpy(new_bucket, bucket,sizeof(void *));
+        memcpy(bucket, &new_bucket, sizeof(void *));
 
-    while (pos != end) {
-        v  = *pos++;
-        h ^= mix(v);
-        h *= m;
+        memcpy(new_bucket + sizeof(void *), key, table->key_length);
+        memcpy(new_bucket + sizeof(void *) + table->key_length, data, table->data_size);
+    }
+    return 0;
+}
+
+int is_zero(unsigned char *buf, size_t size) {
+    size_t iter;
+    uint_fast64_t res = 0, temp1;
+    unsigned char temp2;
+    size_t i;
+
+    if (buf == NULL || size == 0) return -1;
+
+    iter = (size / sizeof(uint_fast64_t));
+    for (i = 0; i < iter; i++) {
+        memcpy(&temp1, buf + i * sizeof(uint_fast64_t), sizeof(uint_fast64_t));
+        res |= temp1;
+    }
+    buf += iter * sizeof(uint_fast64_t);
+    for (i = 0; i < size - iter * sizeof(uint_fast64_t); i++) {
+        memcpy(&temp2, buf + i, sizeof(unsigned char));
+        res |= temp2;
     }
 
-    pos2 = (const unsigned char*)pos;
-    v = 0;
-
-    switch (len & 7) {
-    case 7: v ^= (uint64_t)pos2[6] << 48;
-    case 6: v ^= (uint64_t)pos2[5] << 40;
-    case 5: v ^= (uint64_t)pos2[4] << 32;
-    case 4: v ^= (uint64_t)pos2[3] << 24;
-    case 3: v ^= (uint64_t)pos2[2] << 16;
-    case 2: v ^= (uint64_t)pos2[1] << 8;
-    case 1: v ^= (uint64_t)pos2[0];
-        h ^= mix(v);
-        h *= m;
-    }
-
-    return mix(h);
-}
-
-
-#define	FORCE_INLINE inline __attribute__((always_inline))
-
-inline uint32_t rotl32 ( uint32_t x, int8_t r )
-{
-    return (x << r) | (x >> (32 - r));
-}
-
-inline uint64_t rotl64 ( uint64_t x, int8_t r )
-{
-    return (x << r) | (x >> (64 - r));
-}
-
-#define	ROTL32(x,y)	rotl32(x,y)
-#define ROTL64(x,y)	rotl64(x,y)
-
-#define BIG_CONSTANT(x) (x##LLU)
-
-FORCE_INLINE uint32_t getblock32 ( const uint32_t * p, int i )
-{
-    return p[i];
-}
-
-FORCE_INLINE uint64_t getblock64 ( const uint64_t * p, int i )
-{
-    return p[i];
-}
-
-FORCE_INLINE uint32_t fmix32 ( uint32_t h )
-{
-    h ^= h >> 16;
-    h *= 0x85ebca6b;
-    h ^= h >> 13;
-    h *= 0xc2b2ae35;
-    h ^= h >> 16;
-
-    return h;
-}
-
-//----------
-
-FORCE_INLINE uint64_t fmix64 ( uint64_t k )
-{
-    k ^= k >> 33;
-    k *= BIG_CONSTANT(0xff51afd7ed558ccd);
-    k ^= k >> 33;
-    k *= BIG_CONSTANT(0xc4ceb9fe1a85ec53);
-    k ^= k >> 33;
-
-    return k;
-}
-
-
-
-void MurmurHash3_x86_32 ( const void * key, int len,
-                          uint32_t seed, void * out )
-{
-    const uint8_t * data = (const uint8_t*)key;
-    const int nblocks = len / 4;
-
-    uint32_t h1 = seed;
-
-    const uint32_t c1 = 0xcc9e2d51;
-    const uint32_t c2 = 0x1b873593;
-
-    //----------
-    // body
-
-    const uint32_t * blocks = (const uint32_t *)(data + nblocks*4);
-
-    for(int i = -nblocks; i; i++)
-    {
-        uint32_t k1 = getblock32(blocks,i);
-
-        k1 *= c1;
-        k1 = ROTL32(k1,15);
-        k1 *= c2;
-
-        h1 ^= k1;
-        h1 = ROTL32(h1,13);
-        h1 = h1*5+0xe6546b64;
-    }
-
-    //----------
-    // tail
-
-    const uint8_t * tail = (const uint8_t*)(data + nblocks*4);
-
-    uint32_t k1 = 0;
-
-    switch(len & 3)
-    {
-    case 3: k1 ^= tail[2] << 16;
-    case 2: k1 ^= tail[1] << 8;
-    case 1: k1 ^= tail[0];
-        k1 *= c1; k1 = ROTL32(k1,15); k1 *= c2; h1 ^= k1;
-    };
-
-    //----------
-    // finalization
-
-    h1 ^= len;
-
-    h1 = fmix32(h1);
-
-    *(uint32_t*)out = h1;
+    return res == 0;
 }

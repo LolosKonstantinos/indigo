@@ -17,7 +17,7 @@ add_library(queue_includes INTERFACE Queue.h)
 add_library(buffer_includes INTERFACE buffer.h)
 add_library(mempool_includes INTERFACE mempool.h)
 add_library(binary_tree_includes INTERFACE binary_tree.h)
-add_library(hash_table_includes INTERFACE hash_table.h)
+add_library(hash_table_includes INTERFACE dpht.h hash_functions.h)
 add_library(indigo_errors INTERFACE indigo_errors.h)
 
 
