@@ -99,10 +99,58 @@ int hash_table_insert(hash_table_t *ht, void *key, void *data){
     return 0;
 }
 void *hash_table_search(hash_table_t *ht, void *key) {
+    int hash_code;
+    unsigned char *bucket;
+    hash_table_priv *priv;
+    if (!ht || !key) {
+        return NULL;
+    }
+    priv = ht->private;
 
+    hash_code = priv->hash(key,priv->key_length);
+    hash_code &= (1<<priv->hash_bit_length) - 1;
+    bucket = priv->table + hash_code * (priv->data_size + priv->key_length + sizeof(void *));
+
+    while (memcmp(key,bucket + sizeof(void *), priv->key_length) != 0) {
+        bucket = *(void **)bucket;
+        if (!bucket) return NULL;
+    }
+    return bucket + sizeof(void *) + priv->key_length;
 }
 int hash_table_delete(hash_table_t *ht, void *key) {
+    int hash_code;
+    unsigned char *bucket, *prev = NULL, *temp;
+    hash_table_priv *priv;
+    if (!ht || !key) {
+        return -1;
+    }
+    priv = ht->private;
 
+    hash_code = priv->hash(key,priv->key_length);
+    hash_code &= (1<<priv->hash_bit_length) - 1;
+    bucket = priv->table + hash_code * (priv->data_size + priv->key_length + sizeof(void *));
+    while (memcmp(key,bucket + sizeof(void *), priv->key_length) != 0) {
+        prev = bucket;
+        bucket = *(void **)bucket;
+        if (!bucket) return 1;
+    }
+    if (!prev) {
+        temp = *(void **)bucket;
+        if (temp) {
+            memcpy(bucket, temp, sizeof(void *) + priv->key_length + priv->data_size);
+            free(temp);
+        }
+        else {
+            memset(bucket, 0, sizeof(void *) + priv->key_length + priv->data_size);
+        }
+    }
+    else {
+        memcpy(prev, bucket, sizeof(void *));
+        free(bucket);
+    }
+    priv->bucket_count--;
+    //todo here we should consider resizing, for now we dont scale down
+    return 0;
 }
 
 int hash_table_bucket_insert(hash_table_priv *table, unsigned char *bucket, void *key, void *data) {
