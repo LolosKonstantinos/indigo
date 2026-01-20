@@ -6,7 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef int (*cmpFunction)(void *, void *);
 
 struct hash_table_priv {
     hashFunction hash;          //kinda useless, we always use MurMurHash anyway
@@ -20,11 +19,43 @@ struct hash_table_priv {
 };
 
 
-hash_table_t *new_hash_table() {
+hash_table_t *new_hash_table(size_t data_size, size_t key_length, size_t init_size, cmpFunction cmp) {
+    hash_table_priv *priv;
+    hash_table_t *ht;
+    if (cmp == NULL || data_size == 0) {
+        return NULL;
+    }
+    ht = (hash_table_t *)malloc(sizeof(hash_table_t));
+    if (ht == NULL) return NULL;
+    priv= malloc(sizeof(struct hash_table_priv));
+    if (ht->private == NULL) {
+        free(ht);
+        return NULL;
+    }
+    ht->private = priv;
 
+    priv->hash = MurMurHash;
+    priv->cmp = cmp;
+    priv->bucket_count = init_size ? init_size : 1;
+    priv->hash_bit_length = sizeof(size_t) * 8 - __builtin_ctz(init_size * init_size - 1);
+    priv->data_size = data_size;
+    priv->key_length = key_length ? key_length : sizeof(uint32_t);
+    priv->table = (unsigned char *)malloc((1<<priv->hash_bit_length) * (sizeof(void *) + priv->data_size + priv->key_length));
+    if (priv->table == NULL) {
+        free(priv);
+        free(ht);
+        return NULL;
+    }
+    ht->insert = hash_table_insert;
+    ht->remove = hash_table_delete;
+    ht->search = hash_table_search;
+    return ht;
 }
 void delete_hash_table(hash_table_t *ht) {
-
+    /*todo remove the linked list nodes*/
+    free(ht->private->table);
+    free(ht->private);
+    free(ht);
 }
 
 int hash_table_insert(hash_table_t *ht, void *key, void *data){
@@ -40,7 +71,7 @@ int hash_table_insert(hash_table_t *ht, void *key, void *data){
     priv = ht->private;
 
     new_size = (sizeof(size_t) * 8) - __builtin_clzll((priv->bucket_count+1) * (priv->bucket_count+1) - 1);
-    old_size = (sizeof(size_t) * 8 - __builtin_clzll(priv->bucket_count * priv->bucket_count - 1));
+    old_size = priv->hash_bit_length;
     if (old_size >= new_size) {
         //we don't need to allocate more memory
         hash_code = priv->hash(key,priv->key_length);
@@ -65,7 +96,7 @@ int hash_table_insert(hash_table_t *ht, void *key, void *data){
     }
     else {
         /*we need to resize the hash table (allocate a new table and move all the previous buckets to the new table)*/
-        new_table = malloc(new_size * (sizeof(void *) + priv->key_length + priv->data_size));
+        new_table = malloc((1<<new_size) * (sizeof(void *) + priv->key_length + priv->data_size));
         if (!new_table) return 1;
         priv->hash_bit_length += 1;
         for (size_t i = 0; i < old_size; i++) {
@@ -119,7 +150,8 @@ void *hash_table_search(hash_table_t *ht, void *key) {
 }
 int hash_table_delete(hash_table_t *ht, void *key) {
     int hash_code;
-    unsigned char *bucket, *prev = NULL, *temp;
+    unsigned char *bucket, *prev = NULL, *temp, *new_bucket, *new_table;
+    size_t old_size, new_size;
     hash_table_priv *priv;
     if (!ht || !key) {
         return -1;
@@ -148,8 +180,36 @@ int hash_table_delete(hash_table_t *ht, void *key) {
         memcpy(prev, bucket, sizeof(void *));
         free(bucket);
     }
+
+    old_size = priv->hash_bit_length;
     priv->bucket_count--;
-    //todo here we should consider resizing, for now we dont scale down
+    new_size = (sizeof(size_t) * 8) - __builtin_clzll(priv->bucket_count * priv->bucket_count - 1);
+
+    if (new_size < old_size) {
+        /*we need to resize the hash table (allocate a new table and move all the previous buckets to the new table)*/
+        new_table = malloc((1<<new_size) * (sizeof(void *) + priv->key_length + priv->data_size));
+        if (!new_table) return 1;
+        priv->hash_bit_length += 1;
+        for (size_t i = 0; i < old_size; i++) {
+            bucket = priv->table + i * (sizeof(void*) + priv->key_length+priv->data_size);
+            if (is_zero(bucket + sizeof(void *), priv->key_length)) continue;
+
+            for (unsigned char * b = bucket; b != NULL; b = *(void**)b) {
+                hash_code = priv->hash((char *)b + sizeof(void*),priv->key_length);
+                hash_code &= (1<<priv->hash_bit_length) - 1;
+
+                new_bucket = new_table + hash_code * (priv->data_size + priv->key_length + sizeof(void *));
+                if (hash_table_bucket_insert(priv,new_bucket,b + sizeof(void *),b + sizeof(void *) + priv->key_length)){
+                    free(new_table);
+                    priv->hash_bit_length -= 1;
+                    return 1;
+                }
+            }
+        }
+
+        free(priv->table);
+        priv->table = new_table;
+    }
     return 0;
 }
 
