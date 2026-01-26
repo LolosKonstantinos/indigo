@@ -9,7 +9,6 @@
 
 struct hash_table_priv {
     hashFunction hash;          //kinda useless, we always use MurMurHash anyway
-    cmpFunction cmp;
     unsigned char *table;                //the array of the hash table
     size_t data_size;           //the number of bytes of the data part of the bucket
     size_t bucket_count;        //the total number of buckets on the first level
@@ -19,10 +18,10 @@ struct hash_table_priv {
 };
 
 
-hash_table_t *new_hash_table(size_t data_size, size_t key_length, size_t init_size, cmpFunction cmp) {
+hash_table_t *new_hash_table(size_t data_size, size_t key_length, size_t init_size) {
     hash_table_priv *priv;
     hash_table_t *ht;
-    if (cmp == NULL || data_size == 0) {
+    if (data_size == 0) {
         return NULL;
     }
     ht = (hash_table_t *)malloc(sizeof(hash_table_t));
@@ -34,8 +33,7 @@ hash_table_t *new_hash_table(size_t data_size, size_t key_length, size_t init_si
     }
     ht->private = priv;
 
-    priv->hash = MurMurHash;
-    priv->cmp = cmp;
+    priv->hash = FastHash;
     priv->bucket_count = init_size ? init_size : 1;
     priv->hash_bit_length = sizeof(size_t) * 8 - __builtin_ctz(init_size * init_size - 1);
     priv->data_size = data_size;

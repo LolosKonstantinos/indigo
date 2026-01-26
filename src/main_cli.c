@@ -4,7 +4,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
-#include "device_discovery.h"
+#include "../include/indigo_core/indigo_core.h"
 #include "file_transfer.h"
 
 #include "crypto_utils.h"

@@ -15,7 +15,6 @@ typedef int (*ht_insertFunction)(hash_table_t *, void *, void *);
 typedef int (*ht_removeFunction)(hash_table_t *, void *);
 typedef void *(*ht_searchFunction)(hash_table_t *, void *);
 
-typedef int (*cmpFunction)(void *, void *);
 
 struct hash_table_t {
     ht_insertFunction insert;
@@ -26,7 +25,7 @@ struct hash_table_t {
 
 
 
-hash_table_t *new_hash_table(size_t data_size, size_t key_length, size_t init_size, cmpFunction cmp);
+hash_table_t *new_hash_table(size_t data_size, size_t key_length, size_t init_size);
 void delete_hash_table(hash_table_t *ht);
 
 int hash_table_insert(hash_table_t *ht, void *key, void *data);
