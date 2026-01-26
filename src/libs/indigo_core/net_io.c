@@ -2,6 +2,7 @@
 // Created by Constantin on 26/01/2026.
 //
 #include <indigo_core/net_io.h>
+#include <stdio.h>
 #include <indigo_errors.h>
 
 //////////////////////////////////////////////////////
@@ -18,8 +19,8 @@ int send_discovery_packets(
     SOCKET_LL *sockets,
     EFLAG *flag,
     const uint32_t pCount,
-    const int32_t msec
-    ) {
+    const int32_t msec, const unsigned char id[crypto_sign_PUBLICKEYBYTES]
+) {
     //temporary variables for memory allocation
     SEND_INFO temp_info = {0}, *sInfo = NULL;
     size_t infolen = 0;
@@ -38,7 +39,7 @@ int send_discovery_packets(
     PACKET packet;
     int routine_ret = 0;
 
-    build_packet(&packet, MSG_INIT_PACKET, 0);
+    build_packet(&packet, MSG_INIT_PACKET, id, 0);
 
     while (1) {
         pthread_mutex_lock(&sockets->mutex);
@@ -602,22 +603,20 @@ int send_packet(int port, uint32_t addr, SOCKET socket, PACKET *packet, EFLAG *f
 ///                                                       ///
 /////////////////////////////////////////////////////////////
 
-void build_packet(PACKET * restrict packet, const unsigned pac_type,const void * restrict data) {
+void build_packet(PACKET * restrict packet, const unsigned pac_type, const unsigned char id[crypto_sign_PUBLICKEYBYTES], const void * restrict data) {
+    memset(packet, 0, sizeof(PACKET));
+    packet->magic_number = MAGIC_NUMBER;
+    packet->pac_version = PAC_VERSION;
+    packet->pac_type = pac_type;
+    memcpy(packet->id, id, crypto_sign_PUBLICKEYBYTES);
+
     if (pac_type == MSG_INIT_PACKET) {
-        memset(packet, 0, sizeof(PACKET));
-        packet->magic_number = MAGIC_NUMBER;
-        packet->pac_version = PAC_VERSION;
-        packet->pac_type = pac_type;
         //todo: we will use the username
         if (gethostname(packet->data, PAC_DATA_BYTES) != 0 ) {
             strcpy(packet->data, "unknown_hostname");
         }
     }
     else{
-        memset(packet, 0, sizeof(PACKET));
-        packet->magic_number = MAGIC_NUMBER;
-        packet->pac_version = PAC_VERSION;
-        packet->pac_type = pac_type;
         if (!data) return;
         memcpy(packet->data, data, PAC_DATA_BYTES);
     }
@@ -938,7 +937,7 @@ int *send_discovery_thread(SEND_ARGS *args) {
     *process_return = 0;
 
     //send a packet burst when a device discovery operation starts
-    ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,3,150);
+    ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,3,150, TODO);
     if (ret > 0) {
         set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
@@ -970,7 +969,7 @@ int *send_discovery_thread(SEND_ARGS *args) {
 
             reset_single_event(args->flag, EF_SEND_MULTIPLE_PACKETS);
 
-            ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,3,150);
+            ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,3,150, args->public_key);
             if (ret > 0) {
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
@@ -993,7 +992,7 @@ int *send_discovery_thread(SEND_ARGS *args) {
         ////////////////////////////////
 
 
-        ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,1,0);
+        ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,1,0, args->public_key);
         if (ret > 0) {
             set_event_flag(args->flag, EF_TERMINATION);
             set_event_flag(args->wake, EF_WAKE_MANAGER);

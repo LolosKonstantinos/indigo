@@ -8,6 +8,7 @@
 #include <event_flags.h>
 #include <mempool.h>
 #include <Queue.h>
+#include <sodium/crypto_sign.h>
 //for now, it's ok, later we will need to add linux libraries
 #ifdef _WIN32
 
@@ -52,6 +53,7 @@ typedef struct udp_packet{
     unsigned char pac_type;
     unsigned char pac_version;
     int16_t zero;
+    unsigned char id[crypto_sign_PUBLICKEYBYTES];
     char data[PAC_DATA_BYTES];
 }PACKET;
 
@@ -59,6 +61,8 @@ typedef struct udp_packet_header {
     uint32_t magic_number;
     unsigned char pac_type;
     unsigned char pac_version;
+    int16_t zero;
+    unsigned char id[crypto_sign_PUBLICKEYBYTES];
 }PACKET_HEADER;
 
 //for device discovery system and queue
@@ -113,6 +117,7 @@ typedef struct SEND_ARGS {
     EFLAG *flag;
     EFLAG *wake;
     SOCKET_LL *sockets;
+    unsigned char public_key[crypto_sign_PUBLICKEYBYTES];
 }SEND_ARGS;
 
 typedef struct RECV_ARGS {
@@ -132,7 +137,7 @@ typedef struct RECV_ARGS {
 //////////////////////////////////////////////////////
 
 //todo check and remove redundant code (there is a comment saying "temporary")
-int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets, EFLAG *flag, uint32_t pCount, int32_t msec);
+int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets, EFLAG *flag, uint32_t pCount, int32_t msec, unsigned char id[crypto_sign_PUBLICKEYBYTES]);
 int register_single_receiver(SOCKET sock, RECV_INFO **info, mempool_t* mempool);
 int register_multiple_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, mempool_t* mempool, EFLAG *flag);
 
@@ -145,7 +150,7 @@ int send_packet(int port, uint32_t addr, SOCKET socket, PACKET *packet, EFLAG *f
 ///                                                       ///
 /////////////////////////////////////////////////////////////
 
-void build_packet(PACKET * restrict packet, const unsigned pac_type,const void * restrict data);
+void build_packet(PACKET * restrict packet, const unsigned pac_type, const unsigned char id[crypto_sign_PUBLICKEYBYTES], const void * restrict data);
 int create_handle_array_from_send_info(const SEND_INFO *info, size_t infolen, HANDLE **handles, size_t *hCount);
 void free_send_info(const SEND_INFO *info);
 int allocate_recv_info(RECV_INFO **info, mempool_t* mempool);

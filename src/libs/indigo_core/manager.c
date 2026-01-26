@@ -3,6 +3,7 @@
 //
 
 #include <indigo_core/manager.h>
+#include <crypto_utils.h>
 #include <indigo_errors.h>
 
 //////////////////////////////////////////////////////////
@@ -35,14 +36,18 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     QNODE *qnode_pop = NULL;
 
     //the discovery sockets list
-    SOCKET_LL *sockets;
+    SOCKET_LL *sockets = NULL;
 
+    //the key pair
+    SIGNING_KEY_PAIR *signing_key_pair = NULL;
+    unsigned char public_key[crypto_sign_PUBLICKEYBYTES];
     //flags
     uint32_t flag_val;
 
     void *temp = NULL;
 
     int *process_return = NULL;
+    int ret_val = 0; //general purpose return value varialble
 
 /*_________________________________________HERE STARTS THE FUNCTIONS LOGIC____________________________________________*/
     //allocate memory for the return value
@@ -98,6 +103,27 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
         goto cleanup;
     }
 
+    //load the signing keys
+    signing_key_pair = sodium_malloc(sizeof(SIGNING_KEY_PAIR));
+    if (signing_key_pair == NULL) {
+        fprintf(stderr, "Failed to load signing key pair\n");
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        goto cleanup;
+    }
+    sodium_mprotect_readonly(args->master_key);
+    ret_val = load_signing_key_pair(signing_key_pair, args->master_key);
+    if (ret_val != INDIGO_SUCCESS) {
+        sodium_mprotect_noaccess(args->master_key);
+        fprintf(stderr, "Failed to load signing key pair\n");
+        *process_return = ret_val;
+        goto cleanup;
+    }
+    sodium_mprotect_noaccess(args->master_key);
+    //the public key is our identifier and is used far more commonly than the private key
+    //the less the time the private key is accessible the better
+    memcpy(public_key, signing_key_pair->public, crypto_sign_PUBLICKEYBYTES);
+    sodium_mprotect_noaccess(signing_key_pair);
+
     //create threads
     if (create_interface_updater_thread(&update_args,args->port, args->multicast_addr, args->flag, sockets, &tid_update)) {
         fprintf(stderr, "create_interface_updater_thread failed\n");
@@ -117,7 +143,7 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
         goto cleanup;
     }
 
-    if (create_discovery_sending_thread(&send_args, args->port, args->multicast_addr, sockets, args->flag, &tid_send)) {
+    if (create_discovery_sending_thread(&send_args, args->port, args->multicast_addr, sockets, args->flag, &tid_send, public_key)) {
         fprintf(stderr, "create_discovery_sending_thread failed\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
@@ -315,7 +341,7 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
 
     free_event_flag(args->flag);
     free(args);
-
+    sodium_free(signing_key_pair);
     printf("DEBUG: manager thread exit\n");
     fflush(stdout);
     return process_return;
@@ -379,7 +405,8 @@ int create_thread_manager_thread(MANAGER_ARGS **args, int port, uint32_t multica
     return 0;
 }
 
-int create_discovery_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, SOCKET_LL *sockets, EFLAG *wake_mngr, pthread_t *tid){
+int create_discovery_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, SOCKET_LL *sockets, EFLAG *wake_mngr, pthread_t *tid, unsigned
+                                    char public_key[crypto_sign_PUBLICKEYBYTES]){
     pthread_t thread;
 
     SEND_ARGS *send_args = malloc(sizeof(SEND_ARGS));
@@ -402,6 +429,7 @@ int create_discovery_sending_thread(SEND_ARGS **args, int port, uint32_t multica
     send_args->sockets = sockets;
     send_args->wake = wake_mngr;
     send_args->flag = flag;
+    memcpy(send_args->public_key, public_key, crypto_sign_PUBLICKEYBYTES);
 
     if (pthread_create(&thread, NULL, (void *)(&send_discovery_thread), send_args)) {
         free_event_flag(flag);
