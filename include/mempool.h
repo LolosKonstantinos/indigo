@@ -21,7 +21,7 @@ typedef struct memory_extension_ll_node ext_ll;
 typedef void *(*alloc)(mempool_t *);
 typedef void (*dealloc)(mempool_t *, void *);
 typedef EXT_HANDLE (*memextend)(mempool_t *, size_t);
-typedef void (*free_ext)(mempool_t, EXT_HANDLE);
+typedef void (*free_ext)(mempool_t *, EXT_HANDLE);
 
 
 struct mempool {
@@ -30,7 +30,7 @@ struct mempool {
     memextend extend;
     free_ext free_extension;
 
-    float (*get_capacity)(const mempool_t *);
+    size_t (*get_capacity)(mempool_t *);
 
     struct mempool_private *private;
 

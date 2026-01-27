@@ -4,6 +4,7 @@
 
 #ifndef NET_IO_H
 #define NET_IO_H
+
 #include <indigo_core/indigo_core.h>
 #include <event_flags.h>
 #include <mempool.h>
@@ -137,7 +138,7 @@ typedef struct RECV_ARGS {
 //////////////////////////////////////////////////////
 
 //todo check and remove redundant code (there is a comment saying "temporary")
-int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets, EFLAG *flag, uint32_t pCount, int32_t msec, unsigned char id[crypto_sign_PUBLICKEYBYTES]);
+int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets, EFLAG *flag, uint32_t pCount, int32_t msec,const unsigned char id[crypto_sign_PUBLICKEYBYTES]);
 int register_single_receiver(SOCKET sock, RECV_INFO **info, mempool_t* mempool);
 int register_multiple_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, mempool_t* mempool, EFLAG *flag);
 
@@ -171,7 +172,19 @@ void free_recv_array(const RECV_ARRAY *info, mempool_t* mempool);
 ///                  THREAD_FUNCTIONS                  ///
 ///                                                    ///
 //////////////////////////////////////////////////////////
-///
+
 int *send_discovery_thread(SEND_ARGS *args);
 int *recv_discovery_thread(RECV_ARGS *args);
+
+//////////////////////////////////////////////////////////////
+///                                                        ///
+///                  DEVICE_LL_UTILITIES                   ///
+///                                                        ///
+//////////////////////////////////////////////////////////////
+//todo update and use hash tables, the public key is the identifier
+//they are thread unsafe, first lock the mutex and then use
+
+int remove_device(PACKET_LIST *devices, const PACKET_INFO *dev);
+PACKET_NODE *device_exists(const PACKET_LIST *devices, const PACKET_INFO *dev);
+
 #endif //NET_IO_H

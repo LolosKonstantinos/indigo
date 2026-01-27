@@ -3,6 +3,7 @@
 //
 #include <indigo_core/net_monitor.h>
 #include <indigo_errors.h>
+#include <stdio.h>
 ///////////////////////////////////
 //                               //
 //     GET_DISCOVERY_SOCKETS     //

@@ -18,7 +18,7 @@ typedef struct MANAGER_ARGS {
     PACKET_LIST *devices;
     void *master_key;
 }MANAGER_ARGS;
-
+//todo use the public key as the device id, but dont rely only on the packet received
 //////////////////////////////////////////////////////////
 ///                                                    ///
 ///                  THREAD_FUNCTIONS                  ///

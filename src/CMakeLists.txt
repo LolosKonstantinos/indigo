@@ -6,13 +6,13 @@ add_executable(${PROJECT_NAME}_cli main_cli.c)
 add_executable(${PROJECT_NAME}_gui main_gui.c)
 
 # Link the executable with the library.
-target_link_libraries(${PROJECT_NAME}_cli PRIVATE dev_disc file_tras cli)
+target_link_libraries(${PROJECT_NAME}_cli PRIVATE indigo_core file_tras cli)
 
 set_target_properties(${PROJECT_NAME}_cli PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-set_target_properties(dev_disc PROPERTIES
+set_target_properties(indigo_core PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 

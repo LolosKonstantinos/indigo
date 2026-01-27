@@ -937,14 +937,14 @@ int *send_discovery_thread(SEND_ARGS *args) {
     *process_return = 0;
 
     //send a packet burst when a device discovery operation starts
-    ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,3,150, TODO);
+    ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,3,150, args->public_key);
     if (ret > 0) {
         set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
         *process_return = ret;
         return process_return;
     }
-    //returns -1 when we get an override excecution or
+    //returns -1 when we get an override execution or
     if (ret == -1) {
         flag_val = get_event_flag(args->flag);
         if(flag_val & EF_TERMINATION){
@@ -1333,4 +1333,45 @@ void free_recv_array(const RECV_ARRAY *info, mempool_t* mempool) {
         free_recv_info(&(info->head[i]), mempool);
     }
     free(info->head);
+}
+
+//////////////////////////////////////////////////////////////
+///                                                        ///
+///                  DEVICE_LL_UTILITIES                   ///
+///                                                        ///
+//////////////////////////////////////////////////////////////
+
+int remove_device(PACKET_LIST *devices, const PACKET_INFO *dev) {
+    if (devices == NULL) return 1;
+
+
+    PACKET_NODE *prev = NULL;
+    PACKET_NODE *curr = devices->head;
+
+    while (curr != NULL) {
+        if (memcmp(curr->packet.mac_address, dev->mac_address, 6) == 0) {
+            if (prev == NULL) {
+                devices->head = curr->next;
+                free(curr);
+                return 0;
+            }
+
+            prev->next = curr->next;
+            free(curr);
+            return 0;
+
+        }
+        prev = curr;
+        curr = curr->next;
+    }
+    return -1;
+}
+
+PACKET_NODE *device_exists(const PACKET_LIST *devices, const PACKET_INFO *dev) {
+    if (devices == NULL) return NULL;
+
+    for (PACKET_NODE *curr = devices->head; curr != NULL; curr = curr->next) {
+        if (memcmp(curr->packet.mac_address, dev->mac_address, 6) == 0) return curr;
+    }
+    return NULL;
 }

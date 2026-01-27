@@ -623,7 +623,7 @@ size_t get_capacity(mempool_t* pool) {
     size_t capacity = 0;
     mempool_private_t *private;
     if (pool == NULL) return 0;
-    pthread_mutex_lock(&pool->mutex);
+    pthread_mutex_lock(&(pool->mutex));
     private = pool->private;
     capacity = private->capacity;
     for (ext_ll *ext = private->ext; ext != NULL; ext = ext->next) {

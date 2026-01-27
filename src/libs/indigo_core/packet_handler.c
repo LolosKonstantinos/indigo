@@ -3,6 +3,7 @@
 //
 
 #include <indigo_core/packet_handler.h>
+#include <indigo_core/indigo_core.h> //todo remove once the device exist function is gone
 #include <indigo_errors.h>
 //////////////////////////////////////////////////////////
 ///                                                    ///
@@ -27,6 +28,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     unsigned char nonce[INDIGO_NONCE_SIZE];
     unsigned char signed_nonce[crypto_sign_BYTES + INDIGO_NONCE_SIZE];
 
+    unsigned char public_key[crypto_sign_PUBLICKEYBYTES];
 
     PACKET_NODE *temp_dev, *found_dev;
     PACKET_INFO* packet_info;
@@ -46,6 +48,10 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
         return NULL;
     }
     *process_return = 0;
+
+    sodium_mprotect_readonly(args->signing_keys);
+    memcpy(public_key, args->signing_keys->public, crypto_sign_PUBLICKEYBYTES);
+    sodium_mprotect_noaccess(args->signing_keys);
 
     //the main loop
     while (!termination_is_on(args->flag)) {
@@ -120,7 +126,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                         return process_return;
                     }
-                    memcpy(&(temp_dev->packet), &packet_info, sizeof(PACKET_INFO));
+                    //todo check this like later
+                    memcpy(&(temp_dev->packet), packet_info, sizeof(PACKET_INFO));
 
                     temp_dev->next = args->devices->head;
                     args->devices->head = temp_dev;
@@ -129,7 +136,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
 
                     //send signing request
                     randombytes_buf(nonce,INDIGO_NONCE_SIZE);
-                    build_packet(packet,MSG_SIGNING_REQUEST,nonce);
+                    build_packet(packet,MSG_SIGNING_REQUEST,public_key,nonce);
                     send_packet((int)htonl(PORT),temp_dev->packet.address.sin_addr.S_un.S_addr,
                         temp_dev->packet.socket,packet, args->flag);
                     //todo: add a singing expected packet to the list
@@ -141,7 +148,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         //IDK do something
                         continue;
                     }
-                    build_packet(packet, MSG_SIGNING_RESPONSE, NULL);
+                    build_packet(packet, MSG_SIGNING_RESPONSE, public_key, NULL);
 
                     memcpy(packet->data, signed_nonce, sizeof(signed_nonce));
 
