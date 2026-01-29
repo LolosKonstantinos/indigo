@@ -3,14 +3,16 @@
 //
 
 #include <indigo_core/packet_handler.h>
-#include <indigo_core/indigo_core.h> //todo remove once the device exist function is gone
 #include <indigo_errors.h>
+
+#include "indigo_types.h"
 //////////////////////////////////////////////////////////
 ///                                                    ///
 ///                  THREAD_FUNCTIONS                  ///
 ///                                                    ///
 //////////////////////////////////////////////////////////
 //todo: re-write the packet handler, we need to handle every type of packet
+//todo: structure the xpacket table keys so that an rdev can have multiple expected packets
 int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     uint32_t flag_val = 0;
     QNODE *node;
@@ -30,10 +32,13 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
 
     unsigned char public_key[crypto_sign_PUBLICKEYBYTES];
 
-    PACKET_NODE *temp_dev, *found_dev;
-    PACKET_INFO* packet_info;
-    PACKET *packet;
+    packet_t *packet;
+    packet_info_t* packet_info;
     PACKET_HEADER packet_header;
+    remote_device_t rdev, *found_rdev = NULL;
+
+    hash_table_t *xpack_table; // the expected packet table
+    expected_packet_t xpacket, *found_xpacket = NULL;
 
     int ret = 0; //general purpose return variable
 
@@ -49,9 +54,19 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     }
     *process_return = 0;
 
+    //the less the private key is exposed the better, we copy the public key since it is frequently used
     sodium_mprotect_readonly(args->signing_keys);
     memcpy(public_key, args->signing_keys->public, crypto_sign_PUBLICKEYBYTES);
     sodium_mprotect_noaccess(args->signing_keys);
+
+    //create the expected packet table
+    xpack_table = new_hash_table(sizeof(expected_packet_t), crypto_sign_PUBLICKEYBYTES, 1<<6);
+    if (xpack_table == NULL) {
+        set_event_flag(args->flag, EF_TERMINATION);
+        set_event_flag(args->wake, EF_WAKE_MANAGER);
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        return process_return;
+    }
 
     //the main loop
     while (!termination_is_on(args->flag)) {
@@ -63,6 +78,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
         if (flag_val & EF_TERMINATION) {
             break;
         }
+
         if (flag_val & EF_NEW_PACKET) {
             reset_single_event(args->flag, EF_NEW_PACKET);
 
@@ -76,15 +92,21 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                 continue;
             }
 
+            //extract the contents of the node
             packet = node->data;
-            packet_info = node->data + sizeof(PACKET);
+            packet_info = node->data + sizeof(packet_t);
 
             destroy_qnode(node);
 
             memcpy(&packet_header, packet, sizeof(packet_header));
+            //prepare the remote device struct to fill with the remote device info
+            //we zero so that previous garbage doesn't affect the new device (e.g. if the new mac address is smaller)
+            memset(&rdev, 0, sizeof(remote_device_t));
 
             //todo handle all types of packets
             switch (packet_header.pac_type) {
+                //todo: later every packet will contain the current time +- 3 seconds signed
+                //todo: we will need to check that too (later, once implemented on the send level)
                 case MSG_INIT_PACKET:
                     mac_address_len = 6;
                     mac_address = calloc(1, mac_address_len);
@@ -98,6 +120,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
 
                     if (SendARP(packet_info->address.sin_addr.S_un.S_addr,INADDR_ANY, mac_address, p_mac_address_len)
                         != NO_ERROR) {
+                        //todo: i dont think this should return,
+                        //todo: error check and either proceed or return if it is a network error
                         set_event_flag(args->flag, EF_TERMINATION);
                         set_event_flag(args->wake, EF_WAKE_MANAGER);
                         *process_return = INDIGO_ERROR_WINLIB_ERROR;
@@ -105,79 +129,130 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         return process_return;
                         }
 
-                    memcpy(packet_info->mac_address, mac_address, mac_address_len);
-                    packet_info->mac_address_len = mac_address_len;
+                    memcpy(rdev.mac_addr, mac_address, mac_address_len);
+                    //todo: if we actually need the length of the mac we should do it here
 
                     free(mac_address);
 
-                    pthread_mutex_lock(&(args->devices->mutex));
+                    found_rdev = args->device_table->search(args->device_table, packet->id);
 
-                    found_dev = device_exists(args->devices, packet_info);
-                    if (found_dev != NULL) {
-                        found_dev->packet.timestamp = time(NULL); //renew the timestamp
-                        pthread_mutex_unlock(&args->devices->mutex);
+                    if (found_rdev != NULL) {
+                        found_rdev->expiration_time = time(NULL); //renew the timestamp
                         continue;
                     }
+                    //the remote device is not on the table so we add it
+                    rdev.expiration_time = time(NULL);
+                    rdev.socket = packet_info->socket;
+                    rdev.ip = packet_info->address.sin_addr.S_un.S_addr;
+                    memcpy(rdev.peer_public_key, packet->id, crypto_sign_PUBLICKEYBYTES);
+                    rdev.dev_state_flag = RDSF_UNVERIFIED; //the device is not verified
 
-                    temp_dev = malloc(sizeof(PACKET_NODE));
-                    if (temp_dev == NULL) {
-                        set_event_flag(args->flag, EF_TERMINATION);
-                        set_event_flag(args->wake, EF_WAKE_MANAGER);
-                        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                        return process_return;
-                    }
-                    //todo check this like later
-                    memcpy(&(temp_dev->packet), packet_info, sizeof(PACKET_INFO));
-
-                    temp_dev->next = args->devices->head;
-                    args->devices->head = temp_dev;
-
-                    pthread_mutex_unlock(&(args->devices->mutex));
+                    args->device_table->insert(args->device_table, packet->id, &rdev);
 
                     //send signing request
                     randombytes_buf(nonce,INDIGO_NONCE_SIZE);
                     build_packet(packet,MSG_SIGNING_REQUEST,public_key,nonce);
-                    send_packet((int)htonl(PORT),temp_dev->packet.address.sin_addr.S_un.S_addr,
-                        temp_dev->packet.socket,packet, args->flag);
-                    //todo: add a singing expected packet to the list
+                    send_packet((int)htonl(PORT),packet_info->address.sin_addr.S_un.S_addr,
+                                packet_info->socket,packet, args->flag);
+
+                    //add signing response to expected packets
+                    xpacket.expiration_time = time(NULL) + EXPIRATION_TIME;
+                    xpacket.type = MSG_SIGNING_RESPONSE;
+                    memcpy(xpacket.id, packet->id, crypto_sign_PUBLICKEYBYTES);
+                    memcpy(xpacket.nonce, nonce, INDIGO_NONCE_SIZE);
+                    memset(xpacket.serial_number_range,0,sizeof(xpacket.serial_number_range));
+                    memset(xpacket.zero, 0, sizeof(xpacket.zero));
+
+                    if (xpack_table->insert(xpack_table, xpacket.id, &xpacket)) {
+                        //todo: what do we do if insert fails (either the id is already in the table or memory error
+                    }
 
                     break;
                 case MSG_SIGNING_REQUEST:
                     //sign the nonce and send the signature with the public key and a new nonce
                     if (sign_buffer(args->signing_keys, packet->data, INDIGO_NONCE_SIZE,signed_nonce,NULL)) {
-                        //IDK do something
+                        //todo: IDK do something
                         continue;
                     }
                     build_packet(packet, MSG_SIGNING_RESPONSE, public_key, NULL);
 
                     memcpy(packet->data, signed_nonce, sizeof(signed_nonce));
 
-                    sodium_mprotect_readonly(args->signing_keys);
-                    memcpy(packet->data + sizeof(signed_nonce), args->signing_keys->public
-                        , sizeof(args->signing_keys->public));
-                    sodium_mprotect_noaccess(args->signing_keys);
+                    memcpy(packet->data + sizeof(signed_nonce), public_key, crypto_sign_PUBLICKEYBYTES);
 
-                    randombytes_buf(nonce,INDIGO_NONCE_SIZE);
-                    memcpy(packet->data + sizeof(signed_nonce) + crypto_sign_PUBLICKEYBYTES,nonce
-                        , INDIGO_NONCE_SIZE);
-                //todo set the an expected packet, keep the nonce we sent
-                //todo: make sure all override flags are risen in the thread_manager
-                    send_packet((int)htonl(PORT),packet_info->address.sin_addr.S_un.S_addr,packet_info->socket
-                        ,packet,args->flag);
-                    break;
-                case MSG_SIGNING_RESPONSE:
-                    //todo: verify the signature and store the public key to the device node
-
-                    ret = crypto_sign_open(nonce,NULL, packet->data, INDIGO_NONCE_SIZE + crypto_sign_BYTES
-                    ,(unsigned char *)(packet->data + sizeof(signed_nonce) + crypto_sign_PUBLICKEYBYTES));
-                    if (ret) {
-                        //todo: mark this device to be blocked, or just ghost, or send error message
+                    //if the peer is verified we don't need to send a signing request
+                    found_rdev = args->device_table->search(args->device_table, packet->id);
+                    if (found_rdev != NULL) {
+                        if (found_rdev->dev_state_flag == RDSF_UNVERIFIED) {
+                            randombytes_buf(nonce,INDIGO_NONCE_SIZE);
+                            memcpy(packet->data + sizeof(signed_nonce) + crypto_sign_PUBLICKEYBYTES,nonce
+                                , INDIGO_NONCE_SIZE);
+                            send_packet((int)htonl(PORT),packet_info->address.sin_addr.S_un.S_addr
+                                ,packet_info->socket
+                                ,packet,args->flag);
+                        }
                     }
+                //in this case they found us before we received their discovery packet (if they sent any)
+                    else {
+                        //the remote device is not on the table so we add it
+                        rdev.expiration_time = time(NULL);
+                        rdev.socket = packet_info->socket;
+                        rdev.ip = packet_info->address.sin_addr.S_un.S_addr;
+                        memcpy(rdev.peer_public_key, packet->id, crypto_sign_PUBLICKEYBYTES);
+                        rdev.dev_state_flag = RDSF_UNVERIFIED; //the device is not verified
 
-                    //todo check the nonce with the nonce we sent to be signed and then proceed
+                        args->device_table->insert(args->device_table, packet->id, &rdev);
+
+                        //add signing response to expected packets
+                        xpacket.expiration_time = time(NULL) + EXPIRATION_TIME;
+                        xpacket.type = MSG_SIGNING_RESPONSE;
+                        memcpy(xpacket.id, packet->id, crypto_sign_PUBLICKEYBYTES);
+                        memcpy(xpacket.nonce, nonce, INDIGO_NONCE_SIZE);
+                        memset(xpacket.serial_number_range,0,sizeof(xpacket.serial_number_range));
+                        memset(xpacket.zero, 0, sizeof(xpacket.zero));
+
+                        if (xpack_table->insert(xpack_table, xpacket.id, &xpacket)) {
+                            //todo: what do we do if insert fails (either the id is already in the table or memory error
+                        }
+                    }
+                    break;
+
+                case MSG_SIGNING_RESPONSE:
+                    found_xpacket = xpack_table->search(xpack_table, packet->id);
+                    if (found_xpacket != NULL) {
+                        if (found_xpacket->type == MSG_SIGNING_RESPONSE) {
+                            ret = crypto_sign_open(nonce,NULL,
+                                packet->data,
+                                INDIGO_NONCE_SIZE + crypto_sign_BYTES,
+                                packet->id);
+                            if (ret == 0) {
+                                if (memcmp(found_xpacket->nonce, nonce,INDIGO_NONCE_SIZE) == 0) {
+                                    //the device is got verified
+                                    found_rdev = args->device_table->search(args->device_table, packet->id);
+                                    if (found_rdev != NULL) {
+                                        found_rdev->expiration_time = time(NULL);
+                                        found_rdev->dev_state_flag |= RDSF_VERIFIED;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    //there was either an error or the device is not legitimate
+                    //therefore we send an error message
+                    build_packet(packet, MSG_ERR, public_key, NULL);
+                    send_packet((int)htonl(PORT)
+                                ,packet_info->address.sin_addr.S_un.S_addr
+                                ,packet_info->socket
+                                ,packet,args->flag);
+
                     //todo better send error message, track the failed attempts and then ban
-
-                    //todo if we haven't verified this device send a signing request
+                    break;
+                case MSG_FILE_SENDING_REQUEST:
+                    /*todo: here we ask if we can begin a session
+                     * create a symmetric keys, no need to reverify, if they dont have their private key
+                     * they cant decrypt our message
+                     */
                 case MSG_RESEND:
                 case MSG_FILE_CHUNK:
                 case MSG_STOP_FILE_TRANSMISSION:
@@ -206,17 +281,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
             ///  phase 2: update the device list  ///
             /////////////////////////////////////////
 
-            curr_time = time(NULL);
-
-            pthread_mutex_lock(&(args->devices->mutex));
-            lowest_time = curr_time - args->devices->head->packet.timestamp;
-            for (PACKET_NODE *temp = args->devices->head; temp != NULL; temp = temp->next) {
-                time_diff = curr_time - temp->packet.timestamp;
-                if (time_diff > DEVICE_TIME_UNTIL_DISCONNECTED)
-                    remove_device(args->devices,&(temp->packet));
-                if (time_diff < lowest_time) lowest_time = time_diff;
-            }
-            pthread_mutex_unlock(&(args->devices->mutex));
+            //todo: keep a linked list of all devices, as IDs, and check if there are devices to be removed
+            //todo: calculate the max sleep time we can get if the queue is empty
 
             //there is no need to sleep if there is more stuff to do
             if (!queue_is_empty(args->queue)) continue;

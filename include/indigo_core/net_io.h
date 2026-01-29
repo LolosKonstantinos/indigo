@@ -10,6 +10,8 @@
 #include <mempool.h>
 #include <Queue.h>
 #include <sodium/crypto_sign.h>
+
+#include "hash_table.h"
 //for now, it's ok, later we will need to add linux libraries
 #ifdef _WIN32
 
@@ -46,17 +48,17 @@
 
 #define PAC_DATA_BYTES (1<<10)
 #define PAC_MIN_BYTES 7
-#define PAC_MAX_BYTES sizeof(PACKET)
+#define PAC_MAX_BYTES sizeof(packet_t)
 //the packet that is sent for everything, device discovery, signature handshakes, file chunks, etc.
 //it's a little big but since the buffer is at the end there is no need to send the whole thing
-typedef struct udp_packet{
+typedef struct udp_packet_t{
     uint32_t magic_number;
     unsigned char pac_type;
     unsigned char pac_version;
     int16_t zero;
     unsigned char id[crypto_sign_PUBLICKEYBYTES];
     char data[PAC_DATA_BYTES];
-}PACKET;
+}packet_t;
 
 typedef struct udp_packet_header {
     uint32_t magic_number;
@@ -66,27 +68,11 @@ typedef struct udp_packet_header {
     unsigned char id[crypto_sign_PUBLICKEYBYTES];
 }PACKET_HEADER;
 
-//for device discovery system and queue
-typedef struct packet_info {
-    time_t timestamp;
+ //for device discovery system and queue
+typedef struct packet_info_t {
     struct sockaddr_in address;
-    uint8_t mac_address[6];
-    uint8_t mac_address_len;
-    uint8_t zero;
     SOCKET socket;
-    void * packet; //may not need it as when we send the received buffer the packet is already in there
-}PACKET_INFO;
-
-typedef struct PACKET_INFO_NODE {
-    struct PACKET_INFO_NODE *next;
-    PACKET_INFO packet;
-}PACKET_INFO_NODE, PACKET_NODE;
-
-typedef struct PACKET_INFO_LIST {
-    PACKET_NODE *head;
-    pthread_mutex_t mutex;
-    pthread_cond_t cond;
-}PACKET_INFO_LIST, PACKET_LIST;
+}packet_info_t;
 
 typedef struct RECV_INFO {
     struct sockaddr *source;
@@ -100,7 +86,7 @@ typedef struct RECV_INFO {
 }RECV_INFO;
 
 typedef struct RECV_INFO_ARRAY {
-    RECV_INFO *head;
+    RECV_INFO *array;
     size_t size;
 } RECV_INFO_ARRAY, RECV_ARRAY;
 
@@ -142,7 +128,7 @@ int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets
 int register_single_receiver(SOCKET sock, RECV_INFO **info, mempool_t* mempool);
 int register_multiple_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, mempool_t* mempool, EFLAG *flag);
 
-int send_packet(int port, uint32_t addr, SOCKET socket, PACKET *packet, EFLAG *flag);
+int send_packet(int port, uint32_t addr, SOCKET socket, const packet_t* packet, EFLAG *flag);
 
 
 /////////////////////////////////////////////////////////////
@@ -151,7 +137,7 @@ int send_packet(int port, uint32_t addr, SOCKET socket, PACKET *packet, EFLAG *f
 ///                                                       ///
 /////////////////////////////////////////////////////////////
 
-void build_packet(PACKET * restrict packet, const unsigned pac_type, const unsigned char id[crypto_sign_PUBLICKEYBYTES], const void * restrict data);
+void build_packet(packet_t * restrict packet, const unsigned pac_type, const unsigned char id[crypto_sign_PUBLICKEYBYTES], const void * restrict data);
 int create_handle_array_from_send_info(const SEND_INFO *info, size_t infolen, HANDLE **handles, size_t *hCount);
 void free_send_info(const SEND_INFO *info);
 int allocate_recv_info(RECV_INFO **info, mempool_t* mempool);
@@ -176,15 +162,5 @@ void free_recv_array(const RECV_ARRAY *info, mempool_t* mempool);
 int *send_discovery_thread(SEND_ARGS *args);
 int *recv_discovery_thread(RECV_ARGS *args);
 
-//////////////////////////////////////////////////////////////
-///                                                        ///
-///                  DEVICE_LL_UTILITIES                   ///
-///                                                        ///
-//////////////////////////////////////////////////////////////
-//todo update and use hash tables, the public key is the identifier
-//they are thread unsafe, first lock the mutex and then use
-
-int remove_device(PACKET_LIST *devices, const PACKET_INFO *dev);
-PACKET_NODE *device_exists(const PACKET_LIST *devices, const PACKET_INFO *dev);
 
 #endif //NET_IO_H

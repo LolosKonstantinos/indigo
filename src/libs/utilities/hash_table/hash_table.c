@@ -3,9 +3,10 @@
 //
 #include "hash_table.h"
 
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
-
+#include "hash_functions.h"
 
 struct hash_table_priv {
     hashFunction hash;          //kinda useless, we always use MurMurHash anyway
@@ -15,6 +16,8 @@ struct hash_table_priv {
     uint32_t key_length;        //the number of bytes of the key part of the buckets
     uint8_t hash_bit_length;    //the nuber of bits we use out of the 32 we get from the hashfunction
     unsigned char zero[3];
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
 };
 
 
@@ -31,6 +34,8 @@ hash_table_t *new_hash_table(size_t data_size, size_t key_length, size_t init_si
         free(ht);
         return NULL;
     }
+    pthread_mutex_init(&priv->mutex, NULL);
+    pthread_cond_init(&priv->cond, NULL);
     ht->private = priv;
 
     priv->hash = FastHash;
@@ -50,10 +55,13 @@ hash_table_t *new_hash_table(size_t data_size, size_t key_length, size_t init_si
     return ht;
 }
 void delete_hash_table(hash_table_t *ht) {
+    pthread_mutex_destroy(&ht->private->mutex); //I don't really know what to do with this?
+    pthread_cond_destroy(&ht->private->cond);
     /*todo remove the linked list nodes*/
     free(ht->private->table);
     free(ht->private);
     free(ht);
+
 }
 
 int hash_table_insert(hash_table_t *ht, void *key, void *data){
@@ -64,9 +72,13 @@ int hash_table_insert(hash_table_t *ht, void *key, void *data){
     unsigned char *bucket, *new_bucket, *new_table;
 
     if (!ht || !key || !data) {
-        return 0;
+        return -1;
     }
+
+    if (hash_table_search(ht,key) != NULL) return -1;
+
     priv = ht->private;
+    pthread_mutex_lock(&priv->mutex);
 
     new_size = (sizeof(size_t) * 8) - __builtin_clzll((priv->bucket_count+1) * (priv->bucket_count+1) - 1);
     old_size = priv->hash_bit_length;
@@ -82,7 +94,10 @@ int hash_table_insert(hash_table_t *ht, void *key, void *data){
         }
         else {
             new_bucket = malloc(priv->data_size + priv->key_length + sizeof(void *));
-            if (!new_bucket) return 1;
+            if (!new_bucket) {
+                pthread_mutex_unlock(&priv->mutex);
+                return 1;
+            }
 
             /*insert the bucket to the linked list*/
             memcpy(new_bucket, bucket,sizeof(void *));
@@ -95,7 +110,10 @@ int hash_table_insert(hash_table_t *ht, void *key, void *data){
     else {
         /*we need to resize the hash table (allocate a new table and move all the previous buckets to the new table)*/
         new_table = malloc((1<<new_size) * (sizeof(void *) + priv->key_length + priv->data_size));
-        if (!new_table) return 1;
+        if (!new_table) {
+            pthread_mutex_unlock(&priv->mutex);
+            return 1;
+        }
         priv->hash_bit_length += 1;
         for (size_t i = 0; i < old_size; i++) {
             bucket = priv->table + i * (sizeof(void*) + priv->key_length+priv->data_size);
@@ -109,12 +127,13 @@ int hash_table_insert(hash_table_t *ht, void *key, void *data){
                 if (hash_table_bucket_insert(priv,new_bucket,b + sizeof(void *),b + sizeof(void *) + priv->key_length)){
                     free(new_table);
                     priv->hash_bit_length -= 1;
+                    pthread_mutex_unlock(&priv->mutex);
                     return 1;
                 }
             }
         }
 
-        free(priv->table);
+        free(priv->table); //todo is this safe? are the linked list nodes deleted
         priv->table = new_table;
 
         /*the old table has been resized, now we insert the new element*/
@@ -125,6 +144,9 @@ int hash_table_insert(hash_table_t *ht, void *key, void *data){
         hash_table_bucket_insert(priv,bucket,key,data);
     }
     priv->bucket_count++;
+
+    pthread_mutex_unlock(&priv->mutex);
+
     return 0;
 }
 void *hash_table_search(hash_table_t *ht, void *key) {
@@ -136,14 +158,20 @@ void *hash_table_search(hash_table_t *ht, void *key) {
     }
     priv = ht->private;
 
+    pthread_mutex_lock(&priv->mutex);
+
     hash_code = priv->hash(key,priv->key_length);
     hash_code &= (1<<priv->hash_bit_length) - 1;
     bucket = priv->table + hash_code * (priv->data_size + priv->key_length + sizeof(void *));
 
     while (memcmp(key,bucket + sizeof(void *), priv->key_length) != 0) {
         bucket = *(void **)bucket;
-        if (!bucket) return NULL;
+        if (!bucket) {
+            pthread_mutex_unlock(&priv->mutex);
+            return NULL;
+        }
     }
+    pthread_mutex_unlock(&priv->mutex);
     return bucket + sizeof(void *) + priv->key_length;
 }
 int hash_table_delete(hash_table_t *ht, void *key) {
@@ -156,13 +184,18 @@ int hash_table_delete(hash_table_t *ht, void *key) {
     }
     priv = ht->private;
 
+    pthread_mutex_lock(&priv->mutex);
+
     hash_code = priv->hash(key,priv->key_length);
     hash_code &= (1<<priv->hash_bit_length) - 1;
     bucket = priv->table + hash_code * (priv->data_size + priv->key_length + sizeof(void *));
     while (memcmp(key,bucket + sizeof(void *), priv->key_length) != 0) {
         prev = bucket;
         bucket = *(void **)bucket;
-        if (!bucket) return 1;
+        if (!bucket) {
+            pthread_mutex_unlock(&priv->mutex);
+            return 1;
+        }
     }
     if (!prev) {
         temp = *(void **)bucket;
@@ -186,7 +219,10 @@ int hash_table_delete(hash_table_t *ht, void *key) {
     if (new_size < old_size) {
         /*we need to resize the hash table (allocate a new table and move all the previous buckets to the new table)*/
         new_table = malloc((1<<new_size) * (sizeof(void *) + priv->key_length + priv->data_size));
-        if (!new_table) return 1;
+        if (!new_table) {
+            pthread_mutex_unlock(&priv->mutex);
+            return 1;
+        }
         priv->hash_bit_length += 1;
         for (size_t i = 0; i < old_size; i++) {
             bucket = priv->table + i * (sizeof(void*) + priv->key_length+priv->data_size);
@@ -200,6 +236,7 @@ int hash_table_delete(hash_table_t *ht, void *key) {
                 if (hash_table_bucket_insert(priv,new_bucket,b + sizeof(void *),b + sizeof(void *) + priv->key_length)){
                     free(new_table);
                     priv->hash_bit_length -= 1;
+                    pthread_mutex_unlock(&priv->mutex);
                     return 1;
                 }
             }
@@ -208,10 +245,11 @@ int hash_table_delete(hash_table_t *ht, void *key) {
         free(priv->table);
         priv->table = new_table;
     }
+    pthread_mutex_unlock(&priv->mutex);
     return 0;
 }
 
-int hash_table_bucket_insert(hash_table_priv *table, unsigned char *bucket, void *key, void *data) {
+int hash_table_bucket_insert(const hash_table_priv *table, unsigned char *bucket, const void *key, const void *data) {
     unsigned char *new_bucket;
 
     if (is_zero(bucket + sizeof(void *), table->key_length)) {
@@ -232,7 +270,7 @@ int hash_table_bucket_insert(hash_table_priv *table, unsigned char *bucket, void
     return 0;
 }
 
-int is_zero(unsigned char *buf, size_t size) {
+int is_zero(const unsigned char * buf, const size_t size) {
     size_t iter;
     uint_fast64_t res = 0, temp1;
     unsigned char temp2;

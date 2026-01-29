@@ -5,6 +5,8 @@
 #include <indigo_core/manager.h>
 #include <crypto_utils.h>
 #include <indigo_errors.h>
+#include <indigo_types.h>
+#include <hash_table.h>
 
 //////////////////////////////////////////////////////////
 ///                                                    ///
@@ -37,6 +39,9 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
 
     //the discovery sockets list
     SOCKET_LL *sockets = NULL;
+
+    //the device tables
+    hash_table_t *device_table;
 
     //the key pair
     SIGNING_KEY_PAIR *signing_key_pair = NULL;
@@ -96,9 +101,17 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     pool_attr.dynamic_pool = 1;
     pool_attr.growth_factor = 1;
     //the initial mempool is about 1MiB, it may be extended automatically if needed
-    mempool = new_mempool(1<<10, sizeof(PACKET) + sizeof(PACKET_INFO), &pool_attr);
+    mempool = new_mempool(1<<10, sizeof(packet_t) + sizeof(packet_info_t), &pool_attr);
     if (!mempool) {
         fprintf(stderr, "Failed to create mempool\n");
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        goto cleanup;
+    }
+
+    //the device table
+    device_table = new_hash_table(sizeof(remote_device_t), crypto_sign_PUBLICKEYBYTES, 1<<4);
+    if (!device_table) {
+        fprintf(stderr, "Failed to create hash_table (device_table)\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
@@ -131,7 +144,7 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
         goto cleanup;
     }
 
-    if (create_packet_handler_thread(&handler_args, args->flag, packet_queue, mempool, args->devices, args->master_key, &tid_handler)) {
+    if (create_packet_handler_thread(&handler_args, args->flag, packet_queue, mempool, args->master_key, &tid_handler)) {
         fprintf(stderr, "create_packet_handler_thread failed\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
@@ -165,6 +178,32 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
 
         //check the thread flags
 
+        //check the interface updater thread
+        flag_val = get_event_flag(update_args->flag);
+        if (flag_val & EF_TERMINATION) {
+            //for now, we terminate the whole operation, later we may pause or continue as we are
+            goto cleanup;
+        }
+        if (flag_val & EF_INTERFACE_UPDATE) {
+            printf("DEBUG: manager override\n");
+            fflush(stdout);
+
+            reset_single_event(update_args->flag, EF_INTERFACE_UPDATE);
+            if (flag_val & EF_OVERRIDE_IO) {
+                update_event_flag(send_args->flag, EF_OVERRIDE_IO);
+                update_event_flag(recv_args->flag, EF_OVERRIDE_IO);
+                update_event_flag(handler_args->flag, EF_OVERRIDE_IO);
+
+                wait_on_flag_condition(update_args->flag, EF_OVERRIDE_IO, OFF);
+
+                reset_single_event(send_args->flag, EF_OVERRIDE_IO);
+                reset_single_event(recv_args->flag, EF_OVERRIDE_IO);
+                reset_single_event(handler_args->flag, EF_OVERRIDE_IO);
+            }
+            printf("DEBUG: override complete\n");
+            fflush(stdout);
+        }
+
         //check the sending thread
         flag_val = get_event_flag(send_args->flag);
         if (flag_val & EF_TERMINATION) {
@@ -192,29 +231,6 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
             }
         }
 
-        //check the interface updater thread
-        flag_val = get_event_flag(update_args->flag);
-        if (flag_val & EF_TERMINATION) {
-            //for now, we terminate the whole operation, later we may pause or continue as we are
-            goto cleanup;
-        }
-        if (flag_val & EF_INTERFACE_UPDATE) {
-            printf("DEBUG: manager override\n");
-            fflush(stdout);
-
-            reset_single_event(update_args->flag, EF_INTERFACE_UPDATE);
-            if (flag_val & EF_OVERRIDE_IO) {
-                update_event_flag(send_args->flag, EF_OVERRIDE_IO);
-                update_event_flag(recv_args->flag, EF_OVERRIDE_IO);
-
-                wait_on_flag_condition(update_args->flag, EF_OVERRIDE_IO, OFF);
-
-                reset_single_event(send_args->flag, EF_OVERRIDE_IO);
-                reset_single_event(recv_args->flag, EF_OVERRIDE_IO);
-            }
-            printf("DEBUG: override complete\n");
-            fflush(stdout);
-        }
 
         //check the packet handler thread
         flag_val = get_event_flag(handler_args->flag);
@@ -372,7 +388,7 @@ int cancel_device_discovery(pthread_t tid, EFLAG *flag) {
     return val;
 }
 
-int create_thread_manager_thread(MANAGER_ARGS **args, int port, uint32_t multicast_address, PACKET_LIST *devices, pthread_t *tid){
+int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint32_t multicast_address, pthread_t *tid){
     pthread_t thread;
 
     MANAGER_ARGS *manager_args = malloc(sizeof(MANAGER_ARGS));
@@ -392,7 +408,6 @@ int create_thread_manager_thread(MANAGER_ARGS **args, int port, uint32_t multica
     manager_args->flag = flag;
     manager_args->port = port;
     manager_args->multicast_addr = multicast_address;
-    manager_args->devices = devices;
 
     if (pthread_create(&thread, NULL, (void *)(&thread_manager_thread), manager_args)) {
         free_event_flag(flag);
@@ -538,8 +553,8 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
 }
 
 int create_packet_handler_thread(
-    PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, mempool_t* mempool, PACKET_LIST *dev_list, void*
-    master_key, pthread_t *tid){
+    PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, mempool_t* mempool, const void*
+    const master_key, pthread_t *tid){
 
     pthread_t thread;
 
@@ -572,7 +587,6 @@ int create_packet_handler_thread(
 
     handler_args->queue = queue;
     handler_args->mempool = mempool;
-    handler_args->devices = dev_list;
     handler_args->wake = wake_mngr;
     handler_args->flag = flag;
 

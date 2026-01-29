@@ -211,6 +211,7 @@ void *dalloc(mempool_t *pool) {
 
     private = pool->private;
 
+    //if there is no available space then we extend the pool
     if (private->first_free_cell == NULL)
         if (memextend_list(pool) != 0) return NULL;
 

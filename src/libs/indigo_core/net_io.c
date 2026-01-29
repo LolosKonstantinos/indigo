@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <indigo_errors.h>
 
+#include "indigo_types.h"
+
 //////////////////////////////////////////////////////
 ///                                                ///
 ///                  IO_FUNCTIONS                  ///
@@ -13,6 +15,7 @@
 
 //todo: continue error handling from here
 
+//todo: OVERRIDE_IO is not handled correctly check implementation
 int send_discovery_packets(
     const int port,
     const uint32_t multicast_addr,
@@ -36,7 +39,7 @@ int send_discovery_packets(
 
     struct timespec ts;
 
-    PACKET packet;
+    packet_t packet;
     int routine_ret = 0;
 
     build_packet(&packet, MSG_INIT_PACKET, id, 0);
@@ -44,6 +47,7 @@ int send_discovery_packets(
     while (1) {
         pthread_mutex_lock(&sockets->mutex);
         for (SOCKET_NODE *sock = sockets->head; sock != NULL; sock = sock->next){
+            //for every socket we send we allocate the fields of SEND_INFO (they can't be in the stack)
             temp = calloc(1,sizeof(struct sockaddr_in));
             if (temp == NULL) {
                 fprintf(stderr, "malloc() failed in send_discovery_packets()\n");
@@ -67,7 +71,7 @@ int send_discovery_packets(
             temp_info.buf = temp;
             temp_info.buf->buf = NULL;
 
-            temp = malloc(sizeof(PACKET));
+            temp = malloc(sizeof(packet_t));
             if (temp == NULL) {
                 fprintf(stderr, "malloc() failed in send_discovery_packets()\n");
                 pthread_mutex_unlock(&sockets->mutex);
@@ -75,8 +79,8 @@ int send_discovery_packets(
                 goto cleanup;
             }
             temp_info.buf->buf = temp;
-            memcpy(temp_info.buf->buf, &packet, sizeof(PACKET));
-            temp_info.buf->len = sizeof(PACKET);
+            memcpy(temp_info.buf->buf, &packet, sizeof(packet_t));
+            temp_info.buf->len = sizeof(packet_t);
 
             temp = malloc(sizeof(OVERLAPPED));
             if (temp == NULL) {
@@ -105,6 +109,7 @@ int send_discovery_packets(
 
             temp_info.socket = sock->sock;
 
+            //we resize the sInfo array to hold one more send info
             temp = realloc(sInfo, sizeof(SEND_INFO) * (infolen + 1));
             if (temp == NULL) {
                 fprintf(stderr, "realloc() failed in send_discovery_packets()\n");
@@ -119,6 +124,8 @@ int send_discovery_packets(
 
             flag_val = get_event_flag(flag);
             if (flag_val & EF_OVERRIDE_IO) {
+                //since there is OVERRIDE_IO the sockets we got are not valid (they are being currently updated)
+                //free the allocated resources and exit
                 free_send_info(&temp_info);
                 for (size_t i = 0; i < infolen; i++) {
                     free_send_info(&sInfo[i]);
@@ -189,12 +196,13 @@ int send_discovery_packets(
 
         pthread_mutex_unlock(&flag->mutex);
 
+        //create the handle array to use to check if the io has finished
         if(create_handle_array_from_send_info(sInfo, infolen, &handles, &hCount)) {
             fprintf(stderr, "create_handle_array_from_send_info() failed in send_discovery_packets()\n");
             routine_ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
             goto cleanup;
         }
-
+        //check if the io is finished
         wait_ret = WSAWaitForMultipleEvents(hCount,handles,TRUE,100, FALSE);
         if (wait_ret == WSA_WAIT_FAILED) {
             fprintf(stderr, "WaitForMultipleObjects() failed in send_discovery_packets(): %d\n", WSAGetLastError());
@@ -219,6 +227,7 @@ int send_discovery_packets(
 
         if (sInfo == NULL) goto cleanup;
 
+        //send the rest of the packets based on the previous SEND_INFO allocations
         for (size_t i = 0; i < pCount - 1; i++) {
             for (size_t j = 0; j < infolen; j++) {
                 WSAResetEvent(handles[j]);
@@ -332,8 +341,14 @@ int register_single_receiver(SOCKET sock, RECV_INFO **info, mempool_t* mempool) 
 
     int recv_ret;
 
+    if (!info || !mempool) {
+        fprintf(stderr, "register_single_receiver called with info or mempool NULL\n");
+        return -1;
+    }
 
+    //if we are not provided am allocated RECV_INFO (most likely on first use)
     if (*info == NULL) {
+
         if (allocate_recv_info(&temp_info, mempool)) {
             fprintf(stderr, "allocate_recv_info() failed in send_discovery_packets()\n");
             return 1;
@@ -363,7 +378,7 @@ int register_single_receiver(SOCKET sock, RECV_INFO **info, mempool_t* mempool) 
         }
         *info = temp_info;
     }
-    else {
+    else {//if we are provided am allocated RECV_INFO (most likely from previous use)
         recv_ret = WSARecvFrom(sock,
             (*info)->buf,
             1,
@@ -396,33 +411,34 @@ int register_multiple_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, mempool_t*
     while (1) {
         flag_val = 0;
 
-        info->head = NULL;
+        info->array = NULL;
         info->size = 0;
 
         pthread_mutex_lock(&sockets->mutex);
+        //for every socket available
         for (SOCKET_NODE *sock = sockets->head; sock != NULL; sock = sock->next) {
-            temp = realloc(info->head, (info->size + 1) * sizeof(RECV_INFO));
+            temp = realloc(info->array, (info->size + 1) * sizeof(RECV_INFO));
             if (temp == NULL) {
                 fprintf(stderr, "realloc() failed in register_multiple_discovery_receivers()\n");
                 pthread_mutex_unlock(&sockets->mutex);
                 return 1;
             }
-            info->head = temp;
+            info->array = temp;
 
-            if (allocate_recv_info_fields(info->head + info->size, mempool)) {
+            if (allocate_recv_info_fields(info->array + info->size, mempool)) {
                 fprintf(stderr, "allocate_recv_info_fields() failed in register_multiple_discovery_receivers()\n");
-                temp = realloc(info->head, (info->size) * sizeof(RECV_INFO)); // we decrease the size by one
+                temp = realloc(info->array, (info->size) * sizeof(RECV_INFO)); // we decrease the size by one
                 if (temp == NULL) {
                     pthread_mutex_unlock(&sockets->mutex);
                     fprintf(stderr, "realloc() failed in register_multiple_discovery_receivers()\n");
                     return 1;
                 }
-                info->head = temp;
+                info->array = temp;
                 pthread_mutex_unlock(&sockets->mutex);
                 return 1;
             }
 
-            tempinf = info->head + info->size;
+            tempinf = info->array + info->size;
 
             tempinf->socket = sock->sock;
             *(tempinf->flags) = 0;
@@ -465,7 +481,7 @@ int register_multiple_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, mempool_t*
 }
 
 
-int send_packet(int port, uint32_t addr, SOCKET socket, PACKET *packet, EFLAG *flag) {
+int send_packet(int port, uint32_t addr, SOCKET socket, const packet_t* packet, EFLAG *flag) {
     SEND_INFO temp_info;
     void *temp;
     int ret_val;
@@ -495,15 +511,15 @@ int send_packet(int port, uint32_t addr, SOCKET socket, PACKET *packet, EFLAG *f
         temp_info.buf = temp;
         temp_info.buf->buf = NULL;
 
-        temp = malloc(sizeof(PACKET));
+        temp = malloc(sizeof(packet_t));
         if (temp == NULL) {
             fprintf(stderr, "malloc() failed in send_discovery_packets()\n");
             routine_ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
             goto cleanup;
         }
         temp_info.buf->buf = temp;
-        memcpy(temp_info.buf->buf, packet, sizeof(PACKET));
-        temp_info.buf->len = sizeof(PACKET);
+        memcpy(temp_info.buf->buf, packet, sizeof(packet_t));
+        temp_info.buf->len = sizeof(packet_t);
 
         temp = malloc(sizeof(OVERLAPPED));
         if (temp == NULL) {
@@ -603,8 +619,8 @@ int send_packet(int port, uint32_t addr, SOCKET socket, PACKET *packet, EFLAG *f
 ///                                                       ///
 /////////////////////////////////////////////////////////////
 
-void build_packet(PACKET * restrict packet, const unsigned pac_type, const unsigned char id[crypto_sign_PUBLICKEYBYTES], const void * restrict data) {
-    memset(packet, 0, sizeof(PACKET));
+void build_packet(packet_t * restrict packet, const unsigned pac_type, const unsigned char id[crypto_sign_PUBLICKEYBYTES], const void * restrict data) {
+    memset(packet, 0, sizeof(packet_t));
     packet->magic_number = MAGIC_NUMBER;
     packet->pac_version = PAC_VERSION;
     packet->pac_type = pac_type;
@@ -720,7 +736,7 @@ int allocate_recv_info(RECV_INFO **info, mempool_t* mempool) {
         return 1;
     }
     (*info)->buf->buf = temp;
-    (*info)->buf->len = PAC_DATA_BYTES + sizeof(PACKET_INFO);
+    (*info)->buf->len = sizeof(packet_t) + sizeof(packet_info_t);
 
     temp = malloc(sizeof (OVERLAPPED));
     if (temp == NULL) {
@@ -834,7 +850,7 @@ int allocate_recv_info_fields(RECV_INFO *info, mempool_t* mempool) {
         return 1;
     }
     info->buf->buf = temp;
-    info->buf->len = PAC_DATA_BYTES + sizeof(PACKET_INFO);
+    info->buf->len = sizeof(packet_t) + sizeof(packet_info_t);
 
     temp = malloc(sizeof (OVERLAPPED));
     if (temp == NULL) {
@@ -1055,8 +1071,9 @@ int *recv_discovery_thread(RECV_ARGS *args) {
     HANDLE *handles = NULL;
     size_t hCount;
 
-    PACKET pack;
-    PACKET_INFO *packet_info;
+    PACKET_HEADER pack_h;
+
+    packet_info_t *packet_info = NULL;
 
     uint32_t flag_val;
     DWORD wait_ret;
@@ -1113,7 +1130,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
         if (flag_val & EF_OVERRIDE_IO) {
             free(handles);
             free_recv_array(&info, args->mempool);
-            info.head = NULL;
+            info.array = NULL;
             info.size = 0;
             hCount = 0;
 
@@ -1214,11 +1231,11 @@ int *recv_discovery_thread(RECV_ARGS *args) {
 
             if (wait_ret == WAIT_OBJECT_0){
                 //we received on that socket
-                recv_info = (info.head) + i - 2;
+                recv_info = (info.array) + i - 2;
 
                 //check the packet we received
 
-                if ((*(recv_info->bytes_recv) > sizeof(PACKET)) || (*(recv_info->bytes_recv) < PAC_MIN_BYTES)){
+                if ((*(recv_info->bytes_recv) > sizeof(packet_t)) || (*(recv_info->bytes_recv) < PAC_MIN_BYTES)){
                     WSAResetEvent(handles[i]);
                     if (register_single_receiver(recv_info->socket,&recv_info, args->mempool)) {
                         set_event_flag(args->flag, EF_TERMINATION);
@@ -1232,10 +1249,10 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                 }
 
                 //everything we need to know is in the first 6 bytes, the rest is redundant
-                memcpy(&pack,recv_info->buf->buf,6);
+                memcpy(&pack_h,recv_info->buf->buf,sizeof(PACKET_HEADER));
 
                 //check the magic number (not an absolut way to check if a packet is for us but will prolly work)
-                if (pack.magic_number != MAGIC_NUMBER){
+                if (pack_h.magic_number != MAGIC_NUMBER){
                     WSAResetEvent(handles[i]);
                     if (register_single_receiver(recv_info->socket,&recv_info, args->mempool)) {
                         set_event_flag(args->flag, EF_TERMINATION);
@@ -1256,11 +1273,11 @@ int *recv_discovery_thread(RECV_ARGS *args) {
                 //I've agreed that we don't need a struct, and I will mess up like real fag
 
                 //here we put the packet info at the end of the buffer that we received (there is enough space)
-                packet_info = (void *)recv_info->buf->buf + sizeof(PACKET);
-                packet_info->packet = recv_info->buf->buf;
-                packet_info->address = *((struct sockaddr_in *)recv_info->source);
+
+                packet_info = (packet_info_t *)(recv_info->buf->buf + sizeof(packet_t));
+                packet_info->address = *(struct sockaddr_in *)(recv_info->source);
                 packet_info->socket = recv_info->socket;
-                packet_info->timestamp = time(NULL);
+
 
 
                 if (queue_push(args->queue,recv_info->buf->buf,QET_NEW_PACKET)) {
@@ -1314,7 +1331,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
 int create_handle_array_from_recv_info(const RECV_ARRAY *info, HANDLE **handles, size_t *hCount) {
     if (info == NULL || handles == NULL || hCount == NULL) return 1;
 
-    RECV_INFO *recv = info->head;
+    RECV_INFO *recv = info->array;
     void *temp = malloc(sizeof(HANDLE) * ((info->size) + 2));//we allocate 2 more, 1 for the termination handle
     if (temp == NULL) return 1;                                 //and one for the wake handle
 
@@ -1330,48 +1347,7 @@ int create_handle_array_from_recv_info(const RECV_ARRAY *info, HANDLE **handles,
 
 void free_recv_array(const RECV_ARRAY *info, mempool_t* mempool) {
     for (int i = 0; i < info->size; i++) {
-        free_recv_info(&(info->head[i]), mempool);
+        free_recv_info(&(info->array[i]), mempool);
     }
-    free(info->head);
-}
-
-//////////////////////////////////////////////////////////////
-///                                                        ///
-///                  DEVICE_LL_UTILITIES                   ///
-///                                                        ///
-//////////////////////////////////////////////////////////////
-
-int remove_device(PACKET_LIST *devices, const PACKET_INFO *dev) {
-    if (devices == NULL) return 1;
-
-
-    PACKET_NODE *prev = NULL;
-    PACKET_NODE *curr = devices->head;
-
-    while (curr != NULL) {
-        if (memcmp(curr->packet.mac_address, dev->mac_address, 6) == 0) {
-            if (prev == NULL) {
-                devices->head = curr->next;
-                free(curr);
-                return 0;
-            }
-
-            prev->next = curr->next;
-            free(curr);
-            return 0;
-
-        }
-        prev = curr;
-        curr = curr->next;
-    }
-    return -1;
-}
-
-PACKET_NODE *device_exists(const PACKET_LIST *devices, const PACKET_INFO *dev) {
-    if (devices == NULL) return NULL;
-
-    for (PACKET_NODE *curr = devices->head; curr != NULL; curr = curr->next) {
-        if (memcmp(curr->packet.mac_address, dev->mac_address, 6) == 0) return curr;
-    }
-    return NULL;
+    free(info->array);
 }
