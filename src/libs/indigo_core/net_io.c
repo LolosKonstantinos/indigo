@@ -628,12 +628,14 @@ void build_packet(packet_t * restrict packet, const unsigned pac_type, const uns
 
     if (pac_type == MSG_INIT_PACKET) {
         //todo: we will use the username
-        if (gethostname(packet->data, PAC_DATA_BYTES) != 0 ) {
-            strcpy(packet->data, "unknown_hostname");
+        if (gethostname((char *)packet->data, PAC_DATA_BYTES) != 0 ) {
+            strcpy((char *)packet->data, "unknown_hostname");
         }
     }
     else{
-        if (!data) return;
+        if (!data) {
+            memset(packet->data, 0, PAC_DATA_BYTES);
+        }
         memcpy(packet->data, data, PAC_DATA_BYTES);
     }
 }
@@ -810,7 +812,7 @@ int allocate_recv_info(RECV_INFO **info, mempool_t* mempool) {
 int allocate_recv_info_fields(RECV_INFO *info, mempool_t* mempool) {
     void *temp;
 
-    if (info == NULL) return 1;
+    if (info == NULL) {return 1;}
 
     temp = malloc(sizeof (struct sockaddr));
     if (temp == NULL) {
@@ -913,7 +915,7 @@ int allocate_recv_info_fields(RECV_INFO *info, mempool_t* mempool) {
 }
 
 void free_recv_info(const RECV_INFO *info, mempool_t* mempool) {
-    if (info == NULL) return;
+    if (info == NULL) {return;}
 
 
     if (info->buf) {
@@ -944,30 +946,13 @@ int *send_discovery_thread(SEND_ARGS *args) {
     int *process_return = NULL;
 
     //allocate memory for the return value
-    process_return = malloc(sizeof(uint8_t));
+    process_return = malloc(sizeof(int));
     if (process_return == NULL) {
         set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
         return NULL;
     }
     *process_return = 0;
-
-    //send a packet burst when a device discovery operation starts
-    ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,3,150, args->public_key);
-    if (ret > 0) {
-        set_event_flag(args->flag, EF_TERMINATION);
-        set_event_flag(args->wake, EF_WAKE_MANAGER);
-        *process_return = ret;
-        return process_return;
-    }
-    //returns -1 when we get an override execution or
-    if (ret == -1) {
-        flag_val = get_event_flag(args->flag);
-        if(flag_val & EF_TERMINATION){
-            *process_return = 0;
-            return process_return;
-        }
-    }
 
     //the main loop
     while (!termination_is_on(args->flag)) {
@@ -1015,7 +1000,7 @@ int *send_discovery_thread(SEND_ARGS *args) {
             *process_return = ret;
             return process_return;
         }
-        //returns -1 when we get an override excecution or termination event
+        //returns -1 when we get an override execution or termination event
         if (ret == -1) {
             flag_val = get_event_flag(args->flag);
             if(flag_val & EF_TERMINATION){

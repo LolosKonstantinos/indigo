@@ -33,7 +33,7 @@ struct SIGNING_KEY_PAIR {
 typedef struct SIGNING_KEY_PAIR SIGNING_KEY_PAIR;
 
 /*derive a symmetric key based on the user password*/
-int derive_master_key(const char* psw, const uint64_t psw_len, void** master_key);
+int derive_master_key(const char* psw, uint64_t psw_len, void** master_key);
 
 int create_psw_salt(char overwrite);
 int load_psw_salt(unsigned char** salt);
@@ -42,7 +42,7 @@ int create_key_derivation_settings();
 int save_key_derivation_settings(uint8_t mem_cost, uint8_t time_cost);
 int load_key_derivation_settings(PSW_HASH_SETTINGS *settings);
 
-int save_password_hash(const char* password, const uint64_t psw_len);
+int save_password_hash(const char* password, uint64_t psw_len);
 int load_password_hash(char** hash);
 int cmp_password_hash(const char* psw, uint64_t psw_len);
 

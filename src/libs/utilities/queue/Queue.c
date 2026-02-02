@@ -13,7 +13,7 @@
 //
 
 size_t get_queue_size(QUEUE *queue) {
-    if (queue == NULL) return 0;
+    if (queue == NULL) {return 0;}
 
     size_t size;
 
@@ -26,7 +26,7 @@ size_t get_queue_size(QUEUE *queue) {
 
 //call this only once when the queue is created, else there will be a memory leak
 uint8_t init_queue(QUEUE *queue) {
-    if (queue == NULL) return 1;
+    if (queue == NULL) {return 1;}
 
     queue->firstNode = NULL;
     queue->lastNode = NULL;
@@ -45,7 +45,7 @@ uint8_t init_queue(QUEUE *queue) {
 }
 
 uint8_t queue_is_empty(QUEUE *queue) {
-    if (queue == NULL) return 1;
+    if (queue == NULL) {return 1;}
 
     pthread_mutex_lock(&queue->mutex);
 
@@ -58,7 +58,7 @@ uint8_t queue_is_empty(QUEUE *queue) {
 
 //first destroy the threads and then destroy the queue
 void destroy_queue(QUEUE *queue) {
-    if (queue == NULL) return;
+    if (queue == NULL) {return;}
 
     pthread_mutex_lock(&queue->mutex);
 
@@ -86,24 +86,23 @@ void destroy_queue(QUEUE *queue) {
 }
 
 QNODE *create_qnode() {
-    QNODE *node =  malloc(sizeof (QNODE));
+    QNODE *node =  calloc(1,sizeof (QNODE));
     if (node == NULL) {
         perror("error allocating memory for queue node");
         return NULL;
     }
-    memset(node, 0, sizeof (QNODE));
     return node;
 }
 
 void destroy_qnode(QNODE *node) {
-    if (node == NULL) return;
+    if (node == NULL) {return;}
     free(node);
 }
 
 uint8_t queue_push(QUEUE *queue, void * const data, QET type) {
     QNODE *temp = NULL;
 
-    if (queue == NULL) return 1;
+    if (queue == NULL) {return 1;}
 
     pthread_mutex_lock(&queue->mutex);
 
@@ -113,23 +112,6 @@ uint8_t queue_push(QUEUE *queue, void * const data, QET type) {
         pthread_mutex_unlock(&queue->mutex);
         return 1;
     }
-
-    //the code below is an implementation of a more general purpose queue it's a lil slower tho
-     /*if (data != NULL) {
-         temp->data = malloc(size);
-         if (temp->data == NULL) {
-             perror("error allocating memory for queue node");
-             pthread_mutex_unlock(&queue->mutex);
-             destroy_qnode(temp);
-             return 1;
-         }
-         memcpy(temp->data, data, size);
-         temp->size = size;
-     }
-     else {
-         temp->data = NULL;
-         temp->size = 0;
-    }*/
 
     temp->data = data;
     temp->type = type;
@@ -155,7 +137,7 @@ uint8_t queue_push(QUEUE *queue, void * const data, QET type) {
 QNODE *queue_pop(QUEUE *queue, QOPT option) {
     QNODE *temp = NULL;
 
-    if (queue == NULL) return NULL;
+    if (queue == NULL) {return NULL;}
 
     pthread_mutex_lock(&queue->mutex);
 
@@ -173,7 +155,7 @@ QNODE *queue_pop(QUEUE *queue, QOPT option) {
     temp = queue->firstNode;
 
     queue->firstNode = queue->firstNode->next;
-    if (queue->firstNode == NULL) queue->lastNode = NULL;
+    if (queue->firstNode == NULL) {queue->lastNode = NULL;}
     queue->qsize--;
 
     temp->next = NULL;
@@ -184,9 +166,10 @@ QNODE *queue_pop(QUEUE *queue, QOPT option) {
 }
 
 QNODE *queue_peek(QUEUE *queue) {
-    QNODE *temp = NULL, *ret_node = NULL;
+    QNODE *temp = NULL;
+    QNODE *ret_node = NULL;
 
-    if (queue == NULL) return NULL;
+    if (queue == NULL) {return NULL;}
 
     pthread_mutex_lock(&queue->mutex);
 
@@ -210,7 +193,7 @@ QNODE *queue_peek(QUEUE *queue) {
 }
 
 void queue_remove_front(QUEUE *queue) {
-    if (queue == NULL) return;
+    if (queue == NULL) {return;}
     pthread_mutex_lock(&queue->mutex);
     if (queue->firstNode == NULL) {
         pthread_mutex_unlock(&queue->mutex);
@@ -221,7 +204,7 @@ void queue_remove_front(QUEUE *queue) {
 
     queue->firstNode = queue->firstNode->next;
 
-    if (queue->firstNode == NULL) queue->lastNode = NULL;
+    if (queue->firstNode == NULL) {queue->lastNode = NULL;}
     queue->qsize--;
 
     free(temp->data);

@@ -5,7 +5,7 @@
 #ifndef HASH_FUNCTIONS_H
 #define HASH_FUNCTIONS_H
 #include <stdint.h>
-typedef int (*hashFunction)(const char *, unsigned int);
+typedef unsigned int (*hashFunction)(const char *, unsigned int);
 
 
 unsigned int MurMurHash(const char *str, unsigned int length);

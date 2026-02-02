@@ -289,17 +289,19 @@ int save_password_hash(const char* password, const uint64_t psw_len) {
     unsigned char time_cost;
     PSW_HASH_SETTINGS psw_settings;
     FILE *fp = NULL;
-    char *psw_hash = NULL, *file_name = NULL;
+    char *psw_hash = NULL;
+    char *file_name = NULL;
     int ret;
 
 
-    if (password == NULL || psw_len == 0) return INDIGO_ERROR_INVALID_PARAM;
+    if (password == NULL || psw_len == 0) {return INDIGO_ERROR_INVALID_PARAM;}
 
     psw_hash = (char *)malloc(crypto_pwhash_STRBYTES +1);
-    if (psw_hash == NULL) return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+    if (psw_hash == NULL) {return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;}
 
     ret = load_key_derivation_settings(&psw_settings);
     if (ret != INDIGO_SUCCESS) {
+        free(psw_hash);
         return INDIGO_ERROR_INCOMPATIBLE_FILE;//possible file changed to incompatible values
     }
 
@@ -325,7 +327,10 @@ int save_password_hash(const char* password, const uint64_t psw_len) {
     }
 
     file_name = malloc(strlen(INDIGO_PSW_DIR) + strlen(INDIGO_PSW_HASH_FILE_NAME) + 1);
-    if (file_name == NULL) return INDIGO_ERROR_INCOMPATIBLE_FILE;
+    if (file_name == NULL) {
+        free(psw_hash);
+        return INDIGO_ERROR_INCOMPATIBLE_FILE;
+    }
     strcpy(file_name, INDIGO_PSW_DIR);
     strcat(file_name, INDIGO_PSW_HASH_FILE_NAME);
 

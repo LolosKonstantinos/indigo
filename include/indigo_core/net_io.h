@@ -36,10 +36,11 @@
 #define MSG_SIGNING_REQUEST             0x03
 #define MSG_SIGNING_RESPONSE            0x04
 #define MSG_FILE_SENDING_REQUEST        0x05
-#define MSG_FILE_CHUNK                  0x06
-#define MSG_STOP_FILE_TRANSMISSION      0x07
-#define MSG_PAUSE_FILE_TRANSMISSION     0x08
-#define MSG_CONTINUE_FILE_TRANSMISSION  0x09
+#define MSG_FILE_SENDING_RESPONSE       0x06
+#define MSG_FILE_CHUNK                  0x07
+#define MSG_STOP_FILE_TRANSMISSION      0x08
+#define MSG_PAUSE_FILE_TRANSMISSION     0x09
+#define MSG_CONTINUE_FILE_TRANSMISSION  0x0a
 #define MSG_ERR                         0xff
 //more types may be added
 
@@ -57,7 +58,7 @@ typedef struct udp_packet_t{
     unsigned char pac_version;
     int16_t zero;
     unsigned char id[crypto_sign_PUBLICKEYBYTES];
-    char data[PAC_DATA_BYTES];
+    unsigned char data[PAC_DATA_BYTES];
 }packet_t;
 
 typedef struct udp_packet_header {

@@ -16,8 +16,9 @@ typedef struct MANAGER_ARGS {
     uint32_t multicast_addr;
     EFLAG *flag;
     void *master_key;
+    QUEUE *queue;
 }MANAGER_ARGS;
-//todo use the public key as the device id, but dont rely only on the packet received
+
 //////////////////////////////////////////////////////////
 ///                                                    ///
 ///                  THREAD_FUNCTIONS                  ///
@@ -37,7 +38,7 @@ int *thread_manager_thread(MANAGER_ARGS *args);
 
 int cancel_device_discovery(pthread_t tid, EFLAG *flag);
 
-int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint32_t multicast_address, pthread_t *tid);
+int create_thread_manager_thread(MANAGER_ARGS **args, int port, uint32_t multicast_address, pthread_t *tid);
 int create_discovery_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, SOCKET_LL *sockets, EFLAG *wake_mngr, pthread_t *tid, unsigned char public_key[crypto_sign_PUBLICKEYBYTES] );
 int create_receiving_thread(RECV_ARGS **args, SOCKET_LL *sockets, QUEUE *queue, mempool_t* mempool, EFLAG *wake_mngr, pthread_t *tid);
 int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint32_t multicast_address, EFLAG *wake_mngr, SOCKET_LL *sockets, pthread_t *tid);

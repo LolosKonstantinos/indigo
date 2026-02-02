@@ -10,7 +10,7 @@
 #include <pthread.h>
 #include <stdint.h>
 
-typedef enum   QUEUE_EVENT_TYPE {
+typedef enum QUEUE_EVENT_TYPE {
  QET_TERMINATION = 0,
  QET_ERROR = 1,
  QET_INTERFACE_UPDATE = 2,
@@ -18,6 +18,8 @@ typedef enum   QUEUE_EVENT_TYPE {
  QET_NEW_PACKET = 4,
  QET_SIGNATURE_REQUEST = 5,
  QET_SIGNATURE_RESPONSE = 6,
+ QET_FILE_SENDING_REQUEST = 7,
+ QET_FILE_SENDING_RESPONSE = 8,
 }QUEUE_EVENT_TYPE, QET;
 
 typedef enum queue_options {
@@ -27,8 +29,7 @@ typedef enum queue_options {
 
 /*Implementation of a queue data structure.
  *the queue is implemented with a linked list and access to the queue should only be given with the given functions.
- *every node holds a pointer, to the element of the node, and the size of that element
- *even though it is harder to use as the queue doesn't store a specific data type, it can be more versatile
+ *every node holds a pointer, to the data of the node, and the size of that data
  */
 typedef struct QNODE {
  struct QNODE *next;

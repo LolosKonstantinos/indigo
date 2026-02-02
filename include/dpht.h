@@ -16,7 +16,7 @@ typedef struct dpht {
 dpHashTable *new_dynamic_perfect_hash_table(size_t data_size, size_t key_count,uint32_t max_key_length);
 void free_dynamic_perfect_hash_table(dpHashTable *table);
 
-dpht_insert(dpHashTable *table, const char *key, size_t key_size, const char *value);
+int dpht_insert(dpHashTable *table, const char *key, size_t key_size, const char *value);
 int dpht_remove(dpHashTable *table, const char *key);
 int dpht_contains(dpHashTable *table, const char *key);
 void *dpht_search(dpHashTable *table, const char *key);

@@ -16,12 +16,15 @@
 ///
 int *thread_manager_thread(MANAGER_ARGS *args) {
     //for the thread creation
-    pthread_t tid_send = pthread_self(),
-    tid_receive = pthread_self(),
-    tid_update = pthread_self(),
-    tid_handler = pthread_self();
+    pthread_t tid_send = pthread_self();
+    pthread_t tid_receive = pthread_self();
+    pthread_t tid_update = pthread_self();
+    pthread_t tid_handler = pthread_self();
 
-    int *send_ret = NULL, *receive_ret = NULL, *update_ret = NULL, *handler_ret = NULL;
+    int *send_ret = NULL;
+    int *receive_ret = NULL;
+    int *update_ret = NULL;
+    int *handler_ret = NULL;
 
     QUEUE *packet_queue = NULL;
 
@@ -52,11 +55,11 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     void *temp = NULL;
 
     int *process_return = NULL;
-    int ret_val = 0; //general purpose return value varialble
+    int ret_val = 0; //general purpose return value variable
 
 /*_________________________________________HERE STARTS THE FUNCTIONS LOGIC____________________________________________*/
     //allocate memory for the return value
-    process_return = malloc(sizeof(uint8_t));
+    process_return = malloc(sizeof(int));
     if (process_return == NULL) {
         set_event_flag(args->flag, EF_TERMINATION);
         free(args);

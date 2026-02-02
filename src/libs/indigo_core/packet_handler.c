@@ -4,8 +4,9 @@
 
 #include <indigo_core/packet_handler.h>
 #include <indigo_errors.h>
-
+#include <Queue.h>
 #include "indigo_types.h"
+
 //////////////////////////////////////////////////////////
 ///                                                    ///
 ///                  THREAD_FUNCTIONS                  ///
@@ -15,15 +16,16 @@
 //todo: structure the xpacket table keys so that an rdev can have multiple expected packets
 int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     uint32_t flag_val = 0;
-    QNODE *node;
+    QNODE *node = NULL;
 
     void *mac_address = NULL;
     ULONG mac_address_len = 0;
     PULONG p_mac_address_len = &mac_address_len;
 
-    time_t curr_time;
-    struct timespec ts;
-    time_t lowest_time = 0, time_diff;
+    time_t curr_time = 0;
+    struct timespec timespec;
+    time_t lowest_time = 0;
+    time_t time_diff = 0;
 
     unsigned char iterations_until_cleanup = 10;
 
@@ -32,13 +34,15 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
 
     unsigned char public_key[crypto_sign_PUBLICKEYBYTES];
 
-    packet_t *packet;
-    packet_info_t* packet_info;
+    packet_t *packet = NULL;
+    packet_info_t* packet_info = NULL;
     PACKET_HEADER packet_header;
-    remote_device_t rdev, *found_rdev = NULL;
+    remote_device_t rdev;
+    remote_device_t *found_rdev = NULL;
 
-    hash_table_t *xpack_table; // the expected packet table
-    expected_packet_t xpacket, *found_xpacket = NULL;
+    hash_table_t *xpack_table = NULL; // the expected packet table
+    expected_packet_t xpacket;
+    expected_packet_t *found_xpacket = NULL;
 
     int ret = 0; //general purpose return variable
 
@@ -46,7 +50,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     int *process_return = NULL;
 
     //allocate memory for the return value
-    process_return = malloc(sizeof(uint8_t));
+    process_return = malloc(sizeof(int));
     if (process_return == NULL) {
         set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
@@ -84,7 +88,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
 
             node = queue_pop(args->queue,QOPT_NON_BLOCK);
 
-            if (node == NULL) continue;
+            if (node == NULL) {continue;}
 
             if (node->type != QET_NEW_PACKET) {
                 //probably an error but good to check
@@ -114,6 +118,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         fprintf(stderr, "malloc() failed in device_discovery_receiving\n");
                         set_event_flag(args->flag, EF_TERMINATION);
                         set_event_flag(args->wake, EF_WAKE_MANAGER);
+                        delete_hash_table(xpack_table);
                         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                         return process_return;
                     }
@@ -126,6 +131,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         set_event_flag(args->wake, EF_WAKE_MANAGER);
                         *process_return = INDIGO_ERROR_WINLIB_ERROR;
                         free(mac_address);
+                        delete_hash_table(xpack_table);
                         return process_return;
                         }
 
@@ -170,7 +176,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                     break;
                 case MSG_SIGNING_REQUEST:
                     //sign the nonce and send the signature with the public key and a new nonce
-                    if (sign_buffer(args->signing_keys, packet->data, INDIGO_NONCE_SIZE,signed_nonce,NULL)) {
+                    if (sign_buffer(args->signing_keys,packet->data, INDIGO_NONCE_SIZE,signed_nonce,NULL)) {
                         //todo: IDK do something
                         continue;
                     }
@@ -226,9 +232,12 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                                 INDIGO_NONCE_SIZE + crypto_sign_BYTES,
                                 packet->id);
                             if (ret == 0) {
+                                //if the nonce signed is the same as the one we sent to be signed
                                 if (memcmp(found_xpacket->nonce, nonce,INDIGO_NONCE_SIZE) == 0) {
                                     //the device is got verified
                                     found_rdev = args->device_table->search(args->device_table, packet->id);
+                                    //I am not sure how we could get an expected packet for a device
+                                    //that isn't in the device table
                                     if (found_rdev != NULL) {
                                         found_rdev->expiration_time = time(NULL);
                                         found_rdev->dev_state_flag |= RDSF_VERIFIED;
@@ -238,6 +247,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                             }
                         }
                     }
+
                     //there was either an error or the device is not legitimate
                     //therefore we send an error message
                     build_packet(packet, MSG_ERR, public_key, NULL);
@@ -248,11 +258,34 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
 
                     //todo better send error message, track the failed attempts and then ban
                     break;
-                case MSG_FILE_SENDING_REQUEST:
-                    /*todo: here we ask if we can begin a session
-                     * create a symmetric keys, no need to reverify, if they dont have their private key
-                     * they cant decrypt our message
-                     */
+                case MSG_FILE_SENDING_REQUEST:{
+                        //we need permission to proceed, so we push it to the manager to handle
+                        //tell the manager (via queue), the manager will ask the user
+                        //if the user agrees, we create one time session keys, send them our one time public key
+                        file_sending_request_fwd_t *fsr;
+                        fsr = malloc(sizeof(file_sending_request_fwd_t));
+                        if (!fsr) {
+                            delete_hash_table(xpack_table);
+                            *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                            return process_return;
+                        }
+                        memcpy(fsr->id, packet->id, crypto_sign_PUBLICKEYBYTES);
+                        memcpy(fsr->key, packet->data, crypto_kx_PUBLICKEYBYTES);
+                        wcscpy_s(fsr->file_name, MAX_PATH * sizeof(wchar_t),(wchar_t *)(packet->data + crypto_kx_PUBLICKEYBYTES));
+
+                        if (queue_push(args->queue, fsr, QET_FILE_SENDING_REQUEST)) {
+                            delete_hash_table(xpack_table);
+                            *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                            return process_return;
+                        }
+                        break;
+                    }
+                case MSG_FILE_SENDING_RESPONSE:
+                    //TODO
+                    //we got their one time public key, and confirmation to proceed
+                    //we calculate the send key
+                    //tell the manager or the sending thread to start sending the file
+                    break;
                 case MSG_RESEND:
                 case MSG_FILE_CHUNK:
                 case MSG_STOP_FILE_TRANSMISSION:
@@ -260,6 +293,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                 case MSG_CONTINUE_FILE_TRANSMISSION:
                 case MSG_ERR:
                 default:
+                    printf("oops...");
                     break;
             }
 
@@ -273,9 +307,9 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
             //so in case there are too many packets we refresh the list once per 10 packets processed
             if (iterations_until_cleanup > 0) {
                 iterations_until_cleanup--;
-                if (!queue_is_empty(args->queue)) continue;
+                if (!queue_is_empty(args->queue)) {continue;}
             }
-            else iterations_until_cleanup = 10;
+            else {iterations_until_cleanup = 10;}
 
             /////////////////////////////////////////
             ///  phase 2: update the device list  ///
@@ -285,16 +319,16 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
             //todo: calculate the max sleep time we can get if the queue is empty
 
             //there is no need to sleep if there is more stuff to do
-            if (!queue_is_empty(args->queue)) continue;
+            if (!queue_is_empty(args->queue)) {continue;}
 
             /////////////////////////////////////////////
             ///  phase 3: wait a little and go again  ///
             /////////////////////////////////////////////
-            clock_gettime(CLOCK_REALTIME,&ts);
-            ts.tv_sec +=lowest_time;
+            clock_gettime(CLOCK_REALTIME,&timespec);
+            timespec.tv_sec +=lowest_time;
 
             pthread_mutex_lock(&args->flag->mutex);
-            pthread_cond_timedwait(&args->flag->cond,&args->flag->mutex,&ts);
+            pthread_cond_timedwait(&args->flag->cond,&args->flag->mutex,&timespec);
             pthread_mutex_unlock(&args->flag->mutex);
 
         }

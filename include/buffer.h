@@ -15,15 +15,15 @@ typedef struct buffer BUF;
 SBUF *sbuf_new();
 void sbuf_free(SBUF *sbuf);
 
-int sbuf_add_elm(SBUF *restrict buffer,const unsigned char data);
-int sbuf_add_data(SBUF *restrict buffer, const unsigned char *restrict const data,const size_t len);
-int sbuf_get_elm(SBUF *restrict const buffer,const size_t index , unsigned char * restrict const data);
-int sbuf_get_data(SBUF *restrict const buffer,const size_t index ,unsigned char **restrict data, size_t *const len);
-int sbuf_set_elm(SBUF *restrict buffer,const size_t index ,const unsigned char data);
-int sbuf_set_data(SBUF *restrict buffer,const size_t index ,const unsigned char *const data, const size_t len);
+int sbuf_add_elm(SBUF *restrict buffer,unsigned char data);
+int sbuf_add_data(SBUF *restrict buffer, const unsigned char *restrict data,size_t len);
+int sbuf_get_elm(SBUF *restrict buffer,size_t index , unsigned char * restrict data);
+int sbuf_get_data(SBUF *restrict buffer,size_t index ,unsigned char **restrict data, size_t *len);
+int sbuf_set_elm(SBUF *restrict buffer,size_t index ,unsigned char data);
+int sbuf_set_data(SBUF *restrict buffer,size_t index ,const unsigned char *data, size_t len);
 int sbuf_sort(SBUF *restrict buffer);
 int sbuf_cmp(const void *s1, const void *s2);
-int sbuf_search(SBUF *restrict buffer, const unsigned char data, size_t *const index);
+int sbuf_search(SBUF *restrict buffer, unsigned char data, size_t *index);
 
 
 LBUF *lbuf_new();
