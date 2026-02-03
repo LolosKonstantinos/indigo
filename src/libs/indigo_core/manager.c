@@ -177,7 +177,7 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
             break;
         }
 
-        if (!(flag_val & EF_WAKE_MANAGER)) continue;
+        if (!(flag_val & EF_WAKE_MANAGER)){ continue;}
 
         //check the thread flags
 

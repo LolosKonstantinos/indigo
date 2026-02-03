@@ -25,7 +25,8 @@ int send_discovery_packets(
     const int32_t msec, const unsigned char id[crypto_sign_PUBLICKEYBYTES]
 ) {
     //temporary variables for memory allocation
-    SEND_INFO temp_info = {0}, *sInfo = NULL;
+    SEND_INFO temp_info = {0};
+    SEND_INFO *sInfo = NULL;
     size_t infolen = 0;
     void *temp;
 
@@ -475,7 +476,7 @@ int register_multiple_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, mempool_t*
             }
         }
         pthread_mutex_unlock(&sockets->mutex);
-        if (flag_val & EF_OVERRIDE_IO) continue;
+        if (flag_val & EF_OVERRIDE_IO) {continue;}
         return 0;
     }
 }
@@ -550,7 +551,7 @@ int send_packet(int port, uint32_t addr, SOCKET socket, const packet_t* packet, 
             wait_on_flag_condition(flag, EF_OVERRIDE_IO, OFF);
             break;
         }
-        if (flag_val & EF_TERMINATION) goto cleanup;
+        if (flag_val & EF_TERMINATION) {goto cleanup;}
 
         ret_val = WSASendTo(socket,
             temp_info.buf,
@@ -585,7 +586,7 @@ int send_packet(int port, uint32_t addr, SOCKET socket, const packet_t* packet, 
         }
         if (wait_ret == WSA_WAIT_TIMEOUT) {
             wait_ret = WaitForSingleObject(temp_info.overlapped->hEvent, 150);
-            if (wait_ret == WAIT_OBJECT_0) continue;
+            if (wait_ret == WAIT_OBJECT_0) {continue;}
 
             if (wait_ret == WAIT_FAILED) {
                 fprintf(stderr, "WaitForSingleObject() failed in send_discovery_packets(): %d\n", WSAGetLastError());
@@ -597,7 +598,7 @@ int send_packet(int port, uint32_t addr, SOCKET socket, const packet_t* packet, 
             }
         }
 
-        if (flag_val & EF_OVERRIDE_IO) continue;
+        if (flag_val & EF_OVERRIDE_IO){ continue;}
 
 
         free_send_info(&temp_info);
@@ -606,7 +607,7 @@ int send_packet(int port, uint32_t addr, SOCKET socket, const packet_t* packet, 
     cleanup:
 
     flag_val = get_event_flag(flag);
-    if (flag_val & EF_TERMINATION) return -1;
+    if (flag_val & EF_TERMINATION) {return -1;}
 
     free_send_info(&temp_info);
     return routine_ret;
