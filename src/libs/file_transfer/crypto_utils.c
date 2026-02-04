@@ -27,10 +27,11 @@ int derive_master_key(const char* psw, const uint64_t psw_len, void** master_key
     int ret;
 
 
-    if (psw == NULL || master_key == NULL) {return 2;}
+    if (psw == NULL || master_key == NULL) return 2;
 
     ret = load_key_derivation_settings(&psw_settings);
     if (ret != 0) {
+        *master_key = NULL;
         return INDIGO_ERROR_INCOMPATIBLE_FILE;//possible file changed to incompatible values
     }
 
@@ -39,17 +40,24 @@ int derive_master_key(const char* psw, const uint64_t psw_len, void** master_key
 
     ret = load_psw_salt(&salt);
     if (ret == -3) {
+        *master_key = NULL;
         return INDIGO_ERROR_INCOMPATIBLE_FILE;//possible file changed to incompatible values
     }
     if (ret  == INDIGO_FILE_NOT_FOUND) {
+        *master_key = NULL;
         return INDIGO_ERROR_FILE_NOT_FOUND;
     }
 
-    if (psw_len <= crypto_pwhash_PASSWD_MIN || psw_len >= crypto_pwhash_PASSWD_MAX) {goto cleanup;}
+    if (psw_len <= crypto_pwhash_PASSWD_MIN || psw_len >= crypto_pwhash_PASSWD_MAX) {
+        goto cleanup;
+    }
 
     out_key = sodium_malloc(crypto_secretbox_KEYBYTES);
-    if (!out_key) {goto cleanup;}
-
+    if (!out_key) {
+        goto cleanup;
+    }
+    //printf("DEBUG: %p %lld %p %u %lld\n",psw, psw_len, salt, time_cost, mem_cost);
+    fflush(stdin);
     ret = crypto_pwhash(out_key,
         crypto_secretbox_KEYBYTES,
         psw,
@@ -58,21 +66,24 @@ int derive_master_key(const char* psw, const uint64_t psw_len, void** master_key
         time_cost,
         1<<mem_cost,
         crypto_pwhash_ALG_ARGON2ID13);
-    if (ret == -1) {goto cleanup;}
+    if (ret == -1) {
+        goto cleanup;
+    }
 
     //make the master key inaccessible
-    sodium_mprotect_noaccess(out_key);
+    sodium_mprotect_readonly(out_key);
 
     *master_key = out_key;
 
     free(salt);
+    //printf("DEBUG:master key derived\n");
     return 0;
 
     cleanup:
     sodium_free(out_key);
     free(salt);
     *master_key = NULL;
-    return 1;
+    return -1;
 }
 
 int create_psw_salt(char overwrite) {
@@ -118,15 +129,16 @@ int load_psw_salt(unsigned char **salt) {
     FILE *fp_salt;
     uint32_t salt_len;
 
-    if (salt == NULL) {return INDIGO_ERROR_INVALID_PARAM;}
+    if (salt == NULL) return INDIGO_ERROR_INVALID_PARAM;
 
-    file_name = malloc(strlen(INDIGO_PSW_DIR) + strlen("/salt.dat") + 1);
+    file_name = malloc(strlen(INDIGO_PSW_DIR) + strlen("salt.dat") + 1);
     if (file_name == NULL) {return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;}
     strcpy(file_name, INDIGO_PSW_DIR);
-    strcat(file_name, "/salt.dat");
+    strcat(file_name, "salt.dat");
 
-    if (!access(file_name, F_OK)) {
+    if (access(file_name, F_OK) != 0) {
         free(file_name);
+        *salt = NULL;
         return INDIGO_ERROR_FILE_NOT_FOUND;
     }
 
@@ -134,6 +146,7 @@ int load_psw_salt(unsigned char **salt) {
     if (fp_salt == NULL) {
         free(file_name);
         //todo check errno and return the right error
+        *salt = NULL;
         return INDIGO_ERROR_SYS_FAIL;
     }
 
@@ -469,7 +482,7 @@ int password_hash_exists() {
     return 1;
 }
 
-int create_signing_key_pair(const unsigned char* const master_key) {
+int create_signing_key_pair(void* master_key) {
     SIGNING_KEY_PAIR key_pair;
     unsigned char *cipher;
     unsigned char *nonce;
@@ -477,9 +490,10 @@ int create_signing_key_pair(const unsigned char* const master_key) {
     FILE *fp;
     int ret;
 
+    if (master_key == NULL) return 575;
 
     cipher = (unsigned char *)malloc(crypto_secretbox_MACBYTES + sizeof(SIGNING_KEY_PAIR));
-    if (cipher == NULL) {return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;}
+    if (cipher == NULL) return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
 
     nonce = (unsigned char *)malloc(crypto_secretbox_NONCEBYTES);
     if (!nonce) {
@@ -493,9 +507,9 @@ int create_signing_key_pair(const unsigned char* const master_key) {
         free(cipher);
         return INDIGO_ERROR_SODIUM_ERROR;
     }
-    sodium_mprotect_readonly((void *) master_key);
+
     ret = crypto_secretbox_easy(cipher, (unsigned char *)(&key_pair),sizeof(SIGNING_KEY_PAIR),nonce,master_key);
-    sodium_mprotect_noaccess((void *) master_key);
+
     if (ret != 0) {
         free(cipher);
         free(nonce);
@@ -508,7 +522,7 @@ int create_signing_key_pair(const unsigned char* const master_key) {
         free(nonce);
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
-    strcpy(file_name, INDIGO_PSW_DIR);
+    strcpy(file_name, INDIGO_KEY_DIR);
     strcat(file_name, INDIGO_SIGN_KEY_FILE_NAME);
 
     fp = fopen(file_name, "wb");
@@ -573,13 +587,11 @@ int load_signing_key_pair(SIGNING_KEY_PAIR *key_pair,const unsigned char* master
     fread(nonce, 1, crypto_secretbox_NONCEBYTES, fp);
     fread(cipher, 1, crypto_secretbox_KEYBYTES + sizeof(SIGNING_KEY_PAIR), fp);
 
-    sodium_mprotect_readonly((void *) master_key);
     ret =  crypto_secretbox_open_easy((unsigned char *)key_pair,
         cipher,
         crypto_secretbox_KEYBYTES + sizeof(SIGNING_KEY_PAIR) ,
         nonce,
         master_key);
-    sodium_mprotect_noaccess((void *) master_key);
 
     if (ret != 0) {
         fclose(fp);
@@ -601,7 +613,7 @@ int sign_buffer(const SIGNING_KEY_PAIR *key_pair, const unsigned char* buffer, u
 
 int signing_key_pair_exists() {
     char filename[32];
-    strcpy(filename, INDIGO_PSW_DIR);
+    strcpy(filename, INDIGO_KEY_DIR);
     strcat(filename, INDIGO_SIGN_KEY_FILE_NAME);
 
     if (access(filename, F_OK)) {

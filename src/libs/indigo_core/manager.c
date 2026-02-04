@@ -43,9 +43,6 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     //the discovery sockets list
     SOCKET_LL *sockets = NULL;
 
-    //the device tables
-    hash_table_t *device_table;
-
     //the key pair
     SIGNING_KEY_PAIR *signing_key_pair = NULL;
     unsigned char public_key[crypto_sign_PUBLICKEYBYTES];
@@ -111,14 +108,6 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
         goto cleanup;
     }
 
-    //the device table
-    device_table = new_hash_table(sizeof(remote_device_t), crypto_sign_PUBLICKEYBYTES, 1<<4);
-    if (!device_table) {
-        fprintf(stderr, "Failed to create hash_table (device_table)\n");
-        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-
     //load the signing keys
     signing_key_pair = sodium_malloc(sizeof(SIGNING_KEY_PAIR));
     if (signing_key_pair == NULL) {
@@ -126,19 +115,18 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
-    sodium_mprotect_readonly(args->master_key);
+
     ret_val = load_signing_key_pair(signing_key_pair, args->master_key);
     if (ret_val != INDIGO_SUCCESS) {
-        sodium_mprotect_noaccess(args->master_key);
         fprintf(stderr, "Failed to load signing key pair\n");
         *process_return = ret_val;
         goto cleanup;
     }
-    sodium_mprotect_noaccess(args->master_key);
+    sodium_mprotect_readonly(signing_key_pair);
+
     //the public key is our identifier and is used far more commonly than the private key
     //the less the time the private key is accessible the better
     memcpy(public_key, signing_key_pair->public, crypto_sign_PUBLICKEYBYTES);
-    sodium_mprotect_noaccess(signing_key_pair);
 
     //create threads
     if (create_interface_updater_thread(&update_args,args->port, args->multicast_addr, args->flag, sockets, &tid_update)) {
@@ -147,7 +135,7 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
         goto cleanup;
     }
 
-    if (create_packet_handler_thread(&handler_args, args->flag, packet_queue, mempool, args->master_key, &tid_handler)) {
+    if (create_packet_handler_thread(&handler_args, args->flag, packet_queue, mempool, args->device_table, args->master_key, &tid_handler)) {
         fprintf(stderr, "create_packet_handler_thread failed\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
@@ -375,7 +363,8 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
 
 
 int cancel_device_discovery(pthread_t tid, EFLAG *flag) {
-    int *ret = NULL, val;
+    int *ret = NULL;
+    int val;
 
     set_event_flag(flag, EF_TERMINATION | EF_WAKE_MANAGER);
 
@@ -391,7 +380,7 @@ int cancel_device_discovery(pthread_t tid, EFLAG *flag) {
     return val;
 }
 
-int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint32_t multicast_address, pthread_t *tid){
+int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint32_t multicast_address, hash_table_t* device_table, pthread_t *tid){
     pthread_t thread;
 
     MANAGER_ARGS *manager_args = malloc(sizeof(MANAGER_ARGS));
@@ -411,6 +400,7 @@ int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint
     manager_args->flag = flag;
     manager_args->port = port;
     manager_args->multicast_addr = multicast_address;
+    manager_args->device_table = device_table;
 
     if (pthread_create(&thread, NULL, (void *)(&thread_manager_thread), manager_args)) {
         free_event_flag(flag);
@@ -451,7 +441,7 @@ int create_discovery_sending_thread(SEND_ARGS **args, int port, uint32_t multica
 
     if (pthread_create(&thread, NULL, (void *)(&send_discovery_thread), send_args)) {
         free_event_flag(flag);
-        free(args);
+        free(send_args);
         return 1;
     }
 
@@ -556,12 +546,12 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
 }
 
 int create_packet_handler_thread(
-    PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, mempool_t* mempool, const void*
+    PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, mempool_t* mempool, hash_table_t* device_table, const void*
     const master_key, pthread_t *tid){
 
     pthread_t thread;
 
-    PACKET_HANDLER_ARGS *handler_args = malloc(sizeof(INTERFACE_UPDATE_ARGS));
+    PACKET_HANDLER_ARGS *handler_args = malloc(sizeof(PACKET_HANDLER_ARGS));
     if (handler_args == NULL) {
         fprintf(stderr, "malloc() failed in create_interface_updater_thread\n");
         return 1;
@@ -586,12 +576,12 @@ int create_packet_handler_thread(
         free(handler_args);
         return 1;
     }
-    sodium_mprotect_noaccess(handler_args->signing_keys);
 
     handler_args->queue = queue;
     handler_args->mempool = mempool;
     handler_args->wake = wake_mngr;
     handler_args->flag = flag;
+    handler_args->device_table = device_table;
 
     if (pthread_create(&thread, NULL, (void *)(&packet_handler_thread), handler_args)) {
         free_event_flag(flag);

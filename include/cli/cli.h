@@ -9,10 +9,10 @@
 #define _XOPEN_SOURCE_EXTENDED
 #include <ncursesw/curses.h>
 
-int verify_user(void);
+int verify_user(void** master_key);
 
 //todo: make it return via pointer the master key
-int verify_password(void);
+int verify_password(void** master_key);
 
 WINDOW *create_welcome_screen();
 int create_new_password();

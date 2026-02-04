@@ -11,7 +11,7 @@
 #include <indigo_core/manager.h>
 
 
-int verify_user() {
+int verify_user(void** master_key) {
     int ret = 0;
 
     if (!password_hash_exists()) {
@@ -26,11 +26,11 @@ int verify_user() {
             int maxx;
             int maxy;
             getmaxyx(stdscr,maxy,maxx);
-            move(maxy/2,(maxx - 46)/2);
+            move((maxy/2) - 1,(maxx - 46)/2);
             printw("Trying to set up password creation settings...");
-            move((maxy/2) +1,(maxx - 45)/2);
+            move((maxy/2),(maxx - 45)/2);
             printw("Testing for optimal settings for your system.");
-            move((maxy/2) + 2,(maxx - 31)/2);
+            move((maxy/2) + 1,(maxx - 31)/2);
             printw("This might take several minutes");
             refresh();
             Sleep(1000);
@@ -50,17 +50,23 @@ int verify_user() {
         curs_set(1);
         create_new_password();
     }
-    if (!verify_password()) {
+    ret = verify_password(master_key);
+    if (ret) {
         fprintf(stderr,"error in verify_password() called inside verify_user");
-        return -1;
+        return ret;
     }
 
-    return 0;
+    if (!signing_key_pair_exists()) {
+        ret = create_signing_key_pair(*master_key);
+        printf("did not crash %p", *master_key);
+    }
+    return ret;
 }
-int verify_password(void) {
+//todo this function makes the process crash, probably segfault, does not verify password correctly in debug mode
+int verify_password(void** master_key) {
     char *psw;
-    wint_t c;
-    char ch;
+    wint_t ch;
+    char mch;
     int overflow = 0;
     int ret = 0;
     int res = 0;
@@ -79,19 +85,17 @@ int verify_password(void) {
 
     password_window = create_welcome_screen();
     box(password_window,0,0);
-    noecho();
     keypad(password_window, TRUE);
     wmove(password_window,1,1);
     refresh();
     wrefresh(password_window);
 
 
-
     while (1) {
-        res = wget_wch(password_window,&c);
-        ch = (char)(c & 0xff);
+        res = wget_wch(password_window,&ch);
+        mch = (char)(ch & 0xff);
         if (res == KEY_CODE_YES) {
-            switch (c) {
+            switch (ch) {
                 case KEY_BACKSPACE:
                 del = 1;
                 break;
@@ -103,12 +107,14 @@ int verify_password(void) {
             }
         }
         else if (res == OK) {
-            if (ch == '\n' || ch == '\r') {enter = 1;}
-            else if (ch == '\b' || ch == 127) {del = 1;}
-            else if (ch > 127 || !(iswalnum(ch) || iswspecialchar(ch))){
-                move(19,0);//todo check this to be bellow the password window
+            if (mch == '\n' || mch == '\r') {enter = 1;}
+            else if (mch == '\b' || mch == 127) {del = 1;}
+            else if (mch > 127 || !(iswalnum(mch) || iswspecialchar(mch))){
+                move(20,0);//todo check this to be bellow the password window
                 printw("use ONLY alpharithmetics and !@#$%%^&*_");
                 refresh();
+                wmove(password_window,1,1 + ((psw_len >= 62)? 61: psw_len));
+                wrefresh(password_window);
             }
             else {
                 if (psw_len < MAX_PSW_LEN) {
@@ -119,8 +125,8 @@ int verify_password(void) {
                         wrefresh(password_window);
                         err_printed = 0;
                     }
-                    if (psw_len < 62){ wprintw(password_window, "*");}
-                    psw[psw_len] = ch;
+                    if (psw_len < 62) wprintw(password_window, "*");
+                    psw[psw_len] = mch;
                     psw_len++;
                 }
                 else{
@@ -140,8 +146,6 @@ int verify_password(void) {
             enter = 0;
             wclear(password_window);
             box(password_window,0,0);
-            if (overflow) {}
-
 
             ret = cmp_password_hash(psw, psw_len);
             if (ret == 0) {
@@ -151,9 +155,12 @@ int verify_password(void) {
                 attron(COLOR_PAIR(1));
                 mvwprintw(password_window,1,1,"PASSWORD INCORRECT. TRY AGAIN");
                 attroff(COLOR_PAIR(1));
+                wmove(password_window, 1,1);
+                wrefresh(password_window);
                 err_printed = 1;
                 overflow = 0;
                 psw_len = 0;
+                sodium_memzero(psw, MAX_PSW_LEN + 1);
             }
             else {
                 sodium_free(psw);
@@ -172,7 +179,17 @@ int verify_password(void) {
 
         }
     }
-
+    //the password is verified, and we now derive the master key
+    ret = derive_master_key(psw,psw_len,master_key);
+    if (ret != 0 || !*master_key) {
+        sodium_memzero(psw, MAX_PSW_LEN);
+        sodium_free(psw);
+        delwin(password_window);
+        clear();
+        refresh();
+        printf("derive master key return: %d\n",ret);
+        return ret;
+    }
     sodium_memzero(psw, MAX_PSW_LEN);
     sodium_free(psw);
     delwin(password_window);

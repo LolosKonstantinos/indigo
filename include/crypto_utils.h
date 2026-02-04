@@ -50,7 +50,7 @@ int load_password_hash(char** hash);
 int cmp_password_hash(const char* psw, uint64_t psw_len);
 int password_hash_exists();
 
-int create_signing_key_pair(const unsigned char* master_key);
+int create_signing_key_pair(void *master_key);
 int load_signing_key_pair(SIGNING_KEY_PAIR *key_pair,const unsigned char* master_key);
 int sign_buffer(const SIGNING_KEY_PAIR *key_pair, const unsigned char* buffer, uint64_t buffer_len,
                                                   unsigned char *signed_buffer, uint64_t *signed_len);

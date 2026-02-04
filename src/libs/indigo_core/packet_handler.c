@@ -59,9 +59,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     *process_return = 0;
 
     //the less the private key is exposed the better, we copy the public key since it is frequently used
-    sodium_mprotect_readonly(args->signing_keys);
+
     memcpy(public_key, args->signing_keys->public, crypto_sign_PUBLICKEYBYTES);
-    sodium_mprotect_noaccess(args->signing_keys);
 
     //create the expected packet table
     xpack_table = new_hash_table(sizeof(expected_packet_t), crypto_sign_PUBLICKEYBYTES, 1<<6);
