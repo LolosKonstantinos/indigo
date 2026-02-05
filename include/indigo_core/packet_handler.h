@@ -14,14 +14,27 @@
 
 #define EXPIRATION_TIME 15
 
-typedef struct expected_packet_t {
+//eXpected Signing Response
+typedef struct xsr_t {
     time_t expiration_time;
-    unsigned char id[crypto_sign_PUBLICKEYBYTES];
     unsigned char nonce[INDIGO_NONCE_SIZE];
-    uint64_t serial_number_range[2]; //describes the range of serial numbers we expect (usually with files)
-    unsigned char type;
-    unsigned char zero[7];
-}expected_packet_t;
+}xsr_t;
+
+typedef struct xsr_key_t {
+    unsigned char id[crypto_sign_PUBLICKEYBYTES];
+}xsr_key_t;
+
+//eXpected File Packet
+typedef struct xfp_t {
+    time_t expiration_time;
+    uint64_t range[2];//describes the range of serial numbers we expect
+    FILE *file;
+}xfp_t;
+
+typedef struct xfp_key_t {
+    uint64_t session_id;
+    unsigned char id[crypto_sign_PUBLICKEYBYTES];
+}xfp_key_t;
 
 typedef struct PACKET_HANDLER_ARGS {
     EFLAG *flag;

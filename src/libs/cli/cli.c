@@ -457,6 +457,3 @@ int iswspecialchar(const wint_t ch) {
             return 0;
     }
 }
-
-//the main screen
-int init_main_interface() {}

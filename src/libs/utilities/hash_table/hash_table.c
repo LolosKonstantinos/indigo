@@ -68,8 +68,11 @@ int hash_table_insert(hash_table_t *ht, void *key, void *data){
     //the hash table should have a size of (at least) n^2 where n is the number of buckets
     size_t new_size, old_size;
     hash_table_priv *priv;
-    int hash_code;
-    unsigned char *bucket, *new_bucket, *new_table;
+    unsigned int hash_code;
+
+    unsigned char *bucket;
+    unsigned char *new_bucket;
+    unsigned char *new_table;
 
     if (!ht || !key || !data) {
         return -1;
@@ -80,7 +83,7 @@ int hash_table_insert(hash_table_t *ht, void *key, void *data){
     priv = ht->private;
     pthread_mutex_lock(&priv->mutex);
 
-    new_size = (sizeof(size_t) * 8) - __builtin_clzll((priv->bucket_count+1) * (priv->bucket_count+1) - 1);
+    new_size = (sizeof(size_t) * 8) - __builtin_clzll(((priv->bucket_count+1) * (priv->bucket_count+1)) - 1);
     old_size = priv->hash_bit_length;
     if (old_size >= new_size) {
         //we don't need to allocate more memory

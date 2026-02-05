@@ -40,9 +40,19 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     remote_device_t rdev;
     remote_device_t *found_rdev = NULL;
 
-    hash_table_t *xpack_table = NULL; // the expected packet table
-    expected_packet_t xpacket;
-    expected_packet_t *found_xpacket = NULL;
+    //the expected signing response table
+    hash_table_t *xsr_table = NULL;
+    xsr_t xsr;
+    xsr_key_t xsr_key;
+    xsr_t *found_xsr;
+
+    //the expected file packet table
+    hash_table_t *xfp_table = NULL;
+    xfp_t xfs;
+    xfp_key_t xfp_key;
+    xfp_t *found_xfp;
+
+    FILE *recent_files[2]; //an array of the last 2 file descriptors used
 
     int ret = 0; //general purpose return variable
 
@@ -63,8 +73,15 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     memcpy(public_key, args->signing_keys->public, crypto_sign_PUBLICKEYBYTES);
 
     //create the expected packet table
-    xpack_table = new_hash_table(sizeof(expected_packet_t), crypto_sign_PUBLICKEYBYTES, 1<<6);
-    if (xpack_table == NULL) {
+    xsr_table = new_hash_table(sizeof(xsr_t), sizeof(xsr_key_t), 1<<6);
+    if (xsr_table == NULL) {
+        set_event_flag(args->flag, EF_TERMINATION);
+        set_event_flag(args->wake, EF_WAKE_MANAGER);
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        return process_return;
+    }
+    xfp_table = new_hash_table(sizeof(xfp_t), sizeof(xfp_key_t), 1<<6);
+    if (xfp_table == NULL) {
         set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
@@ -117,7 +134,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         fprintf(stderr, "malloc() failed in device_discovery_receiving\n");
                         set_event_flag(args->flag, EF_TERMINATION);
                         set_event_flag(args->wake, EF_WAKE_MANAGER);
-                        delete_hash_table(xpack_table);
+                        delete_hash_table(xsr_table);
                         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                         return process_return;
                     }
@@ -130,7 +147,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         set_event_flag(args->wake, EF_WAKE_MANAGER);
                         *process_return = INDIGO_ERROR_WINLIB_ERROR;
                         free(mac_address);
-                        delete_hash_table(xpack_table);
+                        delete_hash_table(xsr_table);
                         return process_return;
                         }
 
@@ -161,14 +178,12 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                                 packet_info->socket,packet, args->flag);
 
                     //add signing response to expected packets
-                    xpacket.expiration_time = time(NULL) + EXPIRATION_TIME;
-                    xpacket.type = MSG_SIGNING_RESPONSE;
-                    memcpy(xpacket.id, packet->id, crypto_sign_PUBLICKEYBYTES);
-                    memcpy(xpacket.nonce, nonce, INDIGO_NONCE_SIZE);
-                    memset(xpacket.serial_number_range,0,sizeof(xpacket.serial_number_range));
-                    memset(xpacket.zero, 0, sizeof(xpacket.zero));
+                    xsr.expiration_time = time(NULL) + EXPIRATION_TIME;
+                    memcpy(xsr.nonce, nonce, INDIGO_NONCE_SIZE);
 
-                    if (xpack_table->insert(xpack_table, xpacket.id, &xpacket)) {
+                    memcpy(xsr_key.id, packet->id, crypto_sign_PUBLICKEYBYTES);
+
+                    if (xsr_table->insert(xsr_table, &xsr_key, &xsr)) {
                         //todo: what do we do if insert fails (either the id is already in the table or memory error
                     }
 
@@ -199,7 +214,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                     }
                 //in this case they found us before we received their discovery packet (if they sent any)
                     else {
-                        //the remote device is not on the table so we add it
+                        //add the device to the device table
+                        //we detected the device (though it is unverified)
                         rdev.expiration_time = time(NULL);
                         rdev.socket = packet_info->socket;
                         rdev.ip = packet_info->address.sin_addr.S_un.S_addr;
@@ -209,39 +225,40 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         args->device_table->insert(args->device_table, packet->id, &rdev);
 
                         //add signing response to expected packets
-                        xpacket.expiration_time = time(NULL) + EXPIRATION_TIME;
-                        xpacket.type = MSG_SIGNING_RESPONSE;
-                        memcpy(xpacket.id, packet->id, crypto_sign_PUBLICKEYBYTES);
-                        memcpy(xpacket.nonce, nonce, INDIGO_NONCE_SIZE);
-                        memset(xpacket.serial_number_range,0,sizeof(xpacket.serial_number_range));
-                        memset(xpacket.zero, 0, sizeof(xpacket.zero));
+                        xsr.expiration_time = time(NULL) + EXPIRATION_TIME;
+                        memcpy(xsr.nonce, nonce, INDIGO_NONCE_SIZE);
 
-                        if (xpack_table->insert(xpack_table, xpacket.id, &xpacket)) {
+                        memcpy(xsr_key.id, packet->id, crypto_sign_PUBLICKEYBYTES);
+
+                        if (xsr_table->insert(xsr_table, &xsr_key, &xsr)) {
                             //todo: what do we do if insert fails (either the id is already in the table or memory error
                         }
                     }
                     break;
 
                 case MSG_SIGNING_RESPONSE:
-                    found_xpacket = xpack_table->search(xpack_table, packet->id);
-                    if (found_xpacket != NULL) {
-                        if (found_xpacket->type == MSG_SIGNING_RESPONSE) {
-                            ret = crypto_sign_open(nonce,NULL,
-                                packet->data,
-                                INDIGO_NONCE_SIZE + crypto_sign_BYTES,
-                                packet->id);
-                            if (ret == 0) {
-                                //if the nonce signed is the same as the one we sent to be signed
-                                if (memcmp(found_xpacket->nonce, nonce,INDIGO_NONCE_SIZE) == 0) {
-                                    //the device is got verified
-                                    found_rdev = args->device_table->search(args->device_table, packet->id);
-                                    //I am not sure how we could get an expected packet for a device
-                                    //that isn't in the device table
-                                    if (found_rdev != NULL) {
-                                        found_rdev->expiration_time = time(NULL);
-                                        found_rdev->dev_state_flag |= RDSF_VERIFIED;
-                                        break;
-                                    }
+                    //here the key is the id (public key) no need to use a xsr_key_t for the comparison
+                    found_xsr = xsr_table->search(xsr_table, packet->id);
+                    if (found_xsr != NULL) {
+                        ret = crypto_sign_open(nonce,NULL,
+                            packet->data,
+                            INDIGO_NONCE_SIZE + crypto_sign_BYTES,
+                            packet->id);
+                        if (ret == 0) {
+                            //if the nonce signed is the same as the one we sent to be signed
+                            if (memcmp(found_xsr->nonce, nonce,INDIGO_NONCE_SIZE) == 0) {
+                                //the device is got verified
+
+                                //remove the expected packet
+                                xsr_table->remove(xsr_table, packet->id);
+                                //
+                                found_rdev = args->device_table->search(args->device_table, packet->id);
+                                //I am not sure how we could get an expected packet for a device
+                                //that isn't in the device table
+                                if (found_rdev != NULL) {
+                                    found_rdev->expiration_time = time(NULL);
+                                    found_rdev->dev_state_flag |= RDSF_VERIFIED;
+                                    break;
                                 }
                             }
                         }
@@ -264,7 +281,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         file_sending_request_fwd_t *fsr;
                         fsr = malloc(sizeof(file_sending_request_fwd_t));
                         if (!fsr) {
-                            delete_hash_table(xpack_table);
+                            delete_hash_table(xsr_table);
                             *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                             return process_return;
                         }
@@ -273,7 +290,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         wcscpy_s(fsr->file_name, MAX_PATH * sizeof(wchar_t),(wchar_t *)(packet->data + crypto_kx_PUBLICKEYBYTES));
 
                         if (queue_push(args->queue, fsr, QET_FILE_SENDING_REQUEST)) {
-                            delete_hash_table(xpack_table);
+                            delete_hash_table(xsr_table);
                             *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                             return process_return;
                         }
