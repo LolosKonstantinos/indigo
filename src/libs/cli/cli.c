@@ -457,3 +457,61 @@ int iswspecialchar(const wint_t ch) {
             return 0;
     }
 }
+
+int create_main_interface() {
+    WINDOW *dialog_win;
+    WINDOW *device_win;
+    WINDOW *devinfo_win;
+    WINDOW *text_input_win;
+
+    int maxx;
+    int maxy;
+
+    wint_t ch;
+    char mch;
+
+    int ret;
+
+    getmaxyx(stdscr, maxy, maxx);
+
+    dialog_win = newwin(3,maxx, 0,0);
+    device_win = newwin(maxy-8, (int)(maxx * 0.3), 3, 0); //maxy - (dialog (3) ) - (text(3) + 2)
+    devinfo_win = newwin(maxy-8, maxx - (int)(maxx * 0.3), 3, (int)(maxx * 0.3));
+    text_input_win = newwin(3,(maxx<<1)/3, maxy - 5, maxx/6);
+
+    box(dialog_win,0,0);
+    box(device_win,0,0);
+    box(devinfo_win,0,0);
+    box(text_input_win,0,0);
+
+    keypad(text_input_win, TRUE);
+    curs_set(0);
+
+    refresh();
+    wrefresh(dialog_win);
+    wrefresh(device_win);
+    wrefresh(devinfo_win);
+    wrefresh(text_input_win);
+
+    //the main loop
+    while (1) {
+        ret = wget_wch(text_input_win,&ch);
+        if (ret == KEY_CODE_YES) {
+            //function keys
+        }
+        else if (ret == OK) {
+            //characters
+        }
+        else {
+            printf("wget_wch() returned error %d\n", ret);
+            break;
+        }
+        break;//temporary so as not to block
+    }
+
+    delwin(dialog_win);
+    delwin(device_win);
+    delwin(devinfo_win);
+    delwin(text_input_win);
+    return 0;
+}

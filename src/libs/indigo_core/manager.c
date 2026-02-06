@@ -26,10 +26,16 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     int *update_ret = NULL;
     int *handler_ret = NULL;
 
+    EFLAG *override_flags[3];
+
     QUEUE *packet_queue = NULL;
 
-    mempool_t *mempool = NULL; //the pool used for receiving
+    //the pool used for receiving
+    mempool_t *mempool = NULL;
     mempool_attr pool_attr;
+
+    //the remote device table
+    hash_table_t *device_table = NULL;
 
     //the thread args
     SEND_ARGS *send_args = NULL;
@@ -108,6 +114,14 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
         goto cleanup;
     }
 
+    //create the device table
+    device_table = new_hash_table(sizeof(remote_device_t), crypto_sign_PUBLICKEYBYTES,1<<4);
+    if (!device_table) {
+        fprintf(stderr, "Failed to create device hash table\n");
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        goto cleanup;
+    }
+
     //load the signing keys
     signing_key_pair = sodium_malloc(sizeof(SIGNING_KEY_PAIR));
     if (signing_key_pair == NULL) {
@@ -129,13 +143,8 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     memcpy(public_key, signing_key_pair->public, crypto_sign_PUBLICKEYBYTES);
 
     //create threads
-    if (create_interface_updater_thread(&update_args,args->port, args->multicast_addr, args->flag, sockets, &tid_update)) {
-        fprintf(stderr, "create_interface_updater_thread failed\n");
-        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-
-    if (create_packet_handler_thread(&handler_args, args->flag, packet_queue, mempool, args->device_table, args->master_key, &tid_handler)) {
+    if (create_packet_handler_thread(&handler_args, args->flag, packet_queue, mempool, device_table, args->device_ll,
+        args->master_key, &tid_handler)) {
         fprintf(stderr, "create_packet_handler_thread failed\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
@@ -153,6 +162,18 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
         goto cleanup;
     }
 
+    override_flags[0] = handler_args->flag;
+    override_flags[1] = recv_args->flag;
+    override_flags[2] = send_args->flag;
+
+    if (create_interface_updater_thread(&update_args,args->port, args->multicast_addr, args->flag, override_flags,
+        sockets, &tid_update)) {
+        fprintf(stderr, "create_interface_updater_thread failed\n");
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        goto cleanup;
+    }
+
+
     //the main loop
     while (!termination_is_on(args->flag)) {
         pthread_mutex_lock(&args->flag->mutex);
@@ -165,8 +186,8 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
             break;
         }
 
-        if (!(flag_val & EF_WAKE_MANAGER)){ continue;}
-
+        if (!(flag_val & EF_WAKE_MANAGER)) continue;
+        reset_single_event(send_args->flag, EF_WAKE_MANAGER);
         //check the thread flags
 
         //check the interface updater thread
@@ -174,25 +195,6 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
         if (flag_val & EF_TERMINATION) {
             //for now, we terminate the whole operation, later we may pause or continue as we are
             goto cleanup;
-        }
-        if (flag_val & EF_INTERFACE_UPDATE) {
-            printf("DEBUG: manager override\n");
-            fflush(stdout);
-
-            reset_single_event(update_args->flag, EF_INTERFACE_UPDATE);
-            if (flag_val & EF_OVERRIDE_IO) {
-                update_event_flag(send_args->flag, EF_OVERRIDE_IO);
-                update_event_flag(recv_args->flag, EF_OVERRIDE_IO);
-                update_event_flag(handler_args->flag, EF_OVERRIDE_IO);
-
-                wait_on_flag_condition(update_args->flag, EF_OVERRIDE_IO, OFF);
-
-                reset_single_event(send_args->flag, EF_OVERRIDE_IO);
-                reset_single_event(recv_args->flag, EF_OVERRIDE_IO);
-                reset_single_event(handler_args->flag, EF_OVERRIDE_IO);
-            }
-            printf("DEBUG: override complete\n");
-            fflush(stdout);
         }
 
         //check the sending thread
@@ -282,6 +284,8 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     free_event_flag(args->flag);
     free(args);
 
+    WSACleanup();
+
     printf("DEBUG: manager thread exit\n");
     fflush(stdout);
 
@@ -349,6 +353,7 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     free_event_flag(args->flag);
     free(args);
     sodium_free(signing_key_pair);
+    WSACleanup();
     printf("DEBUG: manager thread exit\n");
     fflush(stdout);
     return process_return;
@@ -380,7 +385,7 @@ int cancel_device_discovery(pthread_t tid, EFLAG *flag) {
     return val;
 }
 
-int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint32_t multicast_address, hash_table_t* device_table, pthread_t *tid){
+int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint32_t multicast_address, rdev_ll_t* device_ll, pthread_t *tid){
     pthread_t thread;
 
     MANAGER_ARGS *manager_args = malloc(sizeof(MANAGER_ARGS));
@@ -400,7 +405,7 @@ int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint
     manager_args->flag = flag;
     manager_args->port = port;
     manager_args->multicast_addr = multicast_address;
-    manager_args->device_table = device_table;
+    manager_args->device_ll = device_ll;
 
     if (pthread_create(&thread, NULL, (void *)(&thread_manager_thread), manager_args)) {
         free_event_flag(flag);
@@ -504,7 +509,7 @@ int create_receiving_thread(
     return 0;
 }
 
-int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint32_t multicast_address, EFLAG *wake_mngr, SOCKET_LL *sockets, pthread_t *tid){
+int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint32_t multicast_address, EFLAG *wake_mngr, EFLAG *override_flags[3], SOCKET_LL *sockets, pthread_t *tid){
     pthread_t thread;
 
     INTERFACE_UPDATE_ARGS *update_args = malloc(sizeof(INTERFACE_UPDATE_ARGS));
@@ -534,6 +539,7 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
     update_args->sockets = sockets;
     update_args->wake = wake_mngr;
     update_args->flag = flag;
+    memcpy((void *)((*args)->override_flags), (void *)override_flags, 3 * sizeof(EFLAG *));
 
     if (pthread_create(&thread, NULL, (void *)(&interface_updater_thread), update_args)) {
         free_event_flag(flag);
@@ -546,7 +552,8 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
 }
 
 int create_packet_handler_thread(
-    PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, mempool_t* mempool, hash_table_t* device_table, const void*
+    PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, mempool_t* mempool, hash_table_t* device_table, rdev_ll_t
+    * device_ll, const void*
     const master_key, pthread_t *tid){
 
     pthread_t thread;
@@ -582,6 +589,7 @@ int create_packet_handler_thread(
     handler_args->wake = wake_mngr;
     handler_args->flag = flag;
     handler_args->device_table = device_table;
+    handler_args->device_ll = device_ll;
 
     if (pthread_create(&thread, NULL, (void *)(&packet_handler_thread), handler_args)) {
         free_event_flag(flag);

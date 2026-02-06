@@ -9,7 +9,7 @@
 #include <mempool.h>
 #include <crypto_utils.h>
 #include <Queue.h>
-
+#include "indigo_types.h"
 #include "hash_table.h"
 
 #define EXPIRATION_TIME 15
@@ -29,6 +29,7 @@ typedef struct xfp_t {
     time_t expiration_time;
     uint64_t range[2];//describes the range of serial numbers we expect
     FILE *file;
+    session_t *session;
 }xfp_t;
 
 typedef struct xfp_key_t {
@@ -40,7 +41,9 @@ typedef struct PACKET_HANDLER_ARGS {
     EFLAG *flag;
     EFLAG *wake;
     QUEUE *queue;
+    QUEUE *cli_queue;
     hash_table_t *device_table;
+    rdev_ll_t *device_ll;
     mempool_t *mempool;
     SIGNING_KEY_PAIR *signing_keys;
 }PACKET_HANDLER_ARGS;
@@ -52,4 +55,6 @@ typedef struct PACKET_HANDLER_ARGS {
 //////////////////////////////////////////////////////////
 
 int *packet_handler_thread(PACKET_HANDLER_ARGS *args);
+
+rdev_node_t *new_rdev_node();
 #endif //PACKET_HANDLER_H

@@ -23,6 +23,7 @@ typedef struct IP_SUBNET {
 
 typedef struct INTERFACE_UPDATE_ARGS {
     EFLAG *flag;
+    EFLAG *override_flags[3];
     EFLAG *wake;
     HANDLE termination_handle;
     SOCKET_LL *sockets;

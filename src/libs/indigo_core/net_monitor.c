@@ -268,7 +268,7 @@ SOCKET_NODE *create_discv_sock_node() {
     node->next = NULL;
     node->sock = WSASocketA(AF_INET, SOCK_DGRAM, IPPROTO_UDP,NULL,0,0x01);
     if (node->sock == INVALID_SOCKET) {
-        perror("Failed to create socket");
+        printf("\nFailed to create socket: %lu\n",GetLastError());
         free(node);
         return NULL;
     }
@@ -389,12 +389,12 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
         //the function blocks here and waits for an event
         printf("DEBUG: entered waiting\n");
         fflush(stdout);
+        //todo: do not use infinite, to prevent deadlock or something, use big number
         retVal = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
         printf("DEBUG: exited waiting\n");
         fflush(stdout);
         //error check
         if (retVal == WAIT_FAILED) {
-            //
             perror("WaitForMultipleObjects() failed in interface_updater");
             *process_return = INDIGO_ERROR_WINLIB_ERROR;
             set_event_flag(args->flag, EF_TERMINATION | EF_ERROR);
@@ -403,14 +403,16 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
             fflush(stdout);
             return process_return;
         }
-        //check which event was signalled
+        //check which event was signaled
         if (retVal - WAIT_OBJECT_0 == 1) {
             //interface update
             printf("DEBUG: interface update\n");
             fflush(stdout);
 
-            set_event_flag(args->flag, EF_INTERFACE_UPDATE | EF_OVERRIDE_IO);
-            set_event_flag(args->wake, EF_WAKE_MANAGER);
+            //raise the override flags of the io threads
+            for (int i = 0; i < 3; i++) {
+                set_event_flag(args->override_flags[i], EF_WAKE_MANAGER);
+            }
             WSAResetEvent(overlapped.hEvent);
 
             pthread_mutex_lock(&(args->sockets->mutex));
@@ -427,8 +429,10 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
                 return process_return;
             }
             pthread_mutex_unlock(&(args->sockets->mutex));
-            reset_single_event(args->flag, EF_OVERRIDE_IO);
-
+            //lower the override flag for the io threads
+            for (int i = 0; i < 3; i++) {
+                reset_single_event(args->override_flags[i], EF_OVERRIDE_IO);
+            }
             //re-register for address changes
             retVal = NotifyAddrChange(&notification_handle,&overlapped);
             if (retVal != ERROR_IO_PENDING) {
@@ -479,7 +483,7 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
             return process_return;
         }
     }
-    //termination event signalled and loop ended
+    //termination event signaled and loop ended
     printf("DEBUG: update exit\n");
     fflush(stdout);
 

@@ -12,8 +12,7 @@
 ///                  THREAD_FUNCTIONS                  ///
 ///                                                    ///
 //////////////////////////////////////////////////////////
-//todo: re-write the packet handler, we need to handle every type of packet
-//todo: structure the xpacket table keys so that an rdev can have multiple expected packets
+//todo: check for io override, we need to invalidate saved sockets, create mechanism to update sockets
 int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     uint32_t flag_val = 0;
     QNODE *node = NULL;
@@ -44,13 +43,15 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     hash_table_t *xsr_table = NULL;
     xsr_t xsr;
     xsr_key_t xsr_key;
-    xsr_t *found_xsr;
+    xsr_t *found_xsr = NULL;
 
     //the expected file packet table
     hash_table_t *xfp_table = NULL;
     xfp_t xfs;
     xfp_key_t xfp_key;
-    xfp_t *found_xfp;
+    xfp_t *found_xfp = NULL;
+
+    rdev_node_t *rdev_node = NULL;
 
     FILE *recent_files[2]; //an array of the last 2 file descriptors used
 
@@ -135,6 +136,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         set_event_flag(args->flag, EF_TERMINATION);
                         set_event_flag(args->wake, EF_WAKE_MANAGER);
                         delete_hash_table(xsr_table);
+                        delete_hash_table(xfp_table);
                         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                         return process_return;
                     }
@@ -148,6 +150,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         *process_return = INDIGO_ERROR_WINLIB_ERROR;
                         free(mac_address);
                         delete_hash_table(xsr_table);
+                        delete_hash_table(xfp_table);
                         return process_return;
                         }
 
@@ -170,6 +173,22 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                     rdev.dev_state_flag = RDSF_UNVERIFIED; //the device is not verified
 
                     args->device_table->insert(args->device_table, packet->id, &rdev);
+                    rdev_node = new_rdev_node();
+                    if (rdev_node == NULL) {
+                        set_event_flag(args->flag, EF_TERMINATION);
+                        set_event_flag(args->wake, EF_WAKE_MANAGER);
+                        delete_hash_table(xsr_table);
+                        delete_hash_table(xfp_table);
+                        *process_return = INDIGO_ERROR_WINLIB_ERROR;
+                        return process_return;
+                    }
+                    memcpy(rdev_node->remote_device, &rdev, sizeof(rdev_node_t));
+
+                    pthread_mutex_lock(&(args->device_ll->mutex));
+                    rdev_node->next = args->device_ll->head;
+                    args->device_ll->head = rdev_node;
+                    args->device_ll->new_device = 1;
+                    pthread_mutex_unlock(&(args->device_ll->mutex));
 
                     //send signing request
                     randombytes_buf(nonce,INDIGO_NONCE_SIZE);
@@ -223,6 +242,21 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         rdev.dev_state_flag = RDSF_UNVERIFIED; //the device is not verified
 
                         args->device_table->insert(args->device_table, packet->id, &rdev);
+                        rdev_node = new_rdev_node();
+                        if (rdev_node == NULL) {
+                            set_event_flag(args->flag, EF_TERMINATION);
+                            set_event_flag(args->wake, EF_WAKE_MANAGER);
+                            delete_hash_table(xsr_table);
+                            delete_hash_table(xfp_table);
+                            *process_return = INDIGO_ERROR_WINLIB_ERROR;
+                            return process_return;
+                        }
+                        memcpy(rdev_node->remote_device, &rdev, sizeof(rdev_node_t));
+                        pthread_mutex_lock(&(args->device_ll->mutex));
+                        rdev_node->next = args->device_ll->head;
+                        args->device_ll->head = rdev_node;
+                        args->device_ll->new_device = 1;
+                        pthread_mutex_unlock(&(args->device_ll->mutex));
 
                         //add signing response to expected packets
                         xsr.expiration_time = time(NULL) + EXPIRATION_TIME;
@@ -258,6 +292,9 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                                 if (found_rdev != NULL) {
                                     found_rdev->expiration_time = time(NULL);
                                     found_rdev->dev_state_flag |= RDSF_VERIFIED;
+                                    pthread_mutex_lock(&(args->device_ll->mutex));
+                                    args->device_ll->new_device = 1;
+                                    pthread_mutex_unlock(&(args->device_ll->mutex));
                                     break;
                                 }
                             }
@@ -278,19 +315,30 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         //we need permission to proceed, so we push it to the manager to handle
                         //tell the manager (via queue), the manager will ask the user
                         //if the user agrees, we create one time session keys, send them our one time public key
+                        //if it gets accepted we receive a session_t struct via queue, and store an expected file packet
                         file_sending_request_fwd_t *fsr;
                         fsr = malloc(sizeof(file_sending_request_fwd_t));
                         if (!fsr) {
+                            set_event_flag(args->flag, EF_TERMINATION);
+                            set_event_flag(args->wake, EF_WAKE_MANAGER);
                             delete_hash_table(xsr_table);
+                            delete_hash_table(xfp_table);
                             *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                             return process_return;
                         }
                         memcpy(fsr->id, packet->id, crypto_sign_PUBLICKEYBYTES);
                         memcpy(fsr->key, packet->data, crypto_kx_PUBLICKEYBYTES);
-                        wcscpy_s(fsr->file_name, MAX_PATH * sizeof(wchar_t),(wchar_t *)(packet->data + crypto_kx_PUBLICKEYBYTES));
+                        memcpy(&(fsr->file_size), packet->data + crypto_kx_PUBLICKEYBYTES, sizeof(size_t));
+                        wcsncpy(fsr->file_name
+                            ,(wchar_t *)(packet->data + crypto_kx_PUBLICKEYBYTES + sizeof(size_t))
+                            ,MAX_PATH);
+                        fsr->file_name[MAX_PATH - 1] = L'\0';
 
-                        if (queue_push(args->queue, fsr, QET_FILE_SENDING_REQUEST)) {
+                        if (queue_push(args->cli_queue, fsr, QET_FILE_SENDING_REQUEST)) {
+                            set_event_flag(args->flag, EF_TERMINATION);
+                            set_event_flag(args->wake, EF_WAKE_MANAGER);
                             delete_hash_table(xsr_table);
+                            delete_hash_table(xfp_table);
                             *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                             return process_return;
                         }
@@ -323,7 +371,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
             //so in case there are too many packets we refresh the list once per 10 packets processed
             if (iterations_until_cleanup > 0) {
                 iterations_until_cleanup--;
-                if (!queue_is_empty(args->queue)) {continue;}
+                if (!queue_is_empty(args->queue)) continue;
             }
             else {iterations_until_cleanup = 10;}
 
@@ -335,7 +383,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
             //todo: calculate the max sleep time we can get if the queue is empty
 
             //there is no need to sleep if there is more stuff to do
-            if (!queue_is_empty(args->queue)) {continue;}
+            if (!queue_is_empty(args->queue)) continue;
 
             /////////////////////////////////////////////
             ///  phase 3: wait a little and go again  ///
@@ -349,5 +397,21 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
 
         }
     }
-        return process_return;
+    delete_hash_table(xsr_table);
+    delete_hash_table(xfp_table);
+    return process_return;
+}
+
+rdev_node_t *new_rdev_node() {
+    rdev_node_t *node;
+
+    node = malloc(sizeof(rdev_node_t));
+    if (!node) return NULL;
+
+    node->remote_device = malloc(sizeof(remote_device_t));
+    if (!node->remote_device) {
+        free(node);
+        return NULL;
+    }
+    return node;
 }

@@ -21,7 +21,7 @@ int main(int argc, char *argv[]) {
     uint32_t multicast_addr;
 
     //device table
-    hash_table_t *device_table;
+    rdev_ll_t *device_ll;
 
     MANAGER_ARGS *manager_args;
     pthread_t manager_tid;
@@ -46,15 +46,26 @@ int main(int argc, char *argv[]) {
     if (ret != 0) {
         endwin();
         WSACleanup();
+        printf("\nverify_user failed\n");
         return ret;
     }
 
-    //create the device table
-    device_table = new_hash_table(sizeof(remote_device_t), crypto_sign_PUBLICKEYBYTES, 1<<4);
+
+    //create the device ll
+    device_ll = malloc (sizeof(rdev_ll_t));
+    if (device_ll == NULL) {
+        fprintf(stderr, "malloc failed\n");
+        endwin();
+        WSACleanup();
+        return 1;
+    }
+    pthread_mutex_init(&(device_ll->mutex), NULL);
+    device_ll->head = NULL;
+
     // todo import from network config the ports and multicast addresses
     inet_pton(AF_INET, MULTICAST_ADDR,&multicast_addr);
     port = (int) htonl(PORT);
-    ret = create_thread_manager_thread(&manager_args, port, multicast_addr, device_table, &manager_tid);
+    ret = create_thread_manager_thread(&manager_args, port, multicast_addr, device_ll, &manager_tid);
     if (ret != 0) {
         fprintf(stderr, "Error creating thread_manager thread\n");
         endwin();
@@ -63,10 +74,9 @@ int main(int argc, char *argv[]) {
     }
 
     //create the main cli interface
-
+    create_main_interface();
 
     endwin();
-    WSACleanup();
     printf("\nmain return:%d\n", ret);
     getchar();
     return ret;

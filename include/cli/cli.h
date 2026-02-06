@@ -17,4 +17,6 @@ int verify_password(void** master_key);
 WINDOW *create_welcome_screen();
 int create_new_password();
 int iswspecialchar(wint_t ch);
+
+int create_main_interface();
 #endif //CLI_H
