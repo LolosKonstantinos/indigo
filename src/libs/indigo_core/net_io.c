@@ -4,6 +4,7 @@
 #include <indigo_core/net_io.h>
 #include <stdio.h>
 #include <indigo_errors.h>
+#include <sodium/crypto_aead_xchacha20poly1305.h>
 
 #include "indigo_types.h"
 
@@ -612,7 +613,35 @@ int send_packet(int port, uint32_t addr, SOCKET socket, const packet_t* packet, 
     free_send_info(&temp_info);
     return routine_ret;
 }
-
+int send_file_packet(active_file_t *file, unsigned char *pk, unsigned char tk[crypto_kx_SESSIONKEYBYTES], EFLAG *flag) {
+    packet_t packet;
+    size_t read_ret;
+    int ret;
+    if (!file) {
+        fprintf(stderr, "send_file_packet(): wrong parameters\n");
+        return INDIGO_ERROR_INVALID_PARAM;
+    }
+    if (!(file->active)) {
+        return 1;
+    }
+    build_packet(&packet,MSG_FILE_CHUNK,pk,NULL);
+    read_ret = fread(packet.data, PAC_DATA_BYTES, 1, file->fd);
+    if (read_ret != 0) {
+        ret = feof(file->fd);
+        if (ret != 0) {
+            fprintf(stderr, "fread() failed in send_file_packet()\n");
+            return -1;
+        }
+        file->active = 0;
+    }
+    
+    ret = send_packet(file->port,file->ip, file->socket,&packet, flag);
+    if (ret != 0) {
+        fprintf(stderr, "send_packet() failed in send_file_packet()\n");
+        return ret;
+    }
+    return 0;
+}
 
 /////////////////////////////////////////////////////////////
 ///                                                       ///
@@ -939,11 +968,15 @@ void free_recv_info(const RECV_INFO *info, mempool_t* mempool) {
 ///                  THREAD_FUNCTIONS                  ///
 ///                                                    ///
 //////////////////////////////////////////////////////////
-
-int *send_discovery_thread(SEND_ARGS *args) {
+//todo: check the queue and send the packets inside
+int *send_thread(SEND_ARGS *args) {
     uint32_t flag_val;
     struct timespec ts;
     int ret;
+    QNODE *node;
+    active_file_t *active_files = NULL;
+    active_file_t *tmp_active_file;
+    char active = 0;
     int *process_return = NULL;
 
     //allocate memory for the return value
@@ -978,7 +1011,7 @@ int *send_discovery_thread(SEND_ARGS *args) {
                 *process_return = ret;
                 return process_return;
             }
-            //returns -1 when we get an override excecution or termination event
+            //returns -1 when we get an override execution or termination event
             if (ret == -1) {
                 flag_val = get_event_flag(args->flag);
                 if(flag_val & EF_TERMINATION){
@@ -986,6 +1019,23 @@ int *send_discovery_thread(SEND_ARGS *args) {
                     return process_return;
                 }
             }
+        }
+        else if (flag_val & EF_SEND_NEW_FILE) {
+            node = queue_pop(args->queue,QOPT_NON_BLOCK);
+
+            if (node == NULL) continue;
+
+            if (node->type == QET_SEND_FILE) {
+                if (active_files) {
+                    tmp_active_file = node->data;
+                    tmp_active_file->next = active_files;
+                    active_files = tmp_active_file;
+                }
+                else {
+                    active_files = node->data;
+                }
+            }
+            destroy_qnode(node);
         }//we don't care about other events, if they are there we shouldn't get them anyway
 
 
@@ -1025,7 +1075,7 @@ int *send_discovery_thread(SEND_ARGS *args) {
             break;
         }
         ret = 0;
-        while ((ret == 0) && (!(args->flag->event_flag & EF_TERMINATION))) {
+        while (!active && ret == 0 && !(args->flag->event_flag & (EF_TERMINATION | EF_SEND_NEW_FILE))) {
             ret = pthread_cond_timedwait(&(args->flag->cond), &(args->flag->mutex), &ts);
 
             if ((ret != ETIMEDOUT) && (ret != 0)) {
@@ -1045,11 +1095,12 @@ int *send_discovery_thread(SEND_ARGS *args) {
             }
         }
         pthread_mutex_unlock(&(args->flag->mutex));
+
     }
     return process_return;
 }
 
-int *recv_discovery_thread(RECV_ARGS *args) {
+int *recv_thread(RECV_ARGS *args) {
     //todo we need a hash table to hold the expected packets
     RECV_ARRAY info = {0};
     RECV_INFO *recv_info = NULL;
@@ -1172,7 +1223,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
         /////////////////////////////////////
 
         if (wait_ret == WSA_WAIT_FAILED) {
-            fprintf(stderr, "WSAWaitForMultipleEvents() failed in recv_discovery_thread: %d\n", WSAGetLastError());
+            fprintf(stderr, "WSAWaitForMultipleEvents() failed in recv_thread: %d\n", WSAGetLastError());
             set_event_flag(args->flag, EF_TERMINATION);
             set_event_flag(args->wake, EF_WAKE_MANAGER);
 
@@ -1206,7 +1257,7 @@ int *recv_discovery_thread(RECV_ARGS *args) {
             wait_ret = WaitForSingleObject(handles[i],0);
 
             if (wait_ret == WAIT_FAILED) {
-                printf("WaitForSingleObject() failed in recv_discovery_thread: %d\n", WSAGetLastError());
+                printf("WaitForSingleObject() failed in recv_thread: %d\n", WSAGetLastError());
                 fflush(stdout);
                 free(handles);
                 free_recv_array(&info, args->mempool);

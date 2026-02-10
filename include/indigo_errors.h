@@ -21,6 +21,7 @@
 #define INDIGO_ERROR_NO_ADDRESS_FOUND         11 //this error is for when there is no available active address
 #define INDIGO_ERROR_WINSOCK2_NOT_INITIALIZED 12
 #define INDIGO_ERROR_NETWORK_SUBSYS_DOWN      13 //serious error we need to terminate the application
+#define INDIGO_ERROR_CAN_NOT_OPEN_FILE        14
 
 //negative values are for errors the user or a peer caused
 #define INDIGO_ERROR_INVALID_INPUT     -1

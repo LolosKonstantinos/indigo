@@ -8,6 +8,7 @@
 #define CLI_H
 #define _XOPEN_SOURCE_EXTENDED
 #include <ncursesw/curses.h>
+#include <binary_tree.h>
 
 int verify_user(void** master_key);
 
@@ -18,5 +19,5 @@ WINDOW *create_welcome_screen();
 int create_new_password();
 int iswspecialchar(wint_t ch);
 
-int create_main_interface();
+int create_main_interface(tree_t * dev_tree);
 #endif //CLI_H

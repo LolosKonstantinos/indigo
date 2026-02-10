@@ -458,7 +458,7 @@ int iswspecialchar(const wint_t ch) {
     }
 }
 
-int create_main_interface() {
+int create_main_interface(tree_t * dev_tree) {
     WINDOW *dialog_win;
     WINDOW *device_win;
     WINDOW *devinfo_win;

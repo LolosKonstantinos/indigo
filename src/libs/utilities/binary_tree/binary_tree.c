@@ -1,13 +1,12 @@
 //
-// Created by Constantin on 02/01/2026.
+// Created by Constantin on 15/10/2025.
 //
 #include "binary_tree.h"
 
+#include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-//
-// Created by Constantin on 15/10/2025.
-//
 
 #define TREE_RIGHT (1)
 #define TREE_ROOT (0)
@@ -22,6 +21,7 @@
 
 
 struct tree_priv_t {
+    pthread_mutex_t mutex;
     tree_node_t *root;
     size_t data_size;
     cmp_f cmp;          // the function based on which we do struct comparison
@@ -32,7 +32,7 @@ struct tree_priv_t {
 //the direction and balance factor fields are kinda useless,
 //but whether we remove them or not the node is the same size
 
-struct tree_node_t {
+struct tree_node_avl_t {
     void *data;
     tree_node_t *left;
     tree_node_t *right;
@@ -42,33 +42,58 @@ struct tree_node_t {
 };
 
 
-int new_tree(tree_t* t, cmp_f cmp, size_t data_size) {
-    if (!t || !cmp || !data_size) {
+int new_tree(tree_t **t, const cmp_f cmp, const size_t data_size, const char type) {
+    tree_t *temp;
+    tree_priv_t *priv;
+
+    if (!*t || !cmp || !data_size) {
         return -1;
     }
 
-    t->priv = calloc(1, sizeof(tree_priv_t));
-    if (!t->priv) {
+    temp = malloc(sizeof(tree_t));
+    if (!temp) {
+        *t = NULL;
+        return 1;
+    }
+    priv = calloc(1, sizeof(tree_priv_t));
+    if (!priv) {
+        free(temp);
+        *t = NULL;
         return 1;
     }
 
-    t->priv->cmp = cmp;
-    t->priv->root = NULL;
-    t->priv->data_size = data_size;
+    priv->cmp = cmp;
+    priv->root = NULL;
+    priv->data_size = data_size;
+    pthread_mutex_init(&priv->mutex, NULL);
 
-    t->search = avl_search;
-    t->remove = avl_delete;
-    t->insert = avl_insert_copy;
-
+    temp->priv = priv;
+    if (type == BINARY_TREE_TYPE_AVL) {
+        temp->search = avl_search;
+        temp->remove = avl_delete;
+        temp->insert = avl_insert_copy;
+    }
+    else if (type == BINARY_TREE_TYPE_RED_BLACK) {
+        printf("to be implemented");
+    }
+    else {
+        free(temp);
+        free(priv);
+        *t = NULL;
+        return 1;
+    }
+    *t = temp;
     return 0;
 }
 void free_tree(tree_t *t) {
     tree_priv_t *priv;
-    tree_node_t **stack, **top, *temp;
+    tree_node_t **stack;
+    tree_node_t **top;
+    tree_node_t *temp;
     if (!t) return;
     priv = t->priv;
 
-    stack = malloc(sizeof(tree_node_t *) * (priv->height + 2));
+    stack = (tree_node_t **)malloc(sizeof(tree_node_t *) * (priv->height + 2));
     top = stack - 1;
 
     *(++top) = priv->root;
@@ -79,8 +104,9 @@ void free_tree(tree_t *t) {
         free(temp->data);
         free(temp);
     }
+    pthread_mutex_destroy(&priv->mutex);
     free(priv);
-    free(stack);
+    free((void *)stack);
 }
 
 tree_node_t *new_node() {
@@ -94,20 +120,27 @@ tree_node_t *new_node() {
 /*________________________________________AVL TREE FUNCTIONS________________________________________*/
 int avl_insert(tree_t* t, void* data) {
     tree_priv_t *priv;
-    tree_node_t *node, *temp, **stack = NULL, **top;
+    tree_node_t *node;
+    tree_node_t *temp;
+    tree_node_t **stack = NULL;
+    tree_node_t **top;
     int cmp_res;
 
     if (!t) return -1;
     if (!(t->priv)) return -1;
+
+    pthread_mutex_lock(&(t->priv->mutex));
     priv = t->priv;
 
     node = new_node();
     if (!node) {
+        pthread_mutex_unlock(&(priv->mutex));
         return 1;
     }
 
     stack = malloc(sizeof(tree_node_t *) * (priv->height + 2));
     if (!stack) {
+        pthread_mutex_unlock(&(priv->mutex));
         free(node);
         return 1;
     }
@@ -116,6 +149,7 @@ int avl_insert(tree_t* t, void* data) {
     if (!priv->root) {
         node->data = data;
         priv->root = node;
+        pthread_mutex_unlock(&(priv->mutex));
         free(stack);
         return 0;
     }
@@ -125,6 +159,7 @@ int avl_insert(tree_t* t, void* data) {
     while (1) {
         cmp_res = priv->cmp(data, temp->data);
         if (cmp_res == 0) {
+            pthread_mutex_unlock(&(priv->mutex));
             //if the node already exists we do not re-insert it
             free(node);
             free(stack);
@@ -154,25 +189,32 @@ int avl_insert(tree_t* t, void* data) {
 
     avl_balance(stack, top, priv);
 
+    pthread_mutex_unlock(&(priv->mutex));
     free(stack);
     return 0;
 }
 
 int avl_insert_copy(tree_t *t, void* data) {
     tree_priv_t *priv;
-    tree_node_t *node, *temp, **stack = NULL, **top;
+    tree_node_t *node;
+    tree_node_t *temp;
+    tree_node_t **stack = NULL;
+    tree_node_t **top;
     int cmp_res;
 
     if (!t) return -1;
     if (!(t->priv)) return -1;
+    pthread_mutex_lock(&(t->priv->mutex));
     priv = t->priv;
 
     node = new_node();
     if (!node) {
+        pthread_mutex_unlock(&(priv->mutex));
         return 1;
     }
     node->data = malloc(priv->data_size);
     if (!node->data) {
+        pthread_mutex_unlock(&(priv->mutex));
         free(node);
         return 1;
     }
@@ -180,6 +222,7 @@ int avl_insert_copy(tree_t *t, void* data) {
 
     stack = malloc(sizeof(tree_node_t *) * (priv->height + 2));
     if (!stack) {
+        pthread_mutex_unlock(&(priv->mutex));
         free(node->data);
         free(node);
         return 1;
@@ -188,6 +231,7 @@ int avl_insert_copy(tree_t *t, void* data) {
 
     if (!priv->root) {
         priv->root = node;
+        pthread_mutex_unlock(&(priv->mutex));
         free(stack);
         return 0;
     }
@@ -197,6 +241,7 @@ int avl_insert_copy(tree_t *t, void* data) {
     while (1) {
         cmp_res = priv->cmp(data, temp->data);
         if (cmp_res == 0) {
+            pthread_mutex_unlock(&(priv->mutex));
             //if the node already exists we do not re-insert it
             free(node->data);
             free(node);
@@ -225,24 +270,35 @@ int avl_insert_copy(tree_t *t, void* data) {
 
     avl_balance(stack, top, priv);
 
+    pthread_mutex_unlock(&(priv->mutex));
     free(stack);
     return 0;
 }
 
 int avl_delete(tree_t *t, void* data) {
     tree_priv_t *priv;
-    tree_node_t *node, *prev = NULL, *temp, *temp_prev, **stack = NULL, **top;
-    char direction = TREE_ROOT, temp_direction;
+    tree_node_t *node;
+    tree_node_t *prev = NULL;
+    tree_node_t *temp;
+    tree_node_t *temp_prev;
+    tree_node_t **stack = NULL;
+    tree_node_t **top;
+    char direction = TREE_ROOT;
+    char temp_direction;
     int cmp_res;
     cmp_f cmp;
 
     if (!t || !data) return -1;
+    pthread_mutex_lock(&(t->priv->mutex));
     priv = t->priv;
     node = priv->root;
     cmp = priv->cmp;
 
     stack = malloc(priv->height * sizeof(tree_node_t *));
-    if (!stack) return -1;
+    if (!stack) {
+        pthread_mutex_unlock(&(priv->mutex));
+        return -1;
+    }
     top = stack - 1; //so, when we push for the first time the top pointer points to the top element and not above it
 
     //find the node and create a stack trace
@@ -264,6 +320,7 @@ int avl_delete(tree_t *t, void* data) {
         }
     }
     if (!node) {
+        pthread_mutex_unlock(&(priv->mutex));
         free(stack);
         return 1;
     }
@@ -292,6 +349,7 @@ int avl_delete(tree_t *t, void* data) {
             tree_node_t**temp_top;
             tree_node_t** temp_stack = malloc(sizeof(tree_node_t*) * (priv->height - node->height + 1));
             if (!temp_stack) {
+                pthread_mutex_unlock(&(priv->mutex));
                 free(stack);
                 return -1;
             }
@@ -384,32 +442,83 @@ int avl_delete(tree_t *t, void* data) {
         while (top)
             top = avl_balance(stack, top, priv);
     }
+
+    pthread_mutex_unlock(&(priv->mutex));
+
     free(stack);
     free(node->data);
     free(node);
     return 0;
 }
 
-void* avl_search(tree_t* t, void* data) {
+//todo: if we need to modify the data then we should have an unsafe function that needs the mutex locked before a call
+int avl_search(tree_t* t, void* data) {
     tree_node_t *node;
+    tree_node_t *turn_node = NULL;
     int cmp_res;
     cmp_f cmp;
 
-    if (!t || !data) return NULL;
+    if (!t || !data) return -1;
+    pthread_mutex_lock(&(t->priv->mutex));
     node = t->priv->root;
     cmp = t->priv->cmp;
 
     while (node != NULL) {
         cmp_res = cmp(data, node->data);
-        if (cmp_res == 0) {
-            return node->data;
-        }
+
         if (cmp_res < 0) node = node->left;
-        else node = node->right;
+        else {
+            turn_node = node;
+            node = node->right;
+        }
     }
-    return NULL;
+    if (!turn_node) {
+        pthread_mutex_unlock(&(t->priv->mutex));
+        return 1;
+    }
+    if (cmp(data, turn_node->data) == 0) {
+        memcpy(data, turn_node->data, t->priv->data_size);
+        pthread_mutex_unlock(&(t->priv->mutex));
+        return 0;
+    }
+    pthread_mutex_unlock(&(t->priv->mutex));
+    return 1;
 }
 
+int avl_search_pin(tree_t *t, void* data, void** ret_data) {
+    tree_node_t *node;
+    tree_node_t *turn_node = NULL;
+    int cmp_res;
+    cmp_f cmp;
+
+    if (!t || !data || !ret_data) return -1;
+    pthread_mutex_lock(&(t->priv->mutex));
+    node = t->priv->root;
+    cmp = t->priv->cmp;
+
+    while (node != NULL) {
+        cmp_res = cmp(data, node->data);
+
+        if (cmp_res < 0) node = node->left;
+        else {
+            turn_node = node;
+            node = node->right;
+        }
+    }
+    if (turn_node) {
+        if (cmp(data, turn_node->data) == 0) {
+            *ret_data = turn_node->data;
+            return 0;
+        }
+    }
+    *ret_data = NULL;
+    return 1;
+}
+int avl_search_release(tree_t *t) {
+    if (!t) return -1;
+    if (!t->priv) return -1;
+    return pthread_mutex_unlock(&t->priv->mutex);
+}
 
 /*AVL HELPERS*/
 inline void rotate_left(tree_node_t *node, tree_node_t *root, tree_priv_t* tree) {
@@ -462,7 +571,8 @@ inline void rotate_right(tree_node_t *node, tree_node_t* root, tree_priv_t* tree
     b->height = GET_HEIGHT(b);
 }
 inline void rotate_left_right(tree_node_t *node, tree_node_t* root, tree_priv_t* tree) {
-    tree_node_t *a,*b;
+    tree_node_t *a;
+    tree_node_t *b;
 
     if (!node) return;
 
@@ -499,7 +609,8 @@ inline void rotate_left_right(tree_node_t *node, tree_node_t* root, tree_priv_t*
     b->height = GET_HEIGHT(b);
 }
 inline void rotate_right_left(tree_node_t *node, tree_node_t* root, tree_priv_t* tree) {
-    tree_node_t *a,*b;
+    tree_node_t *a;
+    tree_node_t *b;
     if (!node) return;
 
     //__rotate right the right child__//
@@ -537,7 +648,9 @@ inline void rotate_right_left(tree_node_t *node, tree_node_t* root, tree_priv_t*
 }
 
 tree_node_t** avl_balance(tree_node_t** stack, tree_node_t** top, tree_priv_t* tree) {
-    tree_node_t *heavy_child, **node, **ret_node;
+    tree_node_t *heavy_child;
+    tree_node_t **node;
+    tree_node_t **ret_node;
 
     if (!stack || !top || !tree) return NULL;
     if (!(tree->root)) return NULL;
@@ -582,7 +695,7 @@ tree_node_t** avl_balance(tree_node_t** stack, tree_node_t** top, tree_priv_t* t
     }
 
     if (heavy_child == (*node)->right) {
-
+        //todo: heavy child may be null????
         if (heavy_child->bf >= 0) {
             //right-right
             rotate_left(*node, (node  > stack)?*(node -1):NULL, tree);

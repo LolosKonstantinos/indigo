@@ -15,6 +15,11 @@
 
 #endif
 
+/*todo implement a handle type of thing with the sockets so that on socket updates all services dont need
+ *     to update them manually and when an interface is no longer available (no socket) the handle is just
+ *     invalid and handled like a soft error and we recover without a complete shutdown
+ */
+
 typedef struct IP_SUBNET {
     uint32_t ip;
     uint32_t mask;

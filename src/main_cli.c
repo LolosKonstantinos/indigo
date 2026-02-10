@@ -21,7 +21,7 @@ int main(int argc, char *argv[]) {
     uint32_t multicast_addr;
 
     //device table
-    rdev_ll_t *device_ll;
+    tree_t *device_tree;
 
     MANAGER_ARGS *manager_args;
     pthread_t manager_tid;
@@ -52,20 +52,19 @@ int main(int argc, char *argv[]) {
 
 
     //create the device ll
-    device_ll = malloc (sizeof(rdev_ll_t));
-    if (device_ll == NULL) {
+    //todo: fill the cmp function
+    ret = new_tree(&device_tree, cmp_rdev, sizeof(remote_device_t), BINARY_TREE_TYPE_AVL);
+    if (!ret) {
         fprintf(stderr, "malloc failed\n");
         endwin();
         WSACleanup();
-        return 1;
+        return ret;
     }
-    pthread_mutex_init(&(device_ll->mutex), NULL);
-    device_ll->head = NULL;
 
     // todo import from network config the ports and multicast addresses
     inet_pton(AF_INET, MULTICAST_ADDR,&multicast_addr);
     port = (int) htonl(PORT);
-    ret = create_thread_manager_thread(&manager_args, port, multicast_addr, device_ll, &manager_tid);
+    ret = create_thread_manager_thread(&manager_args, port, multicast_addr, device_tree, &manager_tid);
     if (ret != 0) {
         fprintf(stderr, "Error creating thread_manager thread\n");
         endwin();
@@ -74,7 +73,7 @@ int main(int argc, char *argv[]) {
     }
 
     //create the main cli interface
-    create_main_interface();
+    create_main_interface(device_tree);
 
     endwin();
     printf("\nmain return:%d\n", ret);

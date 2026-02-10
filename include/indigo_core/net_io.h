@@ -12,6 +12,7 @@
 #include <sodium/crypto_sign.h>
 
 #include "hash_table.h"
+#include "indigo_types.h"
 //for now, it's ok, later we will need to add linux libraries
 #ifdef _WIN32
 
@@ -44,20 +45,22 @@
 #define MSG_ERR                         0xff
 //more types may be added
 
-#define PAC_VERSION 1
-#define DISCOVERY_SEND_PERIOD_SEC 10
+#define PAC_VERSION (1)
+#define DISCOVERY_SEND_PERIOD_SEC (10)
 
 #define PAC_DATA_BYTES (1<<10)
-#define PAC_MIN_BYTES 7
-#define PAC_MAX_BYTES sizeof(packet_t)
+#define PAC_MIN_BYTES (7)
+#define PAC_ENCRYPT_OFFSET (36)
+#define PAC_ENCRYPT_LENGTH (PAC_DATA_BYTES + 4)
+#define PAC_MAX_BYTES (sizeof(packet_t))
 //the packet that is sent for everything, device discovery, signature handshakes, file chunks, etc.
 //it's a little big but since the buffer is at the end there is no need to send the whole thing
 typedef struct udp_packet_t{
     uint32_t magic_number;
+    unsigned char id[crypto_sign_PUBLICKEYBYTES];
+    int16_t zero;
     unsigned char pac_type;
     unsigned char pac_version;
-    int16_t zero;
-    unsigned char id[crypto_sign_PUBLICKEYBYTES];
     unsigned char data[PAC_DATA_BYTES];
 }packet_t;
 
@@ -105,6 +108,7 @@ typedef struct SEND_ARGS {
     EFLAG *flag;
     EFLAG *wake;
     SOCKET_LL *sockets;
+    QUEUE *queue;
     unsigned char public_key[crypto_sign_PUBLICKEYBYTES];
 }SEND_ARGS;
 
@@ -130,7 +134,7 @@ int register_single_receiver(SOCKET sock, RECV_INFO **info, mempool_t* mempool);
 int register_multiple_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, mempool_t* mempool, EFLAG *flag);
 
 int send_packet(int port, uint32_t addr, SOCKET socket, const packet_t* packet, EFLAG *flag);
-
+int send_file_packet(active_file_t *file, unsigned char *pk, unsigned char tk[], EFLAG *flag);
 
 /////////////////////////////////////////////////////////////
 ///                                                       ///
@@ -160,8 +164,8 @@ void free_recv_array(const RECV_ARRAY *info, mempool_t* mempool);
 ///                                                    ///
 //////////////////////////////////////////////////////////
 
-int *send_discovery_thread(SEND_ARGS *args);
-int *recv_discovery_thread(RECV_ARGS *args);
+int *send_thread(SEND_ARGS *args);
+int *recv_thread(RECV_ARGS *args);
 
 
 #endif //NET_IO_H

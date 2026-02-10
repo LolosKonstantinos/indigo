@@ -10,7 +10,7 @@
 #include <crypto_utils.h>
 #include <Queue.h>
 #include "indigo_types.h"
-#include "hash_table.h"
+#include <binary_tree.h>
 
 #define EXPIRATION_TIME 15
 
@@ -18,32 +18,28 @@
 typedef struct xsr_t {
     time_t expiration_time;
     unsigned char nonce[INDIGO_NONCE_SIZE];
+    unsigned char id[crypto_sign_PUBLICKEYBYTES];
 }xsr_t;
 
-typedef struct xsr_key_t {
-    unsigned char id[crypto_sign_PUBLICKEYBYTES];
-}xsr_key_t;
 
 //eXpected File Packet
 typedef struct xfp_t {
+    session_id_t session_id;
     time_t expiration_time;
-    uint64_t range[2];//describes the range of serial numbers we expect
+    uint64_t packet_number;//the expected amount of packets
     FILE *file;
-    session_t *session;
+    unsigned char *receive_key;
 }xfp_t;
 
-typedef struct xfp_key_t {
-    uint64_t session_id;
-    unsigned char id[crypto_sign_PUBLICKEYBYTES];
-}xfp_key_t;
 
 typedef struct PACKET_HANDLER_ARGS {
     EFLAG *flag;
     EFLAG *wake;
     QUEUE *queue;
     QUEUE *cli_queue;
-    hash_table_t *device_table;
-    rdev_ll_t *device_ll;
+    QUEUE *send_queue;
+    tree_t *device_tree;
+    tree_t *session_tree;
     mempool_t *mempool;
     SIGNING_KEY_PAIR *signing_keys;
 }PACKET_HANDLER_ARGS;
@@ -56,5 +52,6 @@ typedef struct PACKET_HANDLER_ARGS {
 
 int *packet_handler_thread(PACKET_HANDLER_ARGS *args);
 
-rdev_node_t *new_rdev_node();
+int cmp_xsr(void *s1, void *s2);
+int cmp_xfp(void *s1, void *s2);
 #endif //PACKET_HANDLER_H

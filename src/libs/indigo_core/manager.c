@@ -5,8 +5,6 @@
 #include <indigo_core/manager.h>
 #include <crypto_utils.h>
 #include <indigo_errors.h>
-#include <indigo_types.h>
-#include <hash_table.h>
 
 //////////////////////////////////////////////////////////
 ///                                                    ///
@@ -29,13 +27,14 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     EFLAG *override_flags[3];
 
     QUEUE *packet_queue = NULL;
+    QUEUE *send_queue = NULL;
 
     //the pool used for receiving
     mempool_t *mempool = NULL;
     mempool_attr pool_attr;
 
-    //the remote device table
-    hash_table_t *device_table = NULL;
+    //the active session tree
+    tree_t session_tree; //todo: write cmp_session function and create the tree
 
     //the thread args
     SEND_ARGS *send_args = NULL;
@@ -93,16 +92,27 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     //create the packet queue
     packet_queue = (QUEUE *)malloc(sizeof(QUEUE));
     if (packet_queue == NULL) {
-        fprintf(stderr, "Failed to allocate memory for queue_receiving\n");
+        fprintf(stderr, "Failed to allocate memory for packet_queue\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
     if (init_queue(packet_queue)) {
         fprintf(stderr, "init_queue failed\n");
+        *process_return = INDIGO_ERROR_SYS_FAIL;
+        goto cleanup;
+    }
+    //create the send queue
+    send_queue = (QUEUE *)malloc(sizeof(QUEUE));
+    if (send_queue == NULL) {
+        fprintf(stderr, "Failed to allocate memory for send_queue\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
-
+    if (init_queue(send_queue)) {
+        fprintf(stderr, "init_queue failed\n");
+        *process_return = INDIGO_ERROR_SYS_FAIL;
+        goto cleanup;
+    }
     //create the memory pool
     pool_attr.dynamic_pool = 1;
     pool_attr.growth_factor = 1;
@@ -110,14 +120,6 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     mempool = new_mempool(1<<10, sizeof(packet_t) + sizeof(packet_info_t), &pool_attr);
     if (!mempool) {
         fprintf(stderr, "Failed to create mempool\n");
-        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-
-    //create the device table
-    device_table = new_hash_table(sizeof(remote_device_t), crypto_sign_PUBLICKEYBYTES,1<<4);
-    if (!device_table) {
-        fprintf(stderr, "Failed to create device hash table\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
@@ -143,8 +145,8 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     memcpy(public_key, signing_key_pair->public, crypto_sign_PUBLICKEYBYTES);
 
     //create threads
-    if (create_packet_handler_thread(&handler_args, args->flag, packet_queue, mempool, device_table, args->device_ll,
-        args->master_key, &tid_handler)) {
+    if (create_packet_handler_thread(&handler_args, args->flag, packet_queue, send_queue, mempool, args->device_tree,
+                                     args->master_key, &tid_handler)) {
         fprintf(stderr, "create_packet_handler_thread failed\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
@@ -156,8 +158,9 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
         goto cleanup;
     }
 
-    if (create_discovery_sending_thread(&send_args, args->port, args->multicast_addr, sockets, args->flag, &tid_send, public_key)) {
-        fprintf(stderr, "create_discovery_sending_thread failed\n");
+    if (create_sending_thread(&send_args, args->port, args->multicast_addr, sockets, args->flag, send_queue,
+        public_key, &tid_send)) {
+        fprintf(stderr, "create_sending_thread failed\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
@@ -276,10 +279,13 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     free_discv_sock_ll(sockets->head);
 
     destroy_queue(packet_queue);
+    free(packet_queue);
+
+    destroy_queue(send_queue);
+    free(send_queue);
 
     free_mempool(mempool);
 
-    free(packet_queue);
 
     free_event_flag(args->flag);
     free(args);
@@ -291,6 +297,11 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
 
     return process_return;
 
+    /////////////////////////////////////////////////////
+    ///                                               ///
+    ///                  __CLEANUP__                  ///
+    ///                                               ///
+    /////////////////////////////////////////////////////
     cleanup:
     //signal termination to all threads
     if (recv_args != NULL) {
@@ -319,34 +330,45 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     //free the args of the threads
     //send
     if (pthread_equal(tid_send, pthread_self()) == 0) {
-        free(send_args->flag);
+        if (send_args)
+            free(send_args->flag);
         free(send_args);
     }
     //receive
     if (pthread_equal(tid_receive, pthread_self()) == 0) {
-        WSACloseEvent(recv_args->termination_handle);
-        WSACloseEvent(recv_args->wake_handle);
-        free_event_flag(recv_args->flag);
-        free(recv_args);
+        if (recv_args){
+            WSACloseEvent(recv_args->termination_handle);
+            WSACloseEvent(recv_args->wake_handle);
+            free_event_flag(recv_args->flag);
+            free(recv_args);
+        }
     }
     //updater
     if (pthread_equal(tid_update, pthread_self()) == 0) {
-        WSACloseEvent(update_args->termination_handle);
-        free_event_flag(update_args->flag);
-        free(update_args);
+        if (update_args) {
+            WSACloseEvent(update_args->termination_handle);
+            free_event_flag(update_args->flag);
+            free(update_args);
+        }
     }
     //packet handler
     if (pthread_equal(tid_handler, pthread_self()) == 0) {
-        free_event_flag(handler_args->flag);
+        if (handler_args)
+            free_event_flag(handler_args->flag);
         free(handler_args);
     }
 
-    pthread_mutex_destroy(&sockets->mutex);
-    pthread_cond_destroy(&sockets->cond);
-    free_discv_sock_ll(sockets->head);
+    if (sockets) {
+        pthread_mutex_destroy(&sockets->mutex);
+        pthread_cond_destroy(&sockets->cond);
+        free_discv_sock_ll(sockets->head);
+    }
 
     destroy_queue(packet_queue);
     free(packet_queue);
+
+    destroy_queue(send_queue);
+    free(send_queue);
 
     free(mempool);
 
@@ -385,7 +407,7 @@ int cancel_device_discovery(pthread_t tid, EFLAG *flag) {
     return val;
 }
 
-int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint32_t multicast_address, rdev_ll_t* device_ll, pthread_t *tid){
+int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint32_t multicast_address, tree_t *dev_tree, pthread_t *tid){
     pthread_t thread;
 
     MANAGER_ARGS *manager_args = malloc(sizeof(MANAGER_ARGS));
@@ -397,7 +419,7 @@ int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint
 
     EFLAG *flag = create_event_flag();
     if (flag == NULL) {
-        fprintf(stderr,"create_event_flag() failed in create_discovery_sending_thread\n");
+        fprintf(stderr,"create_event_flag() failed in create_sending_thread\n");
         free(manager_args);
         return 1;
     }
@@ -405,7 +427,7 @@ int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint
     manager_args->flag = flag;
     manager_args->port = port;
     manager_args->multicast_addr = multicast_address;
-    manager_args->device_ll = device_ll;
+    manager_args->device_tree = dev_tree;
 
     if (pthread_create(&thread, NULL, (void *)(&thread_manager_thread), manager_args)) {
         free_event_flag(flag);
@@ -418,13 +440,13 @@ int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint
     return 0;
 }
 
-int create_discovery_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, SOCKET_LL *sockets, EFLAG *wake_mngr, pthread_t *tid, unsigned
-                                    char public_key[crypto_sign_PUBLICKEYBYTES]){
+int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, SOCKET_LL *sockets, EFLAG *wake_mngr, QUEUE* queue, unsigned
+                          char public_key[crypto_sign_PUBLICKEYBYTES], pthread_t *tid){
     pthread_t thread;
 
     SEND_ARGS *send_args = malloc(sizeof(SEND_ARGS));
     if (send_args == NULL) {
-        fprintf(stderr, "malloc() failed in create_discovery_sending_thread\n");
+        fprintf(stderr, "malloc() failed in create_sending_thread\n");
         return 1;
     }
     *args = send_args;
@@ -432,7 +454,7 @@ int create_discovery_sending_thread(SEND_ARGS **args, int port, uint32_t multica
 
     EFLAG *flag = create_event_flag();
     if (flag == NULL) {
-        fprintf(stderr,"create_event_flag() failed in create_discovery_sending_thread\n");
+        fprintf(stderr,"create_event_flag() failed in create_sending_thread\n");
         free(send_args);
         return 1;
     }
@@ -442,9 +464,10 @@ int create_discovery_sending_thread(SEND_ARGS **args, int port, uint32_t multica
     send_args->sockets = sockets;
     send_args->wake = wake_mngr;
     send_args->flag = flag;
+    send_args->queue = queue;
     memcpy(send_args->public_key, public_key, crypto_sign_PUBLICKEYBYTES);
 
-    if (pthread_create(&thread, NULL, (void *)(&send_discovery_thread), send_args)) {
+    if (pthread_create(&thread, NULL, (void *)(&send_thread), send_args)) {
         free_event_flag(flag);
         free(send_args);
         return 1;
@@ -462,7 +485,7 @@ int create_receiving_thread(
 
     RECV_ARGS *recv_args = malloc(sizeof(RECV_ARGS));
     if (recv_args == NULL) {
-        fprintf(stderr, "malloc() failed in create_discovery_sending_thread\n");
+        fprintf(stderr, "malloc() failed in create_sending_thread\n");
         return 1;
     }
     *args = recv_args;
@@ -470,7 +493,7 @@ int create_receiving_thread(
 
     EFLAG *flag = create_event_flag();
     if (flag == NULL) {
-        fprintf(stderr,"create_event_flag() failed in create_discovery_sending_thread\n");
+        fprintf(stderr,"create_event_flag() failed in create_sending_thread\n");
         free(recv_args);
         return 1;
     }
@@ -478,7 +501,7 @@ int create_receiving_thread(
 
     recv_args->wake_handle = WSACreateEvent();
     if (recv_args->wake_handle == NULL) {
-        fprintf(stderr, "WSACreateEvent() failed in create_discovery_sending_thread\n");
+        fprintf(stderr, "WSACreateEvent() failed in create_sending_thread\n");
         free_event_flag(flag);
         free(recv_args);
         return 1;
@@ -498,7 +521,7 @@ int create_receiving_thread(
     recv_args->wake = wake_mngr;
     recv_args->flag = flag;
 
-    if (pthread_create(&thread, NULL, (void *)(&recv_discovery_thread), recv_args)) {
+    if (pthread_create(&thread, NULL, (void *)(&recv_thread), recv_args)) {
         free_event_flag(flag);
         free(recv_args);
         return 1;
@@ -552,8 +575,7 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
 }
 
 int create_packet_handler_thread(
-    PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, mempool_t* mempool, hash_table_t* device_table, rdev_ll_t
-    * device_ll, const void*
+    PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, QUEUE* send_queue, mempool_t* mempool, tree_t* device_tree, const void*
     const master_key, pthread_t *tid){
 
     pthread_t thread;
@@ -585,11 +607,11 @@ int create_packet_handler_thread(
     }
 
     handler_args->queue = queue;
+    handler_args->send_queue = send_queue;
     handler_args->mempool = mempool;
     handler_args->wake = wake_mngr;
     handler_args->flag = flag;
-    handler_args->device_table = device_table;
-    handler_args->device_ll = device_ll;
+    handler_args->device_tree = device_tree;
 
     if (pthread_create(&thread, NULL, (void *)(&packet_handler_thread), handler_args)) {
         free_event_flag(flag);

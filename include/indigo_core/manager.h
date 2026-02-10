@@ -10,8 +10,7 @@
 #include <indigo_core/packet_handler.h>
 #include <event_flags.h>
 #include <Queue.h>
-
-#include "indigo_types.h"
+#include <binary_tree.h>
 
 typedef struct MANAGER_ARGS {
     int port;
@@ -19,7 +18,7 @@ typedef struct MANAGER_ARGS {
     EFLAG *flag;
     void *master_key;
     QUEUE *queue;
-    rdev_ll_t *device_ll;
+    tree_t *device_tree;
 }MANAGER_ARGS;
 
 //////////////////////////////////////////////////////////
@@ -41,10 +40,16 @@ int *thread_manager_thread(MANAGER_ARGS *args);
 
 int cancel_device_discovery(pthread_t tid, EFLAG *flag);
 
-int create_thread_manager_thread(MANAGER_ARGS **args, int port, uint32_t multicast_address, rdev_ll_t* device_ll, pthread_t *tid);
-int create_discovery_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, SOCKET_LL *sockets, EFLAG *wake_mngr, pthread_t *tid, unsigned char public_key[crypto_sign_PUBLICKEYBYTES] );
+int create_thread_manager_thread(MANAGER_ARGS **args, int port, uint32_t multicast_address, tree_t* dev_tree, pthread_t *tid);
+
+int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, SOCKET_LL *sockets,
+                          EFLAG *wake_mngr, QUEUE* queue, unsigned char public_key[crypto_sign_PUBLICKEYBYTES], pthread_t *tid);
+
 int create_receiving_thread(RECV_ARGS **args, SOCKET_LL *sockets, QUEUE *queue, mempool_t* mempool, EFLAG *wake_mngr, pthread_t *tid);
-int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint32_t multicast_address, EFLAG *wake_mngr, EFLAG* override_flags[], SOCKET_LL *sockets, pthread_t *tid);
-int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, mempool_t* mempool, hash_table_t* device_table, rdev_ll_t*
-                                 device_ll, const void *master_key, pthread_t *tid);
+
+int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint32_t multicast_address, EFLAG *wake_mngr,
+    EFLAG* override_flags[], SOCKET_LL *sockets, pthread_t *tid);
+
+int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, QUEUE* send_queue,
+                                 mempool_t* mempool, tree_t* device_tree, const void *master_key, pthread_t *tid);
 #endif //THREAD_MANAGEMENT_H
