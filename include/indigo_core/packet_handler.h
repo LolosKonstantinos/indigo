@@ -28,7 +28,6 @@ typedef struct xfp_t {
     time_t expiration_time;
     uint64_t packet_number;//the expected amount of packets
     FILE *file;
-    unsigned char *receive_key;
 }xfp_t;
 
 
@@ -41,7 +40,8 @@ typedef struct PACKET_HANDLER_ARGS {
     tree_t *device_tree;
     tree_t *session_tree;
     mempool_t *mempool;
-    SIGNING_KEY_PAIR *signing_keys;
+    signing_key_pair_t *signing_keys;
+    socket_ll *sockets;
 }PACKET_HANDLER_ARGS;
 
 //////////////////////////////////////////////////////////
@@ -54,4 +54,19 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args);
 
 int cmp_xsr(void *s1, void *s2);
 int cmp_xfp(void *s1, void *s2);
+
+int create_server_session(Q_FILE_SENDING_REQUEST *fwd
+                          , tree_t *dev_tree
+                          , tree_t *session_tree
+                          , tree_t *xfp_tree
+                          , unsigned char pk[crypto_sign_PUBLICKEYBYTES]
+                          , socket_ll* sockets, EFLAG *flag);
+
+int create_client_session(const packet_t *packet
+                          , const packet_info_t *packet_info
+                          , tree_t *dev_tree
+                          , tree_t *session_tree
+                          , tree_t *xfp_tree
+                          , QUEUE *send_queue
+                          , QUEUE *cli_queue);
 #endif //PACKET_HANDLER_H

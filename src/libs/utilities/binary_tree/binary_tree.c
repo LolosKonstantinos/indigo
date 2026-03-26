@@ -25,6 +25,7 @@ struct tree_priv_t {
     tree_node_t *root;
     size_t data_size;
     cmp_f cmp;          // the function based on which we do struct comparison
+    usr_free_f node_free; //user defined free, to free node data. Can be null if free() is ok.
     uint32_t height;
     unsigned char zero[4];
 };

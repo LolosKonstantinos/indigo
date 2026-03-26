@@ -86,7 +86,7 @@ int derive_master_key(const char* psw, const uint64_t psw_len, void** master_key
     return -1;
 }
 
-int create_psw_salt(char overwrite) {
+int create_psw_salt(const char overwrite) {
     void *salt;
     char *file_name;
     FILE *fp_salt;
@@ -318,7 +318,7 @@ int load_key_derivation_settings(PSW_HASH_SETTINGS *settings) {
     if (settings->mem_cost < 13) {return INDIGO_ERROR_INCOMPATIBLE_FILE;}
     if (settings->mem_cost > 30) {return INDIGO_ERROR_INCOMPATIBLE_FILE;}
     if (settings->time_cost < crypto_pwhash_OPSLIMIT_MIN) {return INDIGO_ERROR_INCOMPATIBLE_FILE;}
-    if (settings->time_cost > crypto_pwhash_OPSLIMIT_MAX) {return INDIGO_ERROR_INCOMPATIBLE_FILE;}
+    //if (settings->time_cost > crypto_pwhash_OPSLIMIT_MAX) {return INDIGO_ERROR_INCOMPATIBLE_FILE;}
     return 0;
 }
 
@@ -483,7 +483,7 @@ int password_hash_exists() {
 }
 
 int create_signing_key_pair(void* master_key) {
-    SIGNING_KEY_PAIR key_pair;
+    signing_key_pair_t key_pair;
     unsigned char *cipher;
     unsigned char *nonce;
     char *file_name;
@@ -492,7 +492,7 @@ int create_signing_key_pair(void* master_key) {
 
     if (master_key == NULL) return 575;
 
-    cipher = (unsigned char *)malloc(crypto_secretbox_MACBYTES + sizeof(SIGNING_KEY_PAIR));
+    cipher = (unsigned char *)malloc(crypto_secretbox_MACBYTES + sizeof(signing_key_pair_t));
     if (cipher == NULL) return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
 
     nonce = (unsigned char *)malloc(crypto_secretbox_NONCEBYTES);
@@ -508,7 +508,7 @@ int create_signing_key_pair(void* master_key) {
         return INDIGO_ERROR_SODIUM_ERROR;
     }
 
-    ret = crypto_secretbox_easy(cipher, (unsigned char *)(&key_pair),sizeof(SIGNING_KEY_PAIR),nonce,master_key);
+    ret = crypto_secretbox_easy(cipher, (unsigned char *)(&key_pair),sizeof(signing_key_pair_t),nonce,master_key);
 
     if (ret != 0) {
         free(cipher);
@@ -534,7 +534,7 @@ int create_signing_key_pair(void* master_key) {
     }
 
     fwrite(nonce, 1, crypto_secretbox_NONCEBYTES, fp);
-    fwrite(cipher, 1, crypto_secretbox_MACBYTES + sizeof(SIGNING_KEY_PAIR), fp);
+    fwrite(cipher, 1, crypto_secretbox_MACBYTES + sizeof(signing_key_pair_t), fp);
 
     fclose(fp);
     free(file_name);
@@ -543,7 +543,7 @@ int create_signing_key_pair(void* master_key) {
     return INDIGO_SUCCESS;
 }
 
-int load_signing_key_pair(SIGNING_KEY_PAIR *key_pair,const unsigned char* master_key) {
+int load_signing_key_pair(signing_key_pair_t *key_pair,const unsigned char* master_key) {
     FILE *fp;
     char *file_name = NULL;
     uint32_t file_len = 0;
@@ -567,12 +567,12 @@ int load_signing_key_pair(SIGNING_KEY_PAIR *key_pair,const unsigned char* master
     file_len = ftell(fp);
     fseek(fp, 0, SEEK_SET);
 
-    if (file_len != crypto_secretbox_KEYBYTES + sizeof(SIGNING_KEY_PAIR) + crypto_secretbox_NONCEBYTES) {
+    if (file_len != crypto_secretbox_KEYBYTES + sizeof(signing_key_pair_t) + crypto_secretbox_NONCEBYTES) {
         fclose(fp);
         return INDIGO_ERROR_INCOMPATIBLE_FILE;
     }
 
-    cipher = (unsigned char *)malloc(crypto_secretbox_KEYBYTES + sizeof(SIGNING_KEY_PAIR));
+    cipher = (unsigned char *)malloc(crypto_secretbox_KEYBYTES + sizeof(signing_key_pair_t));
     if (cipher == NULL) {
         fclose(fp);
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
@@ -585,11 +585,11 @@ int load_signing_key_pair(SIGNING_KEY_PAIR *key_pair,const unsigned char* master
     }
 
     fread(nonce, 1, crypto_secretbox_NONCEBYTES, fp);
-    fread(cipher, 1, crypto_secretbox_KEYBYTES + sizeof(SIGNING_KEY_PAIR), fp);
+    fread(cipher, 1, crypto_secretbox_KEYBYTES + sizeof(signing_key_pair_t), fp);
 
     ret =  crypto_secretbox_open_easy((unsigned char *)key_pair,
         cipher,
-        crypto_secretbox_KEYBYTES + sizeof(SIGNING_KEY_PAIR) ,
+        crypto_secretbox_KEYBYTES + sizeof(signing_key_pair_t) ,
         nonce,
         master_key);
 
@@ -606,7 +606,7 @@ int load_signing_key_pair(SIGNING_KEY_PAIR *key_pair,const unsigned char* master
     return INDIGO_SUCCESS;
 }
 
-int sign_buffer(const SIGNING_KEY_PAIR *key_pair, const unsigned char* buffer, uint64_t buffer_len,
+int sign_buffer(const signing_key_pair_t *key_pair, const unsigned char* buffer, uint64_t buffer_len,
                                                   unsigned char *signed_buffer, uint64_t *signed_len) {
     return crypto_sign(signed_buffer, signed_len,buffer, buffer_len, key_pair->secret);
 }
@@ -620,4 +620,87 @@ int signing_key_pair_exists() {
         return 0;
     }
     return 1;
+}
+
+
+int encrypt_packet(packet_t *packet
+    , unsigned char tk[crypto_kx_SESSIONKEYBYTES]
+    , const unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES]) {
+
+    int ret;
+    unsigned char ciphertext[PAC_ENCRYPT_BYTES + crypto_aead_xchacha20poly1305_ietf_ABYTES] = {0};
+
+    if (!packet || !tk) {
+        return INDIGO_ERROR_INVALID_PARAM;
+    }
+
+    if (!nonce) {
+        randombytes_buf(packet->nonce,crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
+    }
+    else{
+        memcpy(packet->nonce, nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
+    }
+
+    packet->zero = 0;
+
+    ret = crypto_aead_xchacha20poly1305_ietf_encrypt(ciphertext
+                                                     ,NULL
+                                                     ,(unsigned char *)&(packet->zero)
+                                                     ,PAC_ENCRYPT_BYTES
+                                                     ,(unsigned char *)packet
+                                                     ,PAC_ENCRYPT_OFFSET
+                                                     ,NULL
+                                                     ,packet->nonce
+                                                     ,tk
+                                                     );
+    if (ret != 0) {
+        return INDIGO_ERROR_INVALID_PARAM;
+    }
+    sodium_memzero(&(packet->zero), PAC_ENCRYPT_BYTES);
+    memcpy(&(packet->zero), ciphertext, PAC_ENCRYPT_BYTES+crypto_aead_xchacha20poly1305_ietf_ABYTES);
+
+    return INDIGO_SUCCESS;
+}
+
+int decrypt_packet(packet_t *packet,unsigned char rk[crypto_kx_SESSIONKEYBYTES]) {
+    int ret;
+    unsigned long long decrypted_len;
+    if (!packet || !rk) {
+        return INDIGO_ERROR_INVALID_PARAM;
+    }
+
+    ret = crypto_aead_xchacha20poly1305_ietf_decrypt((unsigned char *)&(packet->zero)
+                                                    ,&decrypted_len
+                                                    ,NULL
+                                                    ,(unsigned char *)&(packet->zero)
+                                                    ,PAC_ENCRYPT_BYTES + crypto_aead_xchacha20poly1305_ietf_ABYTES
+                                                    ,(unsigned char *)packet
+                                                    ,PAC_ENCRYPT_OFFSET
+                                                    ,packet->nonce
+                                                    ,rk
+                                                     );
+
+    if (ret == 0) {
+        sodium_memzero(((unsigned char *)&(packet->zero)) + decrypted_len, PAC_ENCRYPT_BYTES + crypto_aead_xchacha20poly1305_ietf_ABYTES - decrypted_len);
+        return INDIGO_SUCCESS;
+    }
+    if (ret == -1) return INDIGO_ERROR_INVALID_PACKET;
+    return INDIGO_ERROR;
+}
+
+int nonce_increment(unsigned char *nonce, size_t nonce_len, uint64_t increment) {
+    unsigned char *incr_bytes;
+
+    incr_bytes = calloc(1,nonce_len);
+    if (!incr_bytes) {
+        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+    }
+
+    for (int i = 0; i < 8; i++) {
+        incr_bytes[i] = (increment >> (i<<3)) & 0xFF;
+    }
+
+    sodium_add(nonce, incr_bytes, nonce_len);
+    free(incr_bytes);
+    return INDIGO_SUCCESS;
 }

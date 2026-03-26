@@ -8,16 +8,20 @@
 #include <pthread.h>
 #include <stdint.h>
 
-#define EF_ERROR                    0x00000001
-#define EF_INTERFACE_UPDATE         0x00000002
-#define EF_SEND_MULTIPLE_PACKETS    0x00000004
-#define EF_NEW_PACKET               0x00000008
-#define EF_TERMINATION              0x00000010
-#define EF_OVERRIDE_IO              0x00000020
-#define EF_WAKE_MANAGER             0x00000040
-#define EF_SIGNATURE_REQUEST        0x00000080
-#define EF_SIGNATURE_RESPONSE       0x00000100
-#define EF_SEND_NEW_FILE            0x00000200
+#define EF_ERROR                         0x00000001
+#define EF_INTERFACE_UPDATE              0x00000002
+#define EF_SEND_MULTIPLE_PACKETS         0x00000004
+#define EF_NEW_PACKET                    0x00000008
+#define EF_TERMINATION                   0x00000010
+#define EF_OVERRIDE_IO                   0x00000020
+#define EF_WAKE_MANAGER                  0x00000040
+#define EF_SIGNATURE_REQUEST             0x00000080
+#define EF_SIGNATURE_RESPONSE            0x00000100
+#define EF_SEND_NEW_FILE                 0x00000200
+#define EF_RESEND_FILE_CHUNK             0x00000400
+#define EF_STOP_FILE_TRANSMISSION        0x00000800
+#define EF_PAUSE_FILE_TRANSMISSION       0x00001000
+#define EF_CONTINUE_FILE_TRANSMISSION    0x00002000
 
 typedef struct EVENT_FLAG {
     volatile uint32_t event_flag;

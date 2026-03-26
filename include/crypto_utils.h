@@ -10,13 +10,15 @@
 #include <stdint.h>
 #include <sodium.h>
 
+#include "indigo_types.h"
+//todo use sodium one time authentication with the master key on important config files
 //todo move these in indigo_errors
 #define INDIGO_FILE_NOT_FOUND 0x02
 #define INDIGO_FILE_NOT_AUTHORIZED 0x03
 
 #define INDIGO_PSW_HASH_TIMELIMIT_UPPER 5
 #define INDIGO_PSW_HASH_TIMELIMIT_LOWER 3
-#define INDIGO_NONCE_SIZE 16
+#define INDIGO_NONCE_SIZE 32
 
 #define INDIGO_CRYPTO_DIR               "config/crypto/"
 #define INDIGO_PSW_DIR                  "config/crypto/psw/"
@@ -27,11 +29,21 @@
 
 typedef struct PSW_HASH_SETTINGS PSW_HASH_SETTINGS;
 
-struct SIGNING_KEY_PAIR {
+struct signing_key_pair_t {
     unsigned char public[crypto_sign_PUBLICKEYBYTES];
     unsigned char secret[crypto_sign_SECRETKEYBYTES];
 };
-typedef struct SIGNING_KEY_PAIR SIGNING_KEY_PAIR;
+typedef struct signing_key_pair_t signing_key_pair_t;
+
+typedef struct auth_key_pair_t {
+    unsigned char public[crypto_box_PUBLICKEYBYTES];
+    unsigned char secret[crypto_box_SECRETKEYBYTES];
+}auth_key_pair_t;
+
+typedef struct session_key_pair_t {
+    unsigned char public[crypto_box_PUBLICKEYBYTES];
+    unsigned char secret[crypto_box_SECRETKEYBYTES];
+}session_key_pair_t;
 
 /*derive a symmetric key based on the user password*/
 int derive_master_key(const char* psw, uint64_t psw_len, void** master_key);
@@ -51,10 +63,17 @@ int cmp_password_hash(const char* psw, uint64_t psw_len);
 int password_hash_exists();
 
 int create_signing_key_pair(void *master_key);
-int load_signing_key_pair(SIGNING_KEY_PAIR *key_pair,const unsigned char* master_key);
-int sign_buffer(const SIGNING_KEY_PAIR *key_pair, const unsigned char* buffer, uint64_t buffer_len,
+int load_signing_key_pair(signing_key_pair_t *key_pair,const unsigned char* master_key);
+int sign_buffer(const signing_key_pair_t *key_pair, const unsigned char* buffer, uint64_t buffer_len,
                                                   unsigned char *signed_buffer, uint64_t *signed_len);
 int signing_key_pair_exists();
 int delete_signing_key_pair();
 
+
+int encrypt_packet(packet_t *packet
+                   ,unsigned char tk[crypto_kx_SESSIONKEYBYTES]
+                   , const unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES]
+                   );
+int decrypt_packet(packet_t *packet,unsigned char rk[crypto_kx_SESSIONKEYBYTES]);
+int nonce_increment(unsigned char *nonce, size_t nonce_len, uint64_t increment);
 #endif //CRYPTO_UTILS_H

@@ -5,8 +5,14 @@
 #include <stdio.h>
 #include <indigo_errors.h>
 #include <sodium/crypto_aead_xchacha20poly1305.h>
+#include <sodium/randombytes.h>
+#include <sodium/utils.h>
 
-#include "indigo_types.h"
+
+#include "buffer.h"
+#include "crypto_utils.h"
+#include "indigo_core.h"
+#include <indigo_types.h>
 
 //////////////////////////////////////////////////////
 ///                                                ///
@@ -20,11 +26,13 @@
 int send_discovery_packets(
     const int port,
     const uint32_t multicast_addr,
-    SOCKET_LL *sockets,
+    socket_ll *sockets,
     EFLAG *flag,
     const uint32_t pCount,
-    const int32_t msec, const unsigned char id[crypto_sign_PUBLICKEYBYTES]
-) {
+    const int32_t msec,
+    signing_key_pair_t * sign_key_pair,
+    wchar_t username[MAX_USERNAME_LEN]) {
+    uint8_t restart = 0;
     //temporary variables for memory allocation
     SEND_INFO temp_info = {0};
     SEND_INFO *sInfo = NULL;
@@ -40,15 +48,20 @@ int send_discovery_packets(
     const int32_t temp_math = msec % 1000;
 
     struct timespec ts;
+    time_t curr_time;
 
     packet_t packet;
+    init_packet_data_t packet_data;
     int routine_ret = 0;
 
-    build_packet(&packet, MSG_INIT_PACKET, id, 0);
+    build_packet(&packet, MSG_INIT_PACKET, sign_key_pair->public, NULL, NULL);
+    wcsncpy(packet_data.username, username, MAX_USERNAME_LEN);
+
 
     while (1) {
+        restart = 0;
         pthread_mutex_lock(&sockets->mutex);
-        for (SOCKET_NODE *sock = sockets->head; sock != NULL; sock = sock->next){
+        for (socket_node *sock = sockets->head; sock != NULL; sock = sock->next){
             //for every socket we send we allocate the fields of SEND_INFO (they can't be in the stack)
             temp = calloc(1,sizeof(struct sockaddr_in));
             if (temp == NULL) {
@@ -127,16 +140,26 @@ int send_discovery_packets(
             flag_val = get_event_flag(flag);
             if (flag_val & EF_OVERRIDE_IO) {
                 //since there is OVERRIDE_IO the sockets we got are not valid (they are being currently updated)
-                //free the allocated resources and exit
+                //free the allocated resources and exit the loop
                 free_send_info(&temp_info);
                 for (size_t i = 0; i < infolen; i++) {
                     free_send_info(&sInfo[i]);
                 }
                 free(handles);
                 wait_on_flag_condition(flag, EF_OVERRIDE_IO, OFF);
+                restart = 1;
                 break;
             }
             if (flag_val & EF_TERMINATION) goto cleanup;
+
+            curr_time = time(NULL);
+            //todo this is wrong because we sign the whole data and not just the timestamp
+            crypto_sign(packet_data.signed_time
+                              ,NULL
+                              ,(unsigned char *)&curr_time
+                              ,sizeof(time_t)
+                              ,sign_key_pair->secret);
+
 
             ret_val = WSASendTo(sock->sock,
                 sInfo[infolen - 1].buf,
@@ -159,14 +182,7 @@ int send_discovery_packets(
         }
         pthread_mutex_unlock(&sockets->mutex);
 
-        if (flag_val & EF_OVERRIDE_IO) {
-            free_send_info(&temp_info);
-            for (size_t i = 0; i < infolen; i++) {
-                free_send_info(&sInfo[i]);
-            }
-            wait_on_flag_condition(flag, EF_OVERRIDE_IO, OFF);
-            continue;
-        }
+        if (restart) continue;
 
         clock_gettime(CLOCK_REALTIME, &ts);
         ts.tv_sec += (msec - temp_math)/1000;
@@ -233,6 +249,7 @@ int send_discovery_packets(
         for (size_t i = 0; i < pCount - 1; i++) {
             for (size_t j = 0; j < infolen; j++) {
                 WSAResetEvent(handles[j]);
+
                 ret_val = WSASendTo(sInfo[j].socket,
                 sInfo->buf,
                 1,
@@ -348,7 +365,7 @@ int register_single_receiver(SOCKET sock, RECV_INFO **info, mempool_t* mempool) 
         return -1;
     }
 
-    //if we are not provided am allocated RECV_INFO (most likely on first use)
+    //if we are not provided an allocated RECV_INFO (most likely on first use)
     if (*info == NULL) {
 
         if (allocate_recv_info(&temp_info, mempool)) {
@@ -380,7 +397,8 @@ int register_single_receiver(SOCKET sock, RECV_INFO **info, mempool_t* mempool) 
         }
         *info = temp_info;
     }
-    else {//if we are provided am allocated RECV_INFO (most likely from previous use)
+    else {
+        //if we are provided an allocated RECV_INFO (most likely from previous use)
         recv_ret = WSARecvFrom(sock,
             (*info)->buf,
             1,
@@ -402,7 +420,7 @@ int register_single_receiver(SOCKET sock, RECV_INFO **info, mempool_t* mempool) 
     return 0;
 }
 
-int register_multiple_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, mempool_t* mempool, EFLAG *flag) {
+int register_multiple_receivers(socket_ll *sockets, RECV_ARRAY *info, mempool_t* mempool, EFLAG *flag) {
     void *temp = NULL;
     RECV_INFO *tempinf = NULL;
 
@@ -418,7 +436,7 @@ int register_multiple_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, mempool_t*
 
         pthread_mutex_lock(&sockets->mutex);
         //for every socket available
-        for (SOCKET_NODE *sock = sockets->head; sock != NULL; sock = sock->next) {
+        for (socket_node *sock = sockets->head; sock != NULL; sock = sock->next) {
             temp = realloc(info->array, (info->size + 1) * sizeof(RECV_INFO));
             if (temp == NULL) {
                 fprintf(stderr, "realloc() failed in register_multiple_discovery_receivers()\n");
@@ -483,8 +501,9 @@ int register_multiple_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, mempool_t*
 }
 
 
-int send_packet(int port, uint32_t addr, SOCKET socket, const packet_t* packet, EFLAG *flag) {
+int send_packet(const int port, const uint32_t addr, socket_ll* sockets, const packet_t* const packet, EFLAG *flag) {
     SEND_INFO temp_info;
+    SOCKET sock;
     void *temp;
     int ret_val;
     DWORD wait_ret;
@@ -550,11 +569,14 @@ int send_packet(int port, uint32_t addr, SOCKET socket, const packet_t* packet, 
         if (flag_val & EF_OVERRIDE_IO) {
             free_send_info(&temp_info);
             wait_on_flag_condition(flag, EF_OVERRIDE_IO, OFF);
-            break;
         }
-        if (flag_val & EF_TERMINATION) {goto cleanup;}
+        if (flag_val & EF_TERMINATION) goto cleanup;
 
-        ret_val = WSASendTo(socket,
+        pthread_mutex_lock(&sockets->mutex);
+        sock = ip_to_socket(addr, sockets);
+        pthread_mutex_unlock(&sockets->mutex);
+
+        ret_val = WSASendTo(sock,
             temp_info.buf,
             1,
             temp_info.bytes,
@@ -571,13 +593,6 @@ int send_packet(int port, uint32_t addr, SOCKET socket, const packet_t* packet, 
                 goto cleanup;
             }
         }
-
-        if (flag_val & EF_OVERRIDE_IO) {
-            free_send_info(&temp_info);
-            wait_on_flag_condition(flag, EF_OVERRIDE_IO, OFF);
-            continue;
-        }
-
 
         wait_ret = WaitForSingleObject(temp_info.overlapped->hEvent, 100);
         if (wait_ret == WSA_WAIT_FAILED) {
@@ -613,34 +628,53 @@ int send_packet(int port, uint32_t addr, SOCKET socket, const packet_t* packet, 
     free_send_info(&temp_info);
     return routine_ret;
 }
-int send_file_packet(active_file_t *file, unsigned char *pk, unsigned char tk[crypto_kx_SESSIONKEYBYTES], EFLAG *flag) {
+int send_file_packet(active_file_t *file, const unsigned char *const pk, socket_ll* sockets, EFLAG *flag) {
+    unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
     packet_t packet;
     size_t read_ret;
     int ret;
+
     if (!file) {
         fprintf(stderr, "send_file_packet(): wrong parameters\n");
         return INDIGO_ERROR_INVALID_PARAM;
     }
-    if (!(file->active)) {
-        return 1;
+    if (!(file->fd)) {
+        return INDIGO_SUCCESS;
     }
-    build_packet(&packet,MSG_FILE_CHUNK,pk,NULL);
-    read_ret = fread(packet.data, PAC_DATA_BYTES, 1, file->fd);
+    if (file->counter == 0) {
+        randombytes_buf(file->nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
+    }
+    memcpy(nonce,file->nonce,crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
+    ret = nonce_increment(nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES, file->counter);
+    if (ret) {
+        fprintf(stderr, "nonce_increment() failed in send_file_packet()\n");
+        return ret;
+    }
+
+    build_packet(&packet, MSG_FILE_CHUNK,pk, nonce, NULL);
+    read_ret = fread(packet.data, PAC_DATA_BYTES_USABLE, 1, file->fd);
     if (read_ret != 0) {
         ret = feof(file->fd);
         if (ret != 0) {
             fprintf(stderr, "fread() failed in send_file_packet()\n");
             return -1;
         }
-        file->active = 0;
+        fclose(file->fd);
+        file->fd = NULL;
     }
-    
-    ret = send_packet(file->port,file->ip, file->socket,&packet, flag);
+
+    ret = encrypt_packet(&packet, file->tk, nonce);
+    if (ret) {
+        fprintf(stderr,"encrypt_packet() failed in send_file_packet()\n");
+        return ret;
+    }
+    ret = send_packet(file->port, file->ip, sockets, &packet, flag);
     if (ret != 0) {
         fprintf(stderr, "send_packet() failed in send_file_packet()\n");
         return ret;
     }
-    return 0;
+
+    return INDIGO_SUCCESS;
 }
 
 /////////////////////////////////////////////////////////////
@@ -649,25 +683,39 @@ int send_file_packet(active_file_t *file, unsigned char *pk, unsigned char tk[cr
 ///                                                       ///
 /////////////////////////////////////////////////////////////
 
-void build_packet(packet_t * restrict packet, const unsigned pac_type, const unsigned char id[crypto_sign_PUBLICKEYBYTES], const void * restrict data) {
-    memset(packet, 0, sizeof(packet_t));
-    packet->magic_number = MAGIC_NUMBER;
-    packet->pac_version = PAC_VERSION;
-    packet->pac_type = pac_type;
-    memcpy(packet->id, id, crypto_sign_PUBLICKEYBYTES);
+void build_packet(packet_t * restrict packet, const unsigned pac_type, const unsigned char id[crypto_sign_PUBLICKEYBYTES], const unsigned
+                  char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES], const void * restrict data) {
 
-    if (pac_type == MSG_INIT_PACKET) {
-        //todo: we will use the username
-        if (gethostname((char *)packet->data, PAC_DATA_BYTES) != 0 ) {
-            strcpy((char *)packet->data, "unknown_hostname");
-        }
+    sodium_memzero(packet, sizeof(packet_t));
+
+    switch (pac_type) {
+        case MSG_INIT_PACKET:
+        case MSG_SIGNING_REQUEST:
+        case MSG_SIGNING_RESPONSE:
+        case MSG_ERR:
+            packet->magic_number = MAGIC_NUMBER_1;
+            break;
+        case MSG_FILE_SENDING_REQUEST:
+        case MSG_FILE_SENDING_RESPONSE:
+        case MSG_FILE_CHUNK:
+        case MSG_RESEND:
+        case MSG_STOP_FILE_TRANSMISSION:
+        case MSG_PAUSE_FILE_TRANSMISSION:
+        case MSG_CONTINUE_FILE_TRANSMISSION:
+            packet->magic_number = MAGIC_NUMBER_2;
+            break;
+        default:
+        packet->magic_number = MAGIC_NUMBER_1;
+        break;
     }
-    else{
-        if (!data) {
-            memset(packet->data, 0, PAC_DATA_BYTES);
-        }
-        memcpy(packet->data, data, PAC_DATA_BYTES);
-    }
+
+    memcpy(packet->id, id, crypto_sign_PUBLICKEYBYTES);
+    if (nonce) memcpy(packet->nonce, nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
+    packet->pac_type = pac_type;
+    packet->pac_version = PAC_VERSION;
+
+    if (data) memcpy(packet->data, data, PAC_DATA_BYTES);
+
 }
 
 int create_handle_array_from_send_info(const SEND_INFO *info, const size_t infolen, HANDLE **handles, size_t *hCount) {
@@ -706,11 +754,12 @@ void free_send_info(const SEND_INFO *info) {
 
 int allocate_recv_info(RECV_INFO **info, mempool_t* mempool) {
     void *temp;
+    RECV_INFO *tmp_rcv;
 
     if (info == NULL) return 1;
 
-    *info = (RECV_INFO *)malloc(sizeof(RECV_INFO));
-    if (*info == NULL) {
+    tmp_rcv = (RECV_INFO *)malloc(sizeof(RECV_INFO));
+    if (tmp_rcv == NULL) {
         fprintf(stderr, "malloc() failed in allocate_recv_info()\n");
         *info = NULL;
         return 1;
@@ -720,49 +769,49 @@ int allocate_recv_info(RECV_INFO **info, mempool_t* mempool) {
     if (temp == NULL) {
         fprintf(stderr, "malloc() failed in allocate_recv_info()\n");
 
-        free(*info);
+        free(tmp_rcv);
 
         *info = NULL;
         return 1;
     }
-    (*info)->source = temp;
+    tmp_rcv->source = temp;
 
     temp = malloc(sizeof (int));
     if (temp == NULL) {
         fprintf(stderr, "malloc() failed in allocate_recv_info()\n");
 
-        free((*info)->source);
-        free(*info);
+        free(tmp_rcv->source);
+        free(tmp_rcv);
 
         *info = NULL;
         return 1;
     }
-    (*info)->fromLen = temp;
-    *((*info)->fromLen) = sizeof(struct sockaddr);
+    tmp_rcv->fromLen = temp;
+    *(tmp_rcv->fromLen) = sizeof(struct sockaddr);
 
 
     temp = malloc(sizeof (WSABUF));
     if (temp == NULL) {
         fprintf(stderr, "malloc() failed in allocate_recv_info()\n");
 
-        free((*info)->fromLen);
-        free((*info)->source);
-        free(*info);
+        free(tmp_rcv->fromLen);
+        free(tmp_rcv->source);
+        free(tmp_rcv);
 
         *info = NULL;
         return 1;
     }
-    (*info)->buf = temp;
-    (*info)->buf->buf = NULL;
+    tmp_rcv->buf = temp;
+    tmp_rcv->buf->buf = NULL;
 
     temp = mempool->alloc(mempool);
     if (temp == NULL) {
         fprintf(stderr, "mempool alloc failed in allocate_recv_info()\n");
 
-        free((*info)->buf);
-        free((*info)->fromLen);
-        free((*info)->source);
-        free(*info);
+        free(tmp_rcv->buf);
+        free(tmp_rcv->fromLen);
+        free(tmp_rcv->source);
+        free(tmp_rcv);
 
         *info = NULL;
         return 1;
@@ -775,25 +824,25 @@ int allocate_recv_info(RECV_INFO **info, mempool_t* mempool) {
         fprintf(stderr, "malloc() failed in allocate_recv_info()\n");
 
         mempool->free(mempool,(*info)->buf->buf);
-        free((*info)->buf);
-        free((*info)->fromLen);
-        free((*info)->source);
-        free(*info);
+        free(tmp_rcv->buf);
+        free(tmp_rcv->fromLen);
+        free(tmp_rcv->source);
+        free(tmp_rcv);
 
         *info = NULL;
         return 1;
     }
-    (*info)->overlapped = temp;
-    (*info)->overlapped->hEvent = WSACreateEvent();
-    if ((*info)->overlapped->hEvent == WSA_INVALID_EVENT) {
+    tmp_rcv->overlapped = temp;
+    tmp_rcv->overlapped->hEvent = WSACreateEvent();
+    if (tmp_rcv->overlapped->hEvent == WSA_INVALID_EVENT) {
         fprintf(stderr, "WSACreateEvent failed in allocate_recv_info()\n");
 
-        free((*info)->overlapped);
-        mempool->free(mempool,(*info)->buf->buf);
-        free((*info)->buf);
-        free((*info)->fromLen);
-        free((*info)->source);
-        free(*info);
+        free(tmp_rcv->overlapped);
+        mempool->free(mempool,tmp_rcv->buf->buf);
+        free(tmp_rcv->buf);
+        free(tmp_rcv->fromLen);
+        free(tmp_rcv->source);
+        free(tmp_rcv);
 
         *info = NULL;
         return 1;
@@ -803,38 +852,40 @@ int allocate_recv_info(RECV_INFO **info, mempool_t* mempool) {
     if (temp == NULL) {
         fprintf(stderr, "malloc() failed in allocate_recv_info()\n");
 
-        WSACloseEvent((*info)->overlapped->hEvent);
-        free((*info)->overlapped);
-        mempool->free(mempool,(*info)->buf->buf);
-        free((*info)->buf);
-        free((*info)->fromLen);
-        free((*info)->source);
-        free(*info);
+        WSACloseEvent(tmp_rcv->overlapped->hEvent);
+        free(tmp_rcv->overlapped);
+        mempool->free(mempool,tmp_rcv->buf->buf);
+        free(tmp_rcv->buf);
+        free(tmp_rcv->fromLen);
+        free(tmp_rcv->source);
+        free(tmp_rcv);
 
         *info = NULL;
         return 1;
     }
-    (*info)->flags = temp;
+    tmp_rcv->flags = temp;
 
     temp = malloc(sizeof (DWORD));
     if (temp == NULL) {
         fprintf(stderr, "malloc() failed in allocate_recv_info()\n");
 
-        free((*info)->flags);
+        free(tmp_rcv->flags);
         WSACloseEvent((*info)->overlapped->hEvent);
-        free((*info)->overlapped);
-        mempool->free(mempool,(*info)->buf->buf);
-        free((*info)->buf);
-        free((*info)->fromLen);
-        free((*info)->source);
-        free(*info);
+        free(tmp_rcv->overlapped);
+        mempool->free(mempool,tmp_rcv->buf->buf);
+        free(tmp_rcv->buf);
+        free(tmp_rcv->fromLen);
+        free(tmp_rcv->source);
+        free(tmp_rcv);
 
         *info = NULL;
         return 1;
     }
-    (*info)->bytes_recv = temp;
+    tmp_rcv->bytes_recv = temp;
 
-    (*info)->socket = INVALID_SOCKET;
+    tmp_rcv->socket = INVALID_SOCKET;
+
+    *info = tmp_rcv;
 
     return 0;
 }
@@ -968,16 +1019,18 @@ void free_recv_info(const RECV_INFO *info, mempool_t* mempool) {
 ///                  THREAD_FUNCTIONS                  ///
 ///                                                    ///
 //////////////////////////////////////////////////////////
-//todo: check the queue and send the packets inside
+//todo: implement control signals for the packets (stop, pause, continue, resend)
 int *send_thread(SEND_ARGS *args) {
     uint32_t flag_val;
-    struct timespec ts;
-    int ret;
+    struct timespec deadline_ts;
+    struct timespec current_ts;
     QNODE *node;
-    active_file_t *active_files = NULL;
-    active_file_t *tmp_active_file;
-    char active = 0;
+    active_file_t *active_files = NULL; //todo: use an array of pointers to the nodes, the empty nodes do a linked list of empty nodes,
+    BUF *fid_array;                     //todo for each active file assign a fid (serial number) (the fid is the index of the array)
+    active_file_t *tmp_af;
+    active_file_t *curr_af;
     int *process_return = NULL;
+    int ret;
 
     //allocate memory for the return value
     process_return = malloc(sizeof(int));
@@ -987,6 +1040,13 @@ int *send_thread(SEND_ARGS *args) {
         return NULL;
     }
     *process_return = 0;
+    fid_array = new_buffer(sizeof(void *), 1<<7);
+    if (!fid_array) {
+        set_event_flag(args->flag, EF_TERMINATION);
+        set_event_flag(args->wake, EF_WAKE_MANAGER);
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        return process_return;
+    }
 
     //the main loop
     while (!termination_is_on(args->flag)) {
@@ -1004,10 +1064,11 @@ int *send_thread(SEND_ARGS *args) {
 
             reset_single_event(args->flag, EF_SEND_MULTIPLE_PACKETS);
 
-            ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,3,150, args->public_key);
+            ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,3,150, args->sign_keys,TODO);
             if (ret > 0) {
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
+                free_buffer(fid_array);
                 *process_return = ret;
                 return process_return;
             }
@@ -1015,6 +1076,7 @@ int *send_thread(SEND_ARGS *args) {
             if (ret == -1) {
                 flag_val = get_event_flag(args->flag);
                 if(flag_val & EF_TERMINATION){
+                    free_buffer(fid_array);
                     *process_return = 0;
                     return process_return;
                 }
@@ -1027,9 +1089,9 @@ int *send_thread(SEND_ARGS *args) {
 
             if (node->type == QET_SEND_FILE) {
                 if (active_files) {
-                    tmp_active_file = node->data;
-                    tmp_active_file->next = active_files;
-                    active_files = tmp_active_file;
+                    tmp_af = node->data;
+                    tmp_af->next = active_files;
+                    active_files = tmp_af;
                 }
                 else {
                     active_files = node->data;
@@ -1039,15 +1101,48 @@ int *send_thread(SEND_ARGS *args) {
         }//we don't care about other events, if they are there we shouldn't get them anyway
 
 
-        ////////////////////////////////
-        ///  phase 2: send a packet  ///
-        ////////////////////////////////
+        //////////////////////////////////////////////////
+        ///  phase 2: send file and discovery packets  ///
+        //////////////////////////////////////////////////
 
+        tmp_af = NULL;
+        curr_af = active_files;
+        while (curr_af) {
+            ret = send_file_packet(curr_af,args->sign_keys->public, args->sockets, args->flag);
+            if (ret) {
+                set_event_flag(args->flag, EF_TERMINATION);
+                set_event_flag(args->wake, EF_WAKE_MANAGER);
+                free_buffer(fid_array);
+                *process_return = ret;
+                return process_return;
+            }
+            if (!curr_af->fd) {
+                if (tmp_af) {
+                    tmp_af->next = curr_af->next;
+                    free(curr_af);
+                    curr_af = tmp_af->next;
+                }
+                else {
+                    active_files = curr_af->next;
+                    free(curr_af);
+                    curr_af = active_files;
+                }
+                continue;
+            }
 
-        ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,1,0, args->public_key);
+            //check if we need to send discovery packets
+            clock_gettime(CLOCK_REALTIME, &current_ts);
+            if (deadline_ts.tv_sec <= current_ts.tv_sec && deadline_ts.tv_nsec <= current_ts.tv_nsec) break;
+
+            tmp_af = curr_af;
+            curr_af = curr_af->next;
+        }
+        //supply the username, if it will be file tied remove
+        ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,1,0, args->sign_keys, TODO);
         if (ret > 0) {
             set_event_flag(args->flag, EF_TERMINATION);
             set_event_flag(args->wake, EF_WAKE_MANAGER);
+            free_buffer(fid_array);
             *process_return = ret;
             return process_return;
         }
@@ -1055,17 +1150,19 @@ int *send_thread(SEND_ARGS *args) {
         if (ret == -1) {
             flag_val = get_event_flag(args->flag);
             if(flag_val & EF_TERMINATION){
+                free_buffer(fid_array);
                 *process_return = 0;
                 return process_return;
             }
         }
+        //set next deadline
+        clock_gettime(CLOCK_REALTIME, &deadline_ts);
+        deadline_ts.tv_sec += DISCOVERY_SEND_PERIOD_SEC;
+
 
         /////////////////////////////////////////////////
         ///  phase 3: wait and check for termination  ///
         /////////////////////////////////////////////////
-
-        clock_gettime(CLOCK_REALTIME, &ts);
-        ts.tv_sec += DISCOVERY_SEND_PERIOD_SEC;
 
         pthread_mutex_lock(&(args->flag->mutex));
         if (args->flag->event_flag & EF_TERMINATION) {
@@ -1075,20 +1172,23 @@ int *send_thread(SEND_ARGS *args) {
             break;
         }
         ret = 0;
-        while (!active && ret == 0 && !(args->flag->event_flag & (EF_TERMINATION | EF_SEND_NEW_FILE))) {
-            ret = pthread_cond_timedwait(&(args->flag->cond), &(args->flag->mutex), &ts);
+        //while there are no more files to send, and we didn't time out and the termination or new file flag is risen
+        while (!active_files && ret == 0 && !(args->flag->event_flag & (EF_TERMINATION | EF_SEND_NEW_FILE))) {
+            ret = pthread_cond_timedwait(&(args->flag->cond), &(args->flag->mutex), &deadline_ts);
 
             if ((ret != ETIMEDOUT) && (ret != 0)) {
                 fprintf(stderr, "pthread_cond_timedwait() failed in device_discovery_sending\n");
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
                 pthread_mutex_unlock(&(args->flag->mutex));
+                free_buffer(fid_array);
                 *process_return = INDIGO_ERROR_INVALID_STATE;
                 return process_return;
             }
             if (ret == 0) {
                 if (args->flag->event_flag & EF_TERMINATION) {
                     pthread_mutex_unlock(&(args->flag->mutex));
+                    free_buffer(fid_array);
                     *process_return = 0;
                     return process_return;
                 }
@@ -1097,6 +1197,7 @@ int *send_thread(SEND_ARGS *args) {
         pthread_mutex_unlock(&(args->flag->mutex));
 
     }
+    free_buffer(fid_array);
     return process_return;
 }
 
@@ -1108,7 +1209,7 @@ int *recv_thread(RECV_ARGS *args) {
     HANDLE *handles = NULL;
     size_t hCount;
 
-    PACKET_HEADER pack_h;
+    udp_packet_header_t pack_h;
 
     packet_info_t *packet_info = NULL;
 
@@ -1286,10 +1387,11 @@ int *recv_thread(RECV_ARGS *args) {
                 }
 
                 //everything we need to know is in the first 6 bytes, the rest is redundant
-                memcpy(&pack_h,recv_info->buf->buf,sizeof(PACKET_HEADER));
+                memcpy(&pack_h,recv_info->buf->buf,sizeof(udp_packet_header_t));
 
                 //check the magic number (not an absolut way to check if a packet is for us but will prolly work)
-                if (pack_h.magic_number != MAGIC_NUMBER){
+                if (pack_h.magic_number != MAGIC_NUMBER_1 || pack_h.magic_number != MAGIC_NUMBER_2) {
+
                     WSAResetEvent(handles[i]);
                     if (register_single_receiver(recv_info->socket,&recv_info, args->mempool)) {
                         set_event_flag(args->flag, EF_TERMINATION);

@@ -5,32 +5,31 @@
 #ifndef NET_IO_H
 #define NET_IO_H
 
-#include <indigo_core/indigo_core.h>
 #include <event_flags.h>
 #include <mempool.h>
 #include <Queue.h>
+#include <sodium/crypto_aead_xchacha20poly1305.h>
 #include <sodium/crypto_sign.h>
+#include <indigo_types.h>
+#include <indigo_core/net_monitor.h>
 
-#include "hash_table.h"
-#include "indigo_types.h"
 //for now, it's ok, later we will need to add linux libraries
 #ifdef _WIN32
 
-#include <ws2tcpip.h>
 #include <winsock2.h>
 #include <iphlpapi.h>
 
 #endif
 
-#define DEVICE_TIME_UNTIL_DISCONNECTED 90
+#define DEVICE_TIME_UNTIL_DISCONNECTED (90)
 
 //for device discovery
-#define PORT 2693
-#define MULTICAST_ADDR "239.255.49.152"
+#define PORT (2693)
+#define MULTICAST_ADDR ("239.255.49.152")
 
 //used for discovery packet
-#define MAGIC_NUMBER 1841452771
-
+#define MAGIC_NUMBER_1 (htonl(1841452771))
+#define MAGIC_NUMBER_2 (htonl(0x7fffffff))
 //message types
 #define MSG_INIT_PACKET                 0x01
 #define MSG_RESEND                      0x02
@@ -42,41 +41,9 @@
 #define MSG_STOP_FILE_TRANSMISSION      0x08
 #define MSG_PAUSE_FILE_TRANSMISSION     0x09
 #define MSG_CONTINUE_FILE_TRANSMISSION  0x0a
+#define MSG_IP_CHANGE                   0x0b
 #define MSG_ERR                         0xff
 //more types may be added
-
-#define PAC_VERSION (1)
-#define DISCOVERY_SEND_PERIOD_SEC (10)
-
-#define PAC_DATA_BYTES (1<<10)
-#define PAC_MIN_BYTES (7)
-#define PAC_ENCRYPT_OFFSET (36)
-#define PAC_ENCRYPT_LENGTH (PAC_DATA_BYTES + 4)
-#define PAC_MAX_BYTES (sizeof(packet_t))
-//the packet that is sent for everything, device discovery, signature handshakes, file chunks, etc.
-//it's a little big but since the buffer is at the end there is no need to send the whole thing
-typedef struct udp_packet_t{
-    uint32_t magic_number;
-    unsigned char id[crypto_sign_PUBLICKEYBYTES];
-    int16_t zero;
-    unsigned char pac_type;
-    unsigned char pac_version;
-    unsigned char data[PAC_DATA_BYTES];
-}packet_t;
-
-typedef struct udp_packet_header {
-    uint32_t magic_number;
-    unsigned char pac_type;
-    unsigned char pac_version;
-    int16_t zero;
-    unsigned char id[crypto_sign_PUBLICKEYBYTES];
-}PACKET_HEADER;
-
- //for device discovery system and queue
-typedef struct packet_info_t {
-    struct sockaddr_in address;
-    SOCKET socket;
-}packet_info_t;
 
 typedef struct RECV_INFO {
     struct sockaddr *source;
@@ -102,19 +69,21 @@ typedef struct SEND_INFO {
     SOCKET socket;
 } SEND_INFO;
 
+
+
 typedef struct SEND_ARGS {
     int port;
     uint32_t multicast_addr;
     EFLAG *flag;
     EFLAG *wake;
-    SOCKET_LL *sockets;
+    socket_ll *sockets;
     QUEUE *queue;
-    unsigned char public_key[crypto_sign_PUBLICKEYBYTES];
+    signing_key_pair_t * sign_keys;
 }SEND_ARGS;
 
 typedef struct RECV_ARGS {
     QUEUE *queue;
-    SOCKET_LL *sockets;
+    socket_ll *sockets;
     EFLAG *flag;
     EFLAG *wake;
     HANDLE termination_handle;
@@ -129,12 +98,20 @@ typedef struct RECV_ARGS {
 //////////////////////////////////////////////////////
 
 //todo check and remove redundant code (there is a comment saying "temporary")
-int send_discovery_packets(int port, uint32_t multicast_addr, SOCKET_LL *sockets, EFLAG *flag, uint32_t pCount, int32_t msec,const unsigned char id[crypto_sign_PUBLICKEYBYTES]);
+int send_discovery_packets(
+    int port,
+    uint32_t multicast_addr,
+    socket_ll *sockets,
+    EFLAG *flag,
+    uint32_t pCount,
+    int32_t msec,
+    signing_key_pair_t * sign_key_pair,
+    wchar_t username[MAX_USERNAME_LEN]);
 int register_single_receiver(SOCKET sock, RECV_INFO **info, mempool_t* mempool);
-int register_multiple_receivers(SOCKET_LL *sockets, RECV_ARRAY *info, mempool_t* mempool, EFLAG *flag);
+int register_multiple_receivers(socket_ll *sockets, RECV_ARRAY *info, mempool_t* mempool, EFLAG *flag);
 
-int send_packet(int port, uint32_t addr, SOCKET socket, const packet_t* packet, EFLAG *flag);
-int send_file_packet(active_file_t *file, unsigned char *pk, unsigned char tk[], EFLAG *flag);
+int send_packet(int port, uint32_t addr, socket_ll* sockets, const packet_t* packet, EFLAG *flag);
+int send_file_packet(active_file_t *file, const unsigned char *pk, socket_ll* sockets, EFLAG *flag);
 
 /////////////////////////////////////////////////////////////
 ///                                                       ///
@@ -142,7 +119,8 @@ int send_file_packet(active_file_t *file, unsigned char *pk, unsigned char tk[],
 ///                                                       ///
 /////////////////////////////////////////////////////////////
 
-void build_packet(packet_t * restrict packet, const unsigned pac_type, const unsigned char id[crypto_sign_PUBLICKEYBYTES], const void * restrict data);
+void build_packet(packet_t * restrict packet, unsigned pac_type, const unsigned char id[crypto_sign_PUBLICKEYBYTES],
+                  const unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES], const void * restrict data);
 int create_handle_array_from_send_info(const SEND_INFO *info, size_t infolen, HANDLE **handles, size_t *hCount);
 void free_send_info(const SEND_INFO *info);
 int allocate_recv_info(RECV_INFO **info, mempool_t* mempool);

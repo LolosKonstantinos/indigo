@@ -12,12 +12,14 @@
 ///
 /*Creates a link list of sockets used for device discovery
  *the sockets are bound to IPs of different subnets covering the maximum network area.
- *Priority is given to IPs of ethernet adapters over wi-fi adapters
+ *Priority is given to IPs of ethernet adapters over Wi-Fi adapters
  *returns a pointer to the first node else returns NULL
  */
-SOCKET_NODE *get_discovery_sockets(const int port, const uint32_t multicast_addr) {
-    SOCKET_NODE *new_sock = NULL, *first_sock = NULL, *temp_sock = NULL;
-    IP_SUBNET *p_ip_subnet = NULL;
+socket_node *get_discovery_sockets(const int port, const uint32_t multicast_addr) {
+    socket_node *new_sock = NULL;
+    socket_node *first_sock = NULL;
+    socket_node *temp_sock = NULL;
+    ip_subnet_t *p_ip_subnet = NULL;
     size_t addr_count = 0;
     struct sockaddr_in server; //TODO: find better name
     struct ip_mreq mreq;//the structure for the IP_ADD_MEMBERSHIP socket option
@@ -47,7 +49,6 @@ SOCKET_NODE *get_discovery_sockets(const int port, const uint32_t multicast_addr
 
             return NULL;
         }
-
         //connect node to linked list
         if (first_sock != NULL && temp_sock != NULL) {
             temp_sock->next = new_sock;
@@ -57,12 +58,13 @@ SOCKET_NODE *get_discovery_sockets(const int port, const uint32_t multicast_addr
             first_sock = new_sock;
             temp_sock = new_sock;
         }
+        memcpy(&(new_sock->ip_subnet), &(p_ip_subnet[i]), sizeof(ip_subnet_t));
 
         //bind the socket to the local address (one for every address found)
         memset(&server,0,sizeof(server));
         server.sin_family = AF_INET;
         server.sin_port = port;
-        server.sin_addr.s_addr = htonl(p_ip_subnet[0].ip);
+        server.sin_addr.s_addr = htonl(p_ip_subnet[i].ip);
 
         err = bind(new_sock->sock,(struct sockaddr *)(&server),sizeof(server));
         if (err == SOCKET_ERROR) {
@@ -97,10 +99,11 @@ SOCKET_NODE *get_discovery_sockets(const int port, const uint32_t multicast_addr
 }
 
 /*Closes all sockets in the linked list and frees the allocated memory for the list*/
-void free_discv_sock_ll(SOCKET_NODE *firstnode) {
-    if (firstnode == NULL) return;
+void free_discv_sock_ll(socket_node *firstnode) {
+    socket_node *curr;
+    socket_node *next;
 
-    SOCKET_NODE *curr, *next;
+    if (firstnode == NULL) return;
 
     curr = firstnode;
     while (curr != NULL) {
@@ -121,13 +124,15 @@ void free_discv_sock_ll(SOCKET_NODE *firstnode) {
 //creates an array of the compatible IPs and the respective subnet masks.
 //the minimum amount of separate interfaces and higher speed is ensured.
 //returns 0 on success and non-zero on failure
-int get_compatible_interfaces(IP_SUBNET **ip_subnet, size_t *count) {
+int get_compatible_interfaces(ip_subnet_t **ip_subnet, size_t *count) {
     void *temp = NULL;
-    PIP_ADAPTER_ADDRESSES adapter = NULL,p =0;
+    PIP_ADAPTER_ADDRESSES adapter = NULL;
+    PIP_ADAPTER_ADDRESSES p =0;
     ULONG size = 17500; //17.5KB to be allocated for GetAdaptersAddresses, it's the recommended microsoft method
     ULONG err = 0;
     ULONG flags;
-    IP_SUBNET *p_ip_subnet = NULL, temp_ip_subnet;
+    ip_subnet_t *p_ip_subnet = NULL;
+    ip_subnet_t temp_ip_subnet;
     int addr_count = 0;
 
 
@@ -193,7 +198,7 @@ int get_compatible_interfaces(IP_SUBNET **ip_subnet, size_t *count) {
 
         //if we get another error we return
         if (err != ERROR_SUCCESS) {
-            fprintf(stderr,"GetAdaptersAddresses failed.%d\n",err);
+            fprintf(stderr,"GetAdaptersAddresses failed.%lu\n",err);
             free(adapter);
             return INDIGO_ERROR_WINLIB_ERROR;
         }
@@ -214,10 +219,10 @@ int get_compatible_interfaces(IP_SUBNET **ip_subnet, size_t *count) {
 
                 //check if the current unicast is in the same subnet as some other address
                 if (!ip_in_any_subnet(temp_ip_subnet,p_ip_subnet, addr_count)) {
-                           //create more space for 1 more subnet
-                    temp = realloc(p_ip_subnet, sizeof(IP_SUBNET) * (addr_count + 1));
+                    //create more space for 1 more subnet
+                    temp = realloc(p_ip_subnet, sizeof(ip_subnet) * (addr_count + 1));
                     if (temp == NULL) {
-                        perror("Failed to reallocate memory for ip_subnet");
+                        perror("Failed to reallocate memory for ip_subnet_t");
                         free(adapter);
                         free(p_ip_subnet);
                         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
@@ -228,8 +233,8 @@ int get_compatible_interfaces(IP_SUBNET **ip_subnet, size_t *count) {
                     //update the length of the dynamic array
                     addr_count++;
                 }
-                //prioritize ethernet over wi-fi
-                //replaces any wi-fi address with an ethernet one of the same subnet
+                //prioritize ethernet over Wi-Fi
+                //replaces any Wi-Fi address with an ethernet one of the same subnet
                 else if(p_ip_subnet && ip_in_any_subnet(temp_ip_subnet,p_ip_subnet, addr_count) && p->IfType==IF_TYPE_ETHERNET_CSMACD){
                     //the p_ip_subnet condition is pointless, because ip_in_any_subnet would return 0 if p_ip_subnet is NULL
                     //put it there because clang cries, though is pintless
@@ -255,10 +260,10 @@ int get_compatible_interfaces(IP_SUBNET **ip_subnet, size_t *count) {
  *
  *Returns a pointer to the node created. If it fails it returns NULL.
  */
-SOCKET_NODE *create_discv_sock_node() {
+socket_node *create_discv_sock_node() {
     char optval = 1;
     DWORD ttl = 1;
-    SOCKET_NODE *node = (SOCKET_NODE *)malloc(sizeof(SOCKET_NODE));
+    socket_node *node = malloc(sizeof(socket_node));
 
     if (node == NULL) {
         perror("Failed to allocate memory for DISCV_SOCK");
@@ -305,11 +310,12 @@ uint32_t sub_mask_8to32b(const uint8_t mask_8b) {
     return mask_32b;
 }
 
-uint8_t ips_share_subnet(const IP_SUBNET addr1 , const IP_SUBNET addr2) {
-    return (addr1.ip & addr1.mask) == (addr2.ip & addr2.mask);
+
+uint8_t ips_share_subnet(const ip_subnet_t addr1 , const ip_subnet_t addr2) {
+    return ((addr1.ip & addr1.mask) == (addr2.ip & addr2.mask));
 }
 
-uint8_t ip_in_any_subnet(const IP_SUBNET addr, const IP_SUBNET *p_addrs, const size_t num_addrs) {
+uint8_t ip_in_any_subnet(const ip_subnet_t addr, const ip_subnet_t *p_addrs, const size_t num_addrs) {
     if (p_addrs == NULL) return 0;
     for (int i = 0; i < num_addrs; i++) {
         if (ips_share_subnet(addr, p_addrs[i])) return 1;
@@ -317,6 +323,18 @@ uint8_t ip_in_any_subnet(const IP_SUBNET addr, const IP_SUBNET *p_addrs, const s
     return 0;
 }
 
+SOCKET ip_to_socket(const uint32_t ip, const socket_ll *const sockets) {
+    ip_subnet_t sub;
+    if (sockets == NULL) return INVALID_SOCKET;
+
+    for (socket_node *node = sockets->head; node; node = node->next) {
+        sub = node->ip_subnet;
+        if ((ip & sub.mask) == (sub.ip & sub.mask)) {
+            return node->sock;
+        }
+    }
+    return INVALID_SOCKET;
+}
 
 //////////////////////////////////////////////////////////
 ///                                                    ///
@@ -328,7 +346,7 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
    HANDLE notification_handle = NULL;
     HANDLE handles[2];
     WSAOVERLAPPED overlapped = {0};
-    DWORD retVal;
+    DWORD ret_val;
     int *process_return = malloc(sizeof(int));
     if (process_return == NULL) {
         set_event_flag(args->flag, EF_TERMINATION | EF_ERROR);
@@ -356,11 +374,11 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
 
 
     //register for address changes
-    retVal = NotifyAddrChange(&notification_handle,&overlapped);
-    if (retVal != ERROR_IO_PENDING) {
+    ret_val = NotifyAddrChange(&notification_handle,&overlapped);
+    if (ret_val != ERROR_IO_PENDING) {
         fprintf(stderr, "NotifyAddrChange() failed in interface_updater\n");
         //print what the fuzz is about
-        switch (retVal) {
+        switch (ret_val) {
             case ERROR_INVALID_PARAMETER:
                 fprintf(stderr, "ERROR_INVALID_PARAMETER\n");
                 *process_return = INDIGO_ERROR_INVALID_STATE;
@@ -390,11 +408,11 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
         printf("DEBUG: entered waiting\n");
         fflush(stdout);
         //todo: do not use infinite, to prevent deadlock or something, use big number
-        retVal = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
+        ret_val = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
         printf("DEBUG: exited waiting\n");
         fflush(stdout);
         //error check
-        if (retVal == WAIT_FAILED) {
+        if (ret_val == WAIT_FAILED) {
             perror("WaitForMultipleObjects() failed in interface_updater");
             *process_return = INDIGO_ERROR_WINLIB_ERROR;
             set_event_flag(args->flag, EF_TERMINATION | EF_ERROR);
@@ -404,7 +422,7 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
             return process_return;
         }
         //check which event was signaled
-        if (retVal - WAIT_OBJECT_0 == 1) {
+        if (ret_val - WAIT_OBJECT_0 == 1) {
             //interface update
             printf("DEBUG: interface update\n");
             fflush(stdout);
@@ -434,11 +452,11 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
                 reset_single_event(args->override_flags[i], EF_OVERRIDE_IO);
             }
             //re-register for address changes
-            retVal = NotifyAddrChange(&notification_handle,&overlapped);
-            if (retVal != ERROR_IO_PENDING) {
+            ret_val = NotifyAddrChange(&notification_handle,&overlapped);
+            if (ret_val != ERROR_IO_PENDING) {
                 fprintf(stderr, "NotifyAddrChange() failed in interface_updater\n");
                 //print what the fuzz is about
-                switch (retVal) {
+                switch (ret_val) {
                 case ERROR_INVALID_PARAMETER:
                     fprintf(stderr, "ERROR_INVALID_PARAMETER\n");
                     *process_return = INDIGO_ERROR_INVALID_STATE;
@@ -463,7 +481,7 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS* args) {
             }
 
         }
-        else if (retVal - WAIT_OBJECT_0 == 0) {
+        else if (ret_val - WAIT_OBJECT_0 == 0) {
             //termination event
             CancelIPChangeNotify(&overlapped);
             printf("DEBUG: update exit\n");

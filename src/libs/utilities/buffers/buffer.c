@@ -20,11 +20,9 @@ struct lbuffer {
 };
 
 struct buffer {
-    pthread_mutex_t mutex;
-    pthread_cond_t cond;
     unsigned char *data;
-    int len;
-    size_t elm_size;
+    size_t cell_count;
+    size_t cell_size;
 };
 
 SBUF *sbuf_new() {
@@ -206,4 +204,63 @@ int lbuf_search(LBUF *restrict buffer, const uint32_t data, size_t *const index)
         return 1;
     }
     return 0;
+}
+
+
+
+BUF *new_buffer(size_t cell_size, const size_t cell_count) {
+    BUF *buffer = (BUF *)calloc(1,sizeof(BUF));
+    if (buffer == NULL) return NULL;
+    buffer->cell_count = cell_count;
+    if (cell_size < sizeof(void *)) cell_size = sizeof(void *);
+    buffer->cell_size = cell_size;
+    buffer->data = malloc(cell_size * cell_count);
+    if (buffer->data == NULL) {
+        free(buffer);
+        return NULL;
+    }
+    return buffer;
+}
+
+void free_buffer(BUF *buffer) {
+    free(buffer->data);
+    free(buffer);
+}
+
+int buffer_get(BUF *restrict buffer,const size_t index ,unsigned char *const restrict data) {
+    if (!buffer || !data) return -1;
+    if (index >= buffer->cell_count) return 1;
+    memcpy(data,buffer->data + (buffer->cell_size * index),buffer->cell_size);
+    return 0;
+}
+int buffer_get_reference(BUF *restrict buffer,const size_t index ,unsigned char **const restrict data) {
+    if (!buffer || !data) return -1;
+    if (index >= buffer->cell_count) return 1;
+    *data  = buffer->data + (buffer->cell_size * index);
+    return 0;
+}
+int buffer_set(BUF *restrict buffer,size_t index ,const unsigned char *const restrict data) {
+    if (!buffer || !data) return -1;
+    if (index >= buffer->cell_count) return -1;
+    memcpy(buffer->data + (buffer->cell_size * index),data,buffer->cell_size);
+    return 0;
+}
+
+int buffer_dynamic_set(BUF *buffer,size_t index ,const unsigned char *restrict data) {
+    void *temp;
+    if (!buffer || !data) return -1;
+    if (index >= buffer->cell_count + (buffer->cell_count>>1)) return 1;
+
+    if (index < buffer->cell_count) {
+        memcpy(buffer->data + (buffer->cell_size * index),data,buffer->cell_size);
+        return 0;
+    }
+    temp = realloc(buffer->data,buffer->cell_size * (buffer->cell_count + (buffer->cell_count>>1)));
+    if (temp == NULL) {
+        return 1;
+    }
+    buffer->data = temp;
+    memcpy(buffer->data + (buffer->cell_size * index),data,buffer->cell_size);
+    return 0;
+
 }

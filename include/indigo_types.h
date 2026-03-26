@@ -8,37 +8,122 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #endif
-#include <pthread.h>
 #include <stdint.h>
-#include <stdio.h>
+#include <sodium/crypto_aead_xchacha20poly1305.h>
 #include <sodium/crypto_sign.h>
 #include <sodium/crypto_kx.h>
+#include "crypto_utils.h"
+
+/*GLOBAL DEFINITIONS*/
+#define FORCE_INLINE inline __attribute__((always_inline))
+#define PACKED __attribute__((__packed__))
+#define MAX_PSW_LEN 128
+#define MAX_USERNAME_LEN 32
+
 //RDSF == RemoteDeviceStateFlag
 #define RDSF_UNVERIFIED     0x0000
 #define RDSF_VERIFIED       0x0001
 
+#define PAC_VERSION (1)
+#define DISCOVERY_SEND_PERIOD_SEC (10)
+
+#define PAC_DATA_BYTES_USABLE ((1<<10) + (sizeof(uint64_t)<<1))
+#define PAC_DATA_BYTES (PAC_DATA_BYTES_USABLE + crypto_aead_xchacha20poly1305_ietf_ABYTES)
+#define PAC_MIN_BYTES (sizeof(udp_packet_header_t))
+#define PAC_ENCRYPT_OFFSET (offsetof(packet_t, zero))
+#define PAC_ENCRYPT_BYTES (PAC_DATA_BYTES_USABLE + 4)
+#define PAC_MAX_BYTES (sizeof(packet_t))
+//the packet that is sent for everything, device discovery, signature handshakes, file chunks, etc.
+//it's a little big but since the buffer is at the end there is no need to send the whole thing
+typedef struct PACKED udp_packet_t{
+    uint32_t magic_number;
+    unsigned char id[crypto_sign_PUBLICKEYBYTES];
+    unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
+    int16_t zero;
+    unsigned char pac_type;
+    unsigned char pac_version;
+    unsigned char data[PAC_DATA_BYTES];
+}packet_t;
+_Static_assert(sizeof(packet_t) == 1120, "unexpected padding in packet_t");
+
+typedef struct PACKED udp_packet_header {
+    uint32_t magic_number;
+    unsigned char id[crypto_sign_PUBLICKEYBYTES];
+    unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
+    int16_t zero;
+    unsigned char pac_type;
+    unsigned char pac_version;
+}udp_packet_header_t;
+
+//for device discovery system and queue
+typedef struct packet_info_t {
+    struct sockaddr_in address;
+    SOCKET socket;
+}packet_info_t;
+
+//the discovery packet format
+
+typedef struct PACKED init_packet_data_t {
+    time_t timestamp;
+    wchar_t username[MAX_USERNAME_LEN];
+    unsigned char signature[crypto_sign_BYTES];
+}init_packet_data_t;
+#define PAC_INIT_SIZE (64+sizeof(init_packet_data_t))
+
+typedef struct PACKED signing_request_data_t {
+    time_t timestamp;
+    unsigned char nonce[INDIGO_NONCE_SIZE];
+    unsigned char signature[crypto_sign_BYTES];
+}signing_request_data_t;
+#define PAC_SIGNING_REQUEST_SIZE (64 + sizeof(signing_request_data_t))
+
+typedef struct PACKED signing_response_data_t {
+    unsigned char signed_nonce[INDIGO_NONCE_SIZE + crypto_sign_BYTES];
+    unsigned char pkx[crypto_kx_PUBLICKEYBYTES];
+    unsigned char sig_request;
+    unsigned char zero; //odd bytes eww
+    unsigned char nonce[INDIGO_NONCE_SIZE];
+    unsigned char signature[crypto_sign_BYTES];
+}signing_response_data_t;
+#define PAC_SIGNING_RESPONSE (64+sizeof(signing_response_data_t))
+
+typedef struct PACKED file_sending_request_data_t {
+    uint64_t serial;
+    size_t file_size;
+    wchar_t file_name[MAX_PATH];
+}file_sending_request_data_t;
+#define PAC_FILE_SENDING_REQUEST_SIZE (64 +sizeof(file_sending_request_data_t))
+
+typedef struct PACKED file_sending_response_data_t {
+    uint64_t serial;
+}file_sending_response_data_t;
+#define FILE_SENDING_RESPONSE_SIZE (64 + sizeof(file_sending_response_data_t))
+
+typedef struct PACKED file_chunk_data_t {
+    uint64_t serial;
+    uint64_t chunk_number;
+    unsigned char data[PAC_DATA_BYTES_USABLE];
+}file_chunk_data_t;
+#define PAC_FILE_CHUNK_SIZE (64 + sizeof(file_chunk_data_t))
+
+typedef struct PACKED transmission_control_data_t {
+    uint64_t serial;
+    uint64_t packet_number; //used only for resend, otherwise should be 0 and ignored
+}transmission_control_data_t;
+#define PAC_TRANSMISSION_CONTROL_SIZE (64 + sizeof(transmission_control_data_t))
+
 typedef struct remote_device_t{
     time_t expiration_time; //the time until which we consider the device active, updated with any packet
-    SOCKET socket;
-    uint64_t last_session_serial;
+    uint64_t last_fid;
     int port;
     uint32_t ip;
-    unsigned char peer_public_key[crypto_sign_PUBLICKEYBYTES];
-    unsigned char mac_addr[6];
+    unsigned char peer_pk[crypto_sign_PUBLICKEYBYTES];
+    unsigned char peer_pkx[crypto_kx_PUBLICKEYBYTES];
+    unsigned char *pkx;
+    unsigned char *skx;
+    wchar_t username[MAX_USERNAME_LEN];
     uint16_t dev_state_flag;
 } remote_device_t;
-
-
-typedef struct file_sending_request_fwd_t {
-    unsigned char id[crypto_sign_PUBLICKEYBYTES];
-    unsigned char key[crypto_kx_PUBLICKEYBYTES];
-    wchar_t file_name[MAX_PATH];
-    size_t file_size; //the size of the file in bytes
-    SOCKET socket;
-    int port;
-    uint32_t addr;
-}file_sending_request_fwd_t;
-
 
 typedef struct session_id_t {
     uint64_t serial;
@@ -47,23 +132,23 @@ typedef struct session_id_t {
 
 typedef struct session_t{
     session_id_t session_id;
-    SOCKET socket;
     int port;
     uint32_t ip;
     //the keys bellow are pointers to secure buffers
     unsigned char *receive_key; // the key to decrypt the received data
-    unsigned char *transmit_key;    //the key to encrypt data to send
+    unsigned char *transmit_key;//the key to encrypt data to send
     time_t start_time;
     time_t end_time;
     size_t bytes_moved;
-    unsigned char mac_addr[6];
     uint16_t status_flags;
 } session_t;
 
 typedef struct active_file_t {
     FILE *fd;
-    uint64_t active; //it's a bool but fol alignment reasons it will be 64-bin
-    SOCKET socket;
+    uint64_t counter; //it's a bool but for alignment reasons it will be 64-bit
+    uint64_t fid;
+    unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
+    unsigned char *tk;
     int port;
     uint32_t ip;
     struct active_file_t *next;
@@ -72,12 +157,11 @@ typedef struct active_file_t {
 
 
 
-/*GLOBAL DEFINITIONS*/
-#define	FORCE_INLINE inline __attribute__((always_inline))
-#define MAX_PSW_LEN 128
+
 
 /*inline function definitions*/
 static FORCE_INLINE int cmp_rdev(void *s1, void *s2) {
-    return memcmp(((remote_device_t *)s1)->peer_public_key, ((remote_device_t *)s2)->peer_public_key, crypto_sign_PUBLICKEYBYTES);
+    return memcmp(((remote_device_t *)s1)->peer_pk, ((remote_device_t *)s2)->peer_pk, crypto_sign_PUBLICKEYBYTES);
 }
+
 #endif //INDIGO_TYPES_H

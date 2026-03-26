@@ -12,7 +12,7 @@
 //     int port;
 //     uint32_t ip;
 //     unsigned char mac_addr[6];
-//     unsigned char peer_public_key[crypto_kx_PUBLICKEYBYTES];
+//     unsigned char peer_pk[crypto_kx_PUBLICKEYBYTES];
 //     //the keys bellow are pointers to secure buffers
 //     unsigned char *session_receive_key; // the key to decrypt the received data
 //     unsigned char *session_send_key;    //the key to encrypt data to send

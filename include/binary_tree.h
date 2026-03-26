@@ -11,6 +11,7 @@
 #define BINARY_TREE_TYPE_RED_BLACK 1
 
 typedef int(*cmp_f)(void *, void *);
+typedef void* (*usr_free_f)(void* node);
 
 typedef struct tree_priv_t tree_priv_t;
 typedef struct tree_t tree_t;
@@ -19,7 +20,7 @@ typedef struct tree_node_avl_t tree_node_t;
 typedef int(*tree_insert)(tree_t *, void *);
 typedef int(*tree_remove)(tree_t *, void *);
 typedef int(*tree_search)(tree_t *, void *);
-typedef int(*tree_search_pin)(tree_t *, void *, void *);
+typedef int(*tree_search_pin)(tree_t *, void *, void **);
 typedef int(*tree_search_release)(tree_t *);
 struct tree_t{
     tree_insert  insert;

@@ -46,11 +46,11 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     QNODE *qnode_pop = NULL;
 
     //the discovery sockets list
-    SOCKET_LL *sockets = NULL;
+    socket_ll *sockets = NULL;
 
     //the key pair
-    SIGNING_KEY_PAIR *signing_key_pair = NULL;
-    unsigned char public_key[crypto_sign_PUBLICKEYBYTES];
+    signing_key_pair_t *signing_key_pair = NULL;
+    unsigned char signing_pk[crypto_sign_PUBLICKEYBYTES];
     //flags
     uint32_t flag_val;
 
@@ -72,7 +72,7 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     //prepare to create the threads
 
     //create the sockets
-    sockets = malloc(sizeof(SOCKET_LL));
+    sockets = malloc(sizeof(socket_ll));
     if (sockets == NULL) {
         fprintf(stderr, "malloc() failed in discovery_manager_thread\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
@@ -125,7 +125,7 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     }
 
     //load the signing keys
-    signing_key_pair = sodium_malloc(sizeof(SIGNING_KEY_PAIR));
+    signing_key_pair = sodium_malloc(sizeof(signing_key_pair_t));
     if (signing_key_pair == NULL) {
         fprintf(stderr, "Failed to load signing key pair\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
@@ -142,11 +142,11 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
 
     //the public key is our identifier and is used far more commonly than the private key
     //the less the time the private key is accessible the better
-    memcpy(public_key, signing_key_pair->public, crypto_sign_PUBLICKEYBYTES);
+    memcpy(signing_pk, signing_key_pair->public, crypto_sign_PUBLICKEYBYTES);
 
     //create threads
     if (create_packet_handler_thread(&handler_args, args->flag, packet_queue, send_queue, mempool, args->device_tree,
-                                     args->master_key, &tid_handler)) {
+                                     args->master_key, sockets, &tid_handler)) {
         fprintf(stderr, "create_packet_handler_thread failed\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
@@ -159,7 +159,7 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     }
 
     if (create_sending_thread(&send_args, args->port, args->multicast_addr, sockets, args->flag, send_queue,
-        public_key, &tid_send)) {
+                              args->master_key, &tid_send)) {
         fprintf(stderr, "create_sending_thread failed\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
@@ -440,8 +440,8 @@ int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint
     return 0;
 }
 
-int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, SOCKET_LL *sockets, EFLAG *wake_mngr, QUEUE* queue, unsigned
-                          char public_key[crypto_sign_PUBLICKEYBYTES], pthread_t *tid){
+int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, socket_ll *sockets, EFLAG *wake_mngr, QUEUE* queue, const void*
+                          master_key, pthread_t *tid){
     pthread_t thread;
 
     SEND_ARGS *send_args = malloc(sizeof(SEND_ARGS));
@@ -458,6 +458,18 @@ int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address
         free(send_args);
         return 1;
     }
+    send_args->sign_keys = sodium_malloc(sizeof(signing_key_pair_t));
+    if (!send_args->sign_keys) {
+        fprintf(stderr, "malloc() failed in create_sending_thread\n");
+        free(send_args);
+        return 1;
+    }
+
+    if (load_signing_key_pair(send_args->sign_keys, master_key) != INDIGO_SUCCESS) {
+        fprintf(stderr,"load_signing_key_pair() failed in create_sending_thread\n");
+        free(send_args);
+        return 1;
+    }
 
     send_args->port = port;
     send_args->multicast_addr = multicast_address;
@@ -465,7 +477,7 @@ int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address
     send_args->wake = wake_mngr;
     send_args->flag = flag;
     send_args->queue = queue;
-    memcpy(send_args->public_key, public_key, crypto_sign_PUBLICKEYBYTES);
+
 
     if (pthread_create(&thread, NULL, (void *)(&send_thread), send_args)) {
         free_event_flag(flag);
@@ -479,7 +491,7 @@ int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address
 }
 
 int create_receiving_thread(
-    RECV_ARGS **args, SOCKET_LL *sockets, QUEUE *queue, mempool_t* mempool, EFLAG *wake_mngr, pthread_t *tid){
+    RECV_ARGS **args, socket_ll *sockets, QUEUE *queue, mempool_t* mempool, EFLAG *wake_mngr, pthread_t *tid){
 
     pthread_t thread;
 
@@ -532,7 +544,7 @@ int create_receiving_thread(
     return 0;
 }
 
-int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint32_t multicast_address, EFLAG *wake_mngr, EFLAG *override_flags[3], SOCKET_LL *sockets, pthread_t *tid){
+int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint32_t multicast_address, EFLAG *wake_mngr, EFLAG *override_flags[3], socket_ll *sockets, pthread_t *tid){
     pthread_t thread;
 
     INTERFACE_UPDATE_ARGS *update_args = malloc(sizeof(INTERFACE_UPDATE_ARGS));
@@ -575,8 +587,8 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
 }
 
 int create_packet_handler_thread(
-    PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, QUEUE* send_queue, mempool_t* mempool, tree_t* device_tree, const void*
-    const master_key, pthread_t *tid){
+    PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, QUEUE* send_queue, mempool_t* mempool, tree_t* device_tree
+    , const void* const master_key, socket_ll* sockets, pthread_t *tid){
 
     pthread_t thread;
 
@@ -593,7 +605,7 @@ int create_packet_handler_thread(
         free(handler_args);
         return 1;
     }
-    handler_args->signing_keys = sodium_malloc(sizeof(SIGNING_KEY_PAIR));
+    handler_args->signing_keys = sodium_malloc(sizeof(signing_key_pair_t));
     if (!(handler_args->signing_keys)) {
         fprintf(stderr, "malloc() failed in create_interface_updater_thread\n");
         free(handler_args);
@@ -612,6 +624,7 @@ int create_packet_handler_thread(
     handler_args->wake = wake_mngr;
     handler_args->flag = flag;
     handler_args->device_tree = device_tree;
+    handler_args->sockets = sockets;
 
     if (pthread_create(&thread, NULL, (void *)(&packet_handler_thread), handler_args)) {
         free_event_flag(flag);

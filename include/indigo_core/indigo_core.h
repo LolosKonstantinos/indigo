@@ -24,16 +24,4 @@
 #include <pthread.h>
 
 
-//for get_discovery_sockets()
-typedef struct SOCKET_LL_NODE {
-    struct SOCKET_LL_NODE *next;
-    SOCKET sock;
-}SOCKET_NODE;
-
-typedef struct SOCKET_LL {
-    SOCKET_NODE *head;
-    pthread_mutex_t mutex;
-    pthread_cond_t cond;
-}SOCKET_LL;
-
 #endif //INDIGO_DEVICE_DISCOVERY_H
