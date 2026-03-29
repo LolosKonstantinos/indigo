@@ -587,22 +587,49 @@ int send_packet(const int port, const uint32_t addr, socket_ll* sockets, const p
             NULL);
 
         if (ret_val == SOCKET_ERROR) {
-            if (WSAGetLastError() != WSA_IO_PENDING) {
-                fprintf(stderr, "WSASendTo() failed in send_discovery_packets(): %d\n",WSAGetLastError());
-                routine_ret = INDIGO_ERROR_WINLIB_ERROR;
+            ret_val = WSAGetLastError();
+            if (ret_val != WSA_IO_PENDING) {
+                fprintf(stderr, "WSASendTo() failed in send_discovery_packets(): %d\n",ret_val);
+                switch (ret_val) {
+                    case WSAEACCES:
+                        routine_ret = INDIGO_ERROR_ACCESS_DENIED;
+                        break;
+                    case WSAEADDRNOTAVAIL:
+                    case WSAEAFNOSUPPORT:
+                    case WSAEDESTADDRREQ:
+                    case WSAEFAULT:
+                    case WSAEHOSTUNREACH:
+                    case WSAEINVAL:
+                    case WSAEMSGSIZE:
+                        routine_ret = INDIGO_ERROR_INVALID_PARAM;
+                        break;
+                    case WSAENETDOWN:
+                        routine_ret = INDIGO_ERROR_NETWORK_SUBSYS_DOWN;
+                        break;
+                    case WSAENETRESET:
+                    case WSAESHUTDOWN:
+                        routine_ret = INDIGO_ERROR_NETWORK_RESET;
+                        break;
+                    case WSAENOBUFS:
+                        routine_ret = INDIGO_ERROR_NO_SYS_RESOURCES;
+                        break;
+                    default:
+                        fprintf(stderr, "HOW THE FUCK DID THIS HAPPEN\n");
+                        break;
+                }
                 goto cleanup;
             }
         }
 
         wait_ret = WaitForSingleObject(temp_info.overlapped->hEvent, 100);
-        if (wait_ret == WSA_WAIT_FAILED) {
+        if (wait_ret == WAIT_FAILED) {
             fprintf(stderr, "WaitForMultipleObjects() failed in send_discovery_packets(): %d\n", WSAGetLastError());
-            routine_ret = INDIGO_ERROR_WINLIB_ERROR ;
+            routine_ret = INDIGO_ERROR_WINLIB_ERROR; //todo: change to something that can be handled, i really dont know what it should be
             goto cleanup;
         }
-        if (wait_ret == WSA_WAIT_TIMEOUT) {
+        if (wait_ret == WAIT_TIMEOUT) {
             wait_ret = WaitForSingleObject(temp_info.overlapped->hEvent, 150);
-            if (wait_ret == WAIT_OBJECT_0) {continue;}
+            //if (wait_ret == WAIT_OBJECT_0) continue; //todo: check for correctness, why should this line exist
 
             if (wait_ret == WAIT_FAILED) {
                 fprintf(stderr, "WaitForSingleObject() failed in send_discovery_packets(): %d\n", WSAGetLastError());
@@ -614,7 +641,7 @@ int send_packet(const int port, const uint32_t addr, socket_ll* sockets, const p
             }
         }
 
-        if (flag_val & EF_OVERRIDE_IO){ continue;}
+        if (flag_val & EF_OVERRIDE_IO) continue;
 
 
         free_send_info(&temp_info);

@@ -22,7 +22,9 @@
 #define EF_STOP_FILE_TRANSMISSION        0x00000800
 #define EF_PAUSE_FILE_TRANSMISSION       0x00001000
 #define EF_CONTINUE_FILE_TRANSMISSION    0x00002000
+#define EF_RESET_SOCKETS                 0x00004000
 
+//todo: we dont need a mutex, use _Atomic and an event object instead of a condition, we can use the msb as a semaphore
 typedef struct EVENT_FLAG {
     volatile uint32_t event_flag;
     pthread_cond_t cond;

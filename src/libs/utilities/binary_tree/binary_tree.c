@@ -112,9 +112,8 @@ void free_tree(tree_t *t) {
 
 tree_node_t *new_node() {
     tree_node_t *node = calloc(1,sizeof(tree_node_t));
-    if(node == NULL) {
-        return NULL;
-    }
+    if(!node) return NULL;
+
     return node;
 }
 
@@ -205,6 +204,7 @@ int avl_insert_copy(tree_t *t, void* data) {
 
     if (!t) return -1;
     if (!(t->priv)) return -1;
+
     pthread_mutex_lock(&(t->priv->mutex));
     priv = t->priv;
 
@@ -213,7 +213,8 @@ int avl_insert_copy(tree_t *t, void* data) {
         pthread_mutex_unlock(&(priv->mutex));
         return 1;
     }
-    node->data = malloc(priv->data_size);
+
+    node->data = calloc(1,priv->data_size);
     if (!node->data) {
         pthread_mutex_unlock(&(priv->mutex));
         free(node);

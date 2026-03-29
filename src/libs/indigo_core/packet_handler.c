@@ -142,8 +142,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
 
                 //todo handle all types of packets
                 switch (packet_header.pac_type) {
-                    //todo: later every packet will contain the current time +-1 seconds signed
-                    //todo: we will need to check that too (later, once implemented on the send level)
                 case MSG_INIT_PACKET:
                     //validate the public key (this is not decryption, nothing is encrypted here)
                     ret = crypto_sign_verify_detached(((init_packet_data_t *)packet->data)->signature
@@ -153,7 +151,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
 
                     if (!ret){
                         //validate timestamp
-                        //todo: this is not valid for synchronised offline systems, or systems not in the same time zone
+                        //todo: this is not valid for synchronised offline systems
                         curr_time = time(NULL);
                         if ((((init_packet_data_t *)packet)->timestamp < curr_time - 1)
                             || (((init_packet_data_t *)packet)->timestamp > curr_time)) {
@@ -171,7 +169,11 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                     if (ret == 0) {
                         found_rdev->expiration_time = time(NULL); //renew the timestamp
                         found_rdev->ip = packet_info->address.sin_addr.S_un.S_addr;
-                        //todo validate username (no illegal characters), and copy it to the device username
+
+                        //copy the username
+                        sanitize_username(((init_packet_data_t *)packet)->username);
+                        memcpy(found_rdev->username, ((init_packet_data_t *)packet)->username, MAX_USERNAME_LEN);
+
                         args->device_tree->search_release(args->device_tree);
                         break;
                     }
@@ -185,8 +187,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                     rdev.dev_state_flag = RDSF_UNVERIFIED; //the device is not verified
 
                     ret = args->device_tree->insert(args->device_tree, &rdev);
-                    //todo: insert can return 1 if th device already exist, and other errors, handle them properly
-                    if (ret != INDIGO_SUCCESS) {
+
+                    if (ret) {
                         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                         goto cleanup;
                     }
@@ -211,7 +213,20 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                                 args->sockets,packet, args->flag);
 
                     if (ret) {
-                        //todo: handle send_packet errors
+                        switch (ret) {
+                            case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
+                            case INDIGO_ERROR_INVALID_PARAM:
+                            case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
+                                *process_return = ret;
+                                goto cleanup;
+                            case INDIGO_ERROR_NO_SYS_RESOURCES: //todo: I don't think we should terminate for that
+                                break;
+                            case INDIGO_ERROR_NETWORK_RESET:
+                                set_event_flag(args->flag, EF_RESET_SOCKETS);
+                                break;
+                            default:
+                                break; //winlib errors go here
+                        }
                     }
 
                     //add signing response to expected packets
@@ -221,7 +236,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                     memset(signing_request_data,0, sizeof(signing_request_data_t));
 
                     if (xsr_tree->insert(xsr_tree, &xsr)) {
-                        //todo: what do we do if insert fails (either the id is already in the tree or memory error
+                        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                        goto cleanup;
                     }
 
                     break;
@@ -250,10 +266,10 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         , INDIGO_NONCE_SIZE
                         ,signing_response_data->signed_nonce
                         ,NULL);
-
+                    //can fail only dew to wrong usage
                     if (ret) {
-                        //todo: it can only fail due to wrong usage, else it never fails
-                        break;
+                        *process_return = INDIGO_ERROR_INVALID_PARAM;
+                        goto cleanup;
                     }
 
                     //create session keys
@@ -287,7 +303,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         //the device is found
 
                         //in case the peer runs modified code there could be a memory leak if they send 2 signing requests
-                        //todo: take care when creating rdev nodes, zero them out
+                        //tree nodes are zeroed out on creation (we will not free random ass memory)
                         free(found_rdev->pkx);
                         free(found_rdev->skx);
                         found_rdev->pkx = session_pk;
@@ -304,18 +320,16 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                             memcpy(xsr.nonce, signing_response_data->nonce, INDIGO_NONCE_SIZE);
                             memcpy(xsr.id, packet->id, crypto_sign_PUBLICKEYBYTES);
                             ret = xsr_tree->insert(xsr_tree, &xsr);
-                            //todo: should it always go to cleanup? what if its a double node or some mild situation?
                             if (ret) {
                                 printf("DEBUG: xsr_tree->insert() failed in packet_handler");
                                 fflush(stdout);
                                 args->device_tree->search_release(args->device_tree);
-                                *process_return = INDIGO_ERROR_INVALID_PARAM;
+                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                                 goto cleanup;
                             }
                         }
                         else {
                             //we don't need to send a signature request, we erase the nonce and turn off the flag
-                            //todo i don't think we need to erase the nonce since the flag is off
                             memset(signing_response_data->nonce,0,INDIGO_NONCE_SIZE);
                             signing_response_data->sig_request = 0;
                         }
@@ -338,7 +352,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                             free(session_pk);
                             free(session_sk);
                             *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                            goto cleanup;//todo: necessary?
+                            goto cleanup;
                         }
 
                         //send a nonce to verify them
@@ -350,7 +364,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         memcpy(xsr.id, packet->id, crypto_sign_PUBLICKEYBYTES);
 
                         if (xsr_tree->insert(xsr_tree, &xsr)) {
-                            //todo: what do we do if insert fails (either the id is already in the table or memory error
+                            *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                            goto cleanup;
                         }
                         memset(&xsr,0,sizeof(xsr_t));
                     }
@@ -369,8 +384,20 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                                       ,args->sockets
                                       ,packet, args->flag);
                     if (ret) {
-                        *process_return = ret;
-                        goto cleanup;
+                        switch (ret) {
+                        case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
+                        case INDIGO_ERROR_INVALID_PARAM:
+                        case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
+                            *process_return = ret;
+                            goto cleanup;
+                        case INDIGO_ERROR_NO_SYS_RESOURCES: //todo: I don't think we should terminate for that
+                            break;
+                        case INDIGO_ERROR_NETWORK_RESET:
+                            set_event_flag(args->flag, EF_RESET_SOCKETS);
+                            break;
+                        default:
+                            break; //winlib errors go here
+                        }
                     }
                     break;
 
@@ -401,8 +428,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                             //I am not sure how we could get an expected packet for a device
                             //that isn't in the device tree
                             if (ret == 0) {
-                                //todo: is this updated correctly (we use the last time we received, or the time it will be removed?)
-                                found_rdev->expiration_time = time(NULL);
+                                found_rdev->expiration_time = time(NULL) + EXPIRATION_TIME;
                                 found_rdev->ip = packet_info->address.sin_addr.S_un.S_addr;//ip may have changed
                                 memcpy(found_rdev->peer_pkx,((signing_response_data_t *)packet)->pkx, crypto_kx_PUBLICKEYBYTES);
 
@@ -476,10 +502,22 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                                                       ,args->sockets
                                                       ,packet, args->flag);
                                     if (ret) {
-                                        free(session_pk);
-                                        free(session_sk);
-                                        *process_return = ret;
-                                        goto cleanup;
+                                        switch (ret) {
+                                        case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
+                                        case INDIGO_ERROR_INVALID_PARAM:
+                                        case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
+                                            free(session_pk);
+                                            free(session_sk);
+                                            *process_return = ret;
+                                            goto cleanup;
+                                        case INDIGO_ERROR_NO_SYS_RESOURCES: //todo: I don't think we should terminate for that
+                                            break;
+                                        case INDIGO_ERROR_NETWORK_RESET:
+                                            set_event_flag(args->flag, EF_RESET_SOCKETS);
+                                            break;
+                                        default:
+                                            break; //winlib errors go here
+                                        }
                                     }
                                 }
                             }
@@ -549,24 +587,25 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                 ret = create_server_session(fwd,args->device_tree, args->session_tree,xfp_tree,public_key, args->sockets, args->flag);
                 free(fwd);
                 if (ret) {
+                    //todo: create_server_session() uses send_packet() and returns its errors
+                    //todo: do more complex error handling
                     *process_return = ret;
                     goto cleanup;
                 }
-                //todo: if for some reason we cant create a session, tell the cli we cant
                 destroy_qnode(node);
                 node = NULL;
             }
             else if (node->type == QET_EXPECT_SEND_RESPONSE) {
-                //todo: put an xfp for the response we expect for the file we will send
+                //we sent a request to send a file, and we expect a response to that request
                 memset(&xfp, 0 , sizeof(xfp_t));
                 memcpy(&(xfp.session_id), node->data, sizeof(session_id_t));
                 free(node->data);
                 destroy_qnode(node);
                 node = NULL;
-                ret = xfp_tree->insert(xfp_tree, &xfp);
 
+                ret = xfp_tree->insert(xfp_tree, &xfp);
                 if (ret) {
-                    *process_return = ret;
+                    *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                     goto cleanup;
                 }
             }
@@ -640,6 +679,7 @@ int cmp_xfp(void *s1, void *s2) {
     return memcmp(&((xfp_t *)s1)->session_id, &((xfp_t *)s2)->session_id, (sizeof(uint64_t) + crypto_sign_PUBLICKEYBYTES));
 }
 
+
 int create_server_session(Q_FILE_SENDING_REQUEST *fwd
                           , tree_t *dev_tree
                           , tree_t *session_tree
@@ -697,14 +737,13 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd
 
     if (ret) {
         //the peer key is invalid, we reject the session
-        //todo: return so that the handler tells the cli the session got rejected (something like bellow)
-        //queue_push(cli_queue,fwd,QET_SESSION_REJECTED);
+        ret = INDIGO_ERROR_INVALID_PEER_PARAM;
         goto cleanup;
     }
 
     //todo: check if the serial is in the currently used fids
     if (rdev.last_fid >= fwd->serial) {
-        //todo: we reject the session
+        ret = INDIGO_ERROR_INVALID_PEER_PARAM;
         goto cleanup;
     }
     file_sending_response_data.serial = fwd->serial;
@@ -718,10 +757,8 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd
     }
 
     ret = send_packet(htons(PORT),fwd->addr,sockets,packet, flag);
-    if (ret) {
-        //todo, idk handle the error
-        goto cleanup;
-    }
+    if (ret) goto cleanup; //it's up to the caller to handle these errors, we cant do anything
+
     free(packet);
     packet = NULL;
     //create expected file packets
@@ -730,7 +767,8 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd
     xfp.session_id.serial = 0; //todo: assign the smallest valid serial number
     memcpy(xfp.session_id.pk,fwd->id,crypto_sign_PUBLICKEYBYTES);
 
-    xfp_tree->insert(xfp_tree,&xfp);
+    ret = xfp_tree->insert(xfp_tree,&xfp);
+    if (ret) goto cleanup;
 
     memcpy(&(session->session_id), &(xfp.session_id), sizeof(session_id_t));
     session->bytes_moved = 0;
@@ -740,9 +778,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd
     session->ip = fwd->addr;
 
     ret = session_tree->insert(session_tree,session);
-    if (ret) {
-        goto cleanup;
-    }
+    if (ret) goto cleanup;
 
     return 0;
 
@@ -824,18 +860,19 @@ int create_client_session(const packet_t *const packet
     session->ip = packet_info->address.sin_addr.S_un.S_addr;
 
 
-    session_tree->insert(session_tree,session);
+    ret = session_tree->insert(session_tree,session);
+    if (ret) goto cleanup;
 
     tmp_active_file->fd = xfp.file; //todo xfp should contain a file descriptor, as for now it is not initialized
     tmp_active_file->counter = 0;
     tmp_active_file->next = NULL;
 
     ret = queue_push(send_queue, tmp_active_file,QET_SEND_FILE);
-    if (ret != 0) {
-        goto cleanup;
-    }
+    if (ret != 0) goto cleanup;
+
     xfp_tree->remove(xfp_tree,&xfp);
     return 0;
+
     cleanup:
     free(tmp_active_file);
     if (session) {
@@ -845,4 +882,18 @@ int create_client_session(const packet_t *const packet
     free(session);
     xfp_tree->remove(xfp_tree,&xfp);
     return ret;
+}
+
+int sanitize_username(wchar_t username[MAX_USERNAME_LEN]) {
+    if (username == NULL) return 1;
+
+    username[MAX_USERNAME_LEN - 1] = L'\0';
+    for (int i = 0; i < MAX_USERNAME_LEN; i++) {
+        if (username[i] == '\0') break;
+        if (!iswprint(username[i])) {
+            memmove(username + i, username + i + 1, MAX_USERNAME_LEN - i - 1);
+        }
+        //may add more rules, but for now it's ok
+    }
+    return 0;
 }

@@ -13,7 +13,7 @@
 //
 
 size_t get_queue_size(QUEUE *queue) {
-    if (queue == NULL) {return 0;}
+    if (queue == NULL) return 0;
 
     size_t size;
 
@@ -26,7 +26,7 @@ size_t get_queue_size(QUEUE *queue) {
 
 //call this only once when the queue is created, else there will be a memory leak
 uint8_t init_queue(QUEUE *queue) {
-    if (queue == NULL) {return 1;}
+    if (queue == NULL) return 1;
 
     queue->firstNode = NULL;
     queue->lastNode = NULL;
@@ -45,7 +45,7 @@ uint8_t init_queue(QUEUE *queue) {
 }
 
 uint8_t queue_is_empty(QUEUE *queue) {
-    if (queue == NULL) {return 1;}
+    if (queue == NULL) return 1;
 
     pthread_mutex_lock(&queue->mutex);
 
@@ -58,7 +58,7 @@ uint8_t queue_is_empty(QUEUE *queue) {
 
 //first destroy the threads and then destroy the queue
 void destroy_queue(QUEUE *queue) {
-    if (queue == NULL) {return;}
+    if (queue == NULL) return;
 
     pthread_mutex_lock(&queue->mutex);
 
@@ -95,14 +95,14 @@ QNODE *create_qnode() {
 }
 
 void destroy_qnode(QNODE *node) {
-    if (node == NULL) {return;}
+    if (node == NULL) return;
     free(node);
 }
 
 uint8_t queue_push(QUEUE *queue, void * const data, QET type) {
     QNODE *temp = NULL;
 
-    if (queue == NULL) {return 1;}
+    if (queue == NULL) return 1;
 
     pthread_mutex_lock(&queue->mutex);
 
@@ -137,7 +137,7 @@ uint8_t queue_push(QUEUE *queue, void * const data, QET type) {
 QNODE *queue_pop(QUEUE *queue, QOPT option) {
     QNODE *temp = NULL;
 
-    if (queue == NULL) {return NULL;}
+    if (queue == NULL) return NULL;
 
     pthread_mutex_lock(&queue->mutex);
 

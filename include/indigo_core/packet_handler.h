@@ -52,6 +52,8 @@ typedef struct PACKET_HANDLER_ARGS {
 
 int *packet_handler_thread(PACKET_HANDLER_ARGS *args);
 
+//utilities
+
 int cmp_xsr(void *s1, void *s2);
 int cmp_xfp(void *s1, void *s2);
 
@@ -69,4 +71,6 @@ int create_client_session(const packet_t *packet
                           , tree_t *xfp_tree
                           , QUEUE *send_queue
                           , QUEUE *cli_queue);
+
+int sanitize_username(wchar_t username[MAX_USERNAME_LEN]);
 #endif //PACKET_HANDLER_H

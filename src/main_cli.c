@@ -52,7 +52,7 @@ int main(int argc, char *argv[]) {
 
 
     //create the device ll
-    //todo: fill the cmp function
+
     ret = new_tree(&device_tree, cmp_rdev, sizeof(remote_device_t), BINARY_TREE_TYPE_AVL);
     if (!ret) {
         fprintf(stderr, "malloc failed\n");
