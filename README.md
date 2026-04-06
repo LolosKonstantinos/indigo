@@ -1,13 +1,13 @@
 # Indigo
 
-### A high performance, end to end encrypted LAN file transfer tool.
+### A high performance, end-to-end encrypted LAN file transfer tool.
 Indigo is a file transfer program for local networks, it detects available devices in each available network  
 and can send selected files to these peers, fast and securely.
 
 ### Goals of this project.
 #### The goals of this project are listed below, in order of importance
 
-#### 1. Data safety and end to end encryption
+#### 1. Data safety and end-to-end encryption
   Secure, secret and reliable communications is the initiative that brought this project to life.  
   We created a secure cryptosystem, against attackers. No one should be able to get any kind of information  
   about the content of the files transferred, and no one should be able to impersonate another user in the network.
@@ -39,7 +39,7 @@ and can send selected files to these peers, fast and securely.
   
 ## Building
 
-Currently there is no official release.  
+Currently, there is no official release.  
 
 However, if one wants to compile the project in its current state.  
 Usage of CMake is probably the recommended way.  
