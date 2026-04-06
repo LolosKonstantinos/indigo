@@ -6,7 +6,6 @@
 #include <ws2tcpip.h>
 
 #include "indigo_core/net_io.h"
-#include "file_transfer.h"
 #include <cli/cli.h>
 #include "crypto_utils.h"
 #include "indigo_types.h"

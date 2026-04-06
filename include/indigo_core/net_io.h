@@ -11,6 +11,7 @@
 #include <sodium/crypto_aead_xchacha20poly1305.h>
 #include <sodium/crypto_sign.h>
 #include <indigo_types.h>
+#include <crypto_utils.h>
 #include <indigo_core/net_monitor.h>
 
 //for now, it's ok, later we will need to add linux libraries

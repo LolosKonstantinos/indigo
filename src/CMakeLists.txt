@@ -16,7 +16,7 @@ set_target_properties(indigo_core PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-set_target_properties(file_tras PROPERTIES
+set_target_properties(crypto_utils PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 

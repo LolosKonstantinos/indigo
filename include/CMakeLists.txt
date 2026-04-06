@@ -3,11 +3,7 @@ add_subdirectory(cli)
 add_subdirectory(indigo_core)
 
 # Create an interface target to hold the include directories.
-add_library(file_trans_includes INTERFACE
-        file_transfer.h
-        session.h
-        crypto_utils.h
-)
+add_library(crypto_includes INTERFACE crypto_utils.h)
 
 #utilities libraries
 add_library(path_includes INTERFACE path.h)
@@ -22,8 +18,7 @@ add_library(indigo_types INTERFACE indigo_types.h)
 
 
 # The interface target makes all its consumers aware of the include directory.
-target_include_directories(file_trans_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
-
+target_include_directories(crypto_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_include_directories(path_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(event_flag_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})

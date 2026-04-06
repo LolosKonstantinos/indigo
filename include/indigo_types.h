@@ -9,16 +9,17 @@
 #include <winsock2.h>
 #endif
 #include <stdint.h>
+#include <stdio.h>
 #include <sodium/crypto_aead_xchacha20poly1305.h>
 #include <sodium/crypto_sign.h>
 #include <sodium/crypto_kx.h>
-#include "crypto_utils.h"
 
 /*GLOBAL DEFINITIONS*/
 #define FORCE_INLINE inline __attribute__((always_inline))
 #define PACKED __attribute__((__packed__))
 #define MAX_PSW_LEN 128
 #define MAX_USERNAME_LEN 32
+#define INDIGO_NONCE_SIZE 32
 
 //RDSF == RemoteDeviceStateFlag
 #define RDSF_UNVERIFIED     0x0000

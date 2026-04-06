@@ -9,8 +9,8 @@
 
 #include <stdint.h>
 #include <sodium.h>
-
 #include "indigo_types.h"
+
 //todo use sodium one time authentication with the master key on important config files
 //todo move these in indigo_errors
 #define INDIGO_FILE_NOT_FOUND 0x02
@@ -18,7 +18,6 @@
 
 #define INDIGO_PSW_HASH_TIMELIMIT_UPPER 5
 #define INDIGO_PSW_HASH_TIMELIMIT_LOWER 3
-#define INDIGO_NONCE_SIZE 32
 
 #define INDIGO_CRYPTO_DIR               "config/crypto/"
 #define INDIGO_PSW_DIR                  "config/crypto/psw/"

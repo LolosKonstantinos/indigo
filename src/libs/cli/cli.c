@@ -5,7 +5,6 @@
 #include "crypto_utils.h"
 #include "cli.h"
 #include "indigo_types.h"
-#include <locale.h>
 #include <wctype.h>
 #include "indigo_errors.h"
 #include <indigo_core/manager.h>

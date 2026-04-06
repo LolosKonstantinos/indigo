@@ -1,5 +1,4 @@
 add_subdirectory(indigo_core)
-add_subdirectory(file_transfer)
 add_subdirectory(utilities)
 add_subdirectory(gui)
 add_subdirectory(cli)
