@@ -36,6 +36,7 @@ and can send selected files to these peers, fast and securely.
 - Packet demultiplexing and handling
 - File transmission controls
 - User interface
+- Compatibility with more Operating systems (other than Microsoft Windows)
   
 ## Building
 
