@@ -30,20 +30,7 @@
 //used for discovery packet
 #define MAGIC_NUMBER_1 (htonl(1841452771))
 #define MAGIC_NUMBER_2 (htonl(0x7fffffff))
-//message types
-#define MSG_INIT_PACKET                 0x01
-#define MSG_RESEND                      0x02
-#define MSG_SIGNING_REQUEST             0x03
-#define MSG_SIGNING_RESPONSE            0x04
-#define MSG_FILE_SENDING_REQUEST        0x05
-#define MSG_FILE_SENDING_RESPONSE       0x06
-#define MSG_FILE_CHUNK                  0x07
-#define MSG_STOP_FILE_TRANSMISSION      0x08
-#define MSG_PAUSE_FILE_TRANSMISSION     0x09
-#define MSG_CONTINUE_FILE_TRANSMISSION  0x0a
-#define MSG_IP_CHANGE                   0x0b
-#define MSG_ERR                         0xff
-//more types may be added
+
 
 typedef struct RECV_INFO {
     struct sockaddr *source;
@@ -79,6 +66,7 @@ typedef struct SEND_ARGS {
     socket_ll *sockets;
     QUEUE *queue;
     signing_key_pair_t * sign_keys;
+    //todo: add username field, must be a thread safe buffer
 }SEND_ARGS;
 
 typedef struct RECV_ARGS {

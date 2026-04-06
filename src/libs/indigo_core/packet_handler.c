@@ -21,7 +21,7 @@
 //todo: implement control signals and ip change
 //todo: i know for sure that there is some code around here that does not work at all, we need to find it
 //todo: we use 2 magic numbers, one for encrypted and one for unencrypted packets, distinguish them, and handle them
-//todo: there are many todos, fix them first and then check net_io and then implement the rest of the packet types
+//todo: decrypt packets before checking the packet type
 int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     uint32_t flag_val = 0;
     QNODE *node = NULL;
@@ -182,8 +182,10 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                     //the remote device is not on the tree so we add it
                     rdev.expiration_time = time(NULL);
                     rdev.ip = packet_info->address.sin_addr.S_un.S_addr;
-                    rdev.pkx = NULL;
-                    rdev.skx = NULL;
+                    rdev.client_rk = NULL;
+                    rdev.client_tk = NULL;
+                    rdev.server_rk = NULL;
+                    rdev.server_tk = NULL;
                     rdev.dev_state_flag = RDSF_UNVERIFIED; //the device is not verified
 
                     ret = args->device_tree->insert(args->device_tree, &rdev);
@@ -257,7 +259,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                             printf("DEBUG: time rejected");
                             fflush(stdout);
                             break;
-                            }
+                        }
                     }
                     else break;
 
@@ -302,13 +304,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                     if (ret == 0) {
                         //the device is found
 
-                        //in case the peer runs modified code there could be a memory leak if they send 2 signing requests
-                        //tree nodes are zeroed out on creation (we will not free random ass memory)
-                        free(found_rdev->pkx);
-                        free(found_rdev->skx);
-                        found_rdev->pkx = session_pk;
-                        found_rdev->skx = session_sk;
-
                         found_rdev->expiration_time = time(NULL) + EXPIRATION_TIME;
                         found_rdev->ip = packet_info->address.sin_addr.S_un.S_addr;
 
@@ -317,6 +312,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                             signing_response_data->sig_request = 1;
                             //insert into xsr
                             xsr.expiration_time = time(NULL) + EXPIRATION_TIME;
+                            xsr.pkx = session_pk;
+                            xsr.skx = session_sk;
                             memcpy(xsr.nonce, signing_response_data->nonce, INDIGO_NONCE_SIZE);
                             memcpy(xsr.id, packet->id, crypto_sign_PUBLICKEYBYTES);
                             ret = xsr_tree->insert(xsr_tree, &xsr);
@@ -342,8 +339,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         //we detected the device (though it is unverified)
                         rdev.expiration_time = time(NULL) + EXPIRATION_TIME;
                         rdev.ip = packet_info->address.sin_addr.S_un.S_addr;
-                        rdev.pkx = session_pk;
-                        rdev.skx = session_sk;
                         memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
                         rdev.dev_state_flag = RDSF_UNVERIFIED; //the device is not verified
 
@@ -360,6 +355,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         signing_response_data->sig_request = 1;
                         //add signing response to expected packets
                         xsr.expiration_time = time(NULL) + EXPIRATION_TIME;
+                        xsr.pkx = session_pk;
+                        xsr.skx = session_sk;
                         memcpy(xsr.nonce, signing_response_data->nonce, INDIGO_NONCE_SIZE);
                         memcpy(xsr.id, packet->id, crypto_sign_PUBLICKEYBYTES);
 
@@ -412,6 +409,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                     ret = xsr_tree->search(xsr_tree, &xsr);
                     if (ret) break; //if there is no expected signing response, there is nothing to process
 
+                    //verify the signed nonce
                     ret = crypto_sign_open(nonce,NULL,
                             ((signing_response_data_t *)packet->data)->signed_nonce,
                             INDIGO_NONCE_SIZE + crypto_sign_BYTES,
@@ -420,21 +418,18 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         //if the nonce signed is the same as the one we sent to be signed
                         if (memcmp(xsr.nonce, nonce,INDIGO_NONCE_SIZE) == 0) {
                             //the device got verified
-
-                            //remove the expected packet
-                            xsr_tree->remove(xsr_tree, &xsr);
-
+                            //todo: so we need to create the client and server keys, if we need to sing nonce, we create keys no xsr, otherwise use xsr
                             ret = args->device_tree->search_pin(args->device_tree, &rdev, (void **)&found_rdev);
-                            //I am not sure how we could get an expected packet for a device
-                            //that isn't in the device tree
+                            /* I am not sure how we could get an expected packet for a device
+                             * that isn't in the device tree
+                             */
                             if (ret == 0) {
                                 found_rdev->expiration_time = time(NULL) + EXPIRATION_TIME;
                                 found_rdev->ip = packet_info->address.sin_addr.S_un.S_addr;//ip may have changed
-                                memcpy(found_rdev->peer_pkx,((signing_response_data_t *)packet)->pkx, crypto_kx_PUBLICKEYBYTES);
 
                                 found_rdev->dev_state_flag |= RDSF_VERIFIED;
 
-                                //check if we need to verify our selves
+                                //check if we need to verify ourselves
                                 if (((signing_response_data_t *)(packet->data))->sig_request) {
                                     signing_response_data->zero = 0;
                                     signing_response_data->sig_request = 0;
@@ -442,7 +437,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
 
                                     ret = crypto_sign(signing_response_data->signed_nonce
                                         , NULL
-                                        , ((signing_response_data_t *)packet)->nonce
+                                        , ((signing_response_data_t *)packet->data)->nonce
                                         , INDIGO_NONCE_SIZE
                                         , args->signing_keys->secret);
                                     if (ret) {
@@ -455,36 +450,57 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                                      * we have created session keys but the other party hasn't verified us
                                      * it could happen if the other party runs slightly modified code, me not happy
                                      */
-                                    if (!found_rdev->pkx || !found_rdev->skx) {
-                                        //todo: be careful here for double free
-                                        free(found_rdev->pkx);
-                                        free(found_rdev->skx);
 
-                                        session_pk = malloc(crypto_kx_PUBLICKEYBYTES);
-                                        session_sk = malloc(crypto_kx_SECRETKEYBYTES);
-                                        if (!session_pk || !session_sk) {
-                                            free(session_pk);
-                                            free(session_sk);
-                                            *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                                            goto cleanup;
-                                        }
-                                        sodium_mlock(session_sk,crypto_kx_SECRETKEYBYTES);
+                                    session_pk = malloc(crypto_kx_PUBLICKEYBYTES);
+                                    session_sk = malloc(crypto_kx_SECRETKEYBYTES);
+                                    if (!session_pk || !session_sk) {
+                                        free(session_pk);
+                                        free(session_sk);
+                                        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                        goto cleanup;
+                                    }
+                                    sodium_mlock(session_sk,crypto_kx_SECRETKEYBYTES);
 
-                                        ret = crypto_kx_keypair(session_pk,session_sk);
-                                        if (ret) {
-                                            free(session_pk);
-                                            free(session_sk);
-                                            printf("DEBUG: kx_keypair failed");
-                                            fflush(stdout);
-                                            *process_return = INDIGO_ERROR_INVALID_PARAM;
-                                            goto cleanup;
-                                        }
-                                        found_rdev->pkx = session_pk;
-                                        found_rdev->skx = session_sk;
+                                    ret = crypto_kx_keypair(session_pk,session_sk);
+                                    if (ret) {
+                                        free(session_pk);
+                                        free(session_sk);
+                                        printf("DEBUG: kx_keypair failed");
+                                        fflush(stdout);
+                                        *process_return = INDIGO_ERROR_INVALID_PARAM;
+                                        goto cleanup;
+                                    }
+                                    ret = crypto_kx_client_session_keys(found_rdev->client_rk
+                                        , found_rdev->client_tk
+                                        , session_pk
+                                        , session_sk
+                                        , ((signing_response_data_t *)packet->data)->pkx);
+                                    if (ret) {
+                                        //the peer's public key is not acceptable
+                                        free(session_pk);
+                                        free(session_sk);
+                                        break;
                                     }
 
-                                    memcpy(signing_response_data->pkx,found_rdev->pkx, crypto_kx_PUBLICKEYBYTES);
+                                    ret = crypto_kx_server_session_keys(found_rdev->server_rk
+                                        , found_rdev->server_tk
+                                        , session_pk
+                                        , session_sk
+                                        , ((signing_response_data_t *)packet->data)->pkx);
+                                    if (ret) {
+                                        //the peer's public key is not acceptable
+                                        free(session_pk);
+                                        free(session_sk);
+                                        break;
+                                    }
 
+                                    memcpy(signing_response_data->pkx,session_pk, crypto_kx_PUBLICKEYBYTES);
+
+                                    //we no longer need the keys
+                                    free(session_pk);
+                                    free(session_sk);
+                                    session_pk = NULL;
+                                    session_sk = NULL;
 
                                     build_packet(packet, MSG_SIGNING_RESPONSE, public_key, NULL,signing_response_data);
                                     ret = crypto_sign_detached(signing_response_data->signature, NULL
@@ -492,8 +508,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                                         , offsetof(packet_t, data) + offsetof(signing_response_data_t, signature)
                                         ,public_key);
                                     if (ret) {
-                                        free(session_pk);
-                                        free(session_sk);
                                         *process_return = INDIGO_ERROR_INVALID_PARAM;
                                         goto cleanup;
                                     }
@@ -506,8 +520,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                                         case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
                                         case INDIGO_ERROR_INVALID_PARAM:
                                         case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
-                                            free(session_pk);
-                                            free(session_sk);
                                             *process_return = ret;
                                             goto cleanup;
                                         case INDIGO_ERROR_NO_SYS_RESOURCES: //todo: I don't think we should terminate for that
@@ -520,17 +532,47 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                                         }
                                     }
                                 }
+                                else {
+                                    //todo: improve error handling
+                                    //create the client and server keys
+                                    ret = crypto_kx_client_session_keys(found_rdev->client_rk
+                                        , found_rdev->client_tk
+                                        , xsr.pkx
+                                        , xsr.skx
+                                        , ((signing_response_data_t *)packet->data)->pkx);
+                                    if (ret) {
+                                        //the peer's public key is not acceptable
+                                        break;
+                                    }
+
+                                    ret = crypto_kx_server_session_keys(found_rdev->server_rk
+                                        , found_rdev->server_tk
+                                        , xsr.pkx
+                                        , xsr.skx
+                                        , ((signing_response_data_t *)packet->data)->pkx);
+                                    if (ret) {
+                                        //the peer's public key is not acceptable
+                                        break;
+                                    }
+                                }
                             }
 
                             args->device_tree->search_release(args->device_tree);
+
+                            //remove the expected packet
+                            free(xsr.pkx);
+                            free(xsr.skx);
+                            xsr_tree->remove(xsr_tree, &xsr);
                         }
                     }
                     break;
                 case MSG_FILE_SENDING_REQUEST:{
+                        //todo: this packet is encrypted, we decrypt it first
                         //we need permission to proceed, so we push it to the manager to handle
                         //tell the interface (cli or gui via queue), the interface will ask the user
                         //if the user agrees, we send back a response containing the preferred session serial number
                         //if it gets accepted we receive a session_t struct via queue, and store an expected file packet
+
                         Q_FILE_SENDING_REQUEST *fsr = malloc(sizeof(Q_FILE_SENDING_REQUEST));
                         if (!fsr) {
                             *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
@@ -552,19 +594,19 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                 }
                 case MSG_FILE_SENDING_RESPONSE:
                     ret = create_client_session(packet
-                                              , packet_info
-                                              , args->device_tree
-                                              , args->session_tree
-                                              , xfp_tree
-                                              , args->send_queue
-                                              , args->cli_queue);
+                                                , packet_info
+                                                , args->device_tree
+                                                , args->session_tree
+                                                , xfp_tree
+                                                , args->send_queue
+                    );
                     if (ret) {
                         *process_return = ret;
                         goto cleanup;
                     }
-
                     break;
                 case MSG_FILE_CHUNK:
+
                 case MSG_RESEND:
                 case MSG_STOP_FILE_TRANSMISSION:
                 case MSG_PAUSE_FILE_TRANSMISSION:
@@ -712,32 +754,10 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
-    session->receive_key = malloc(crypto_kx_SESSIONKEYBYTES);
-    session->transmit_key = malloc(crypto_kx_SESSIONKEYBYTES);
-
-    if (!session->receive_key || !session->transmit_key) {
-        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-    sodium_mlock(session->receive_key, crypto_kx_SESSIONKEYBYTES);
-    sodium_mlock(session->transmit_key,crypto_kx_SESSIONKEYBYTES);
 
     xfp.file = tmpfile();
     if (!xfp.file) {
         ret = INDIGO_ERROR_CAN_NOT_OPEN_FILE;
-        goto cleanup;
-    }
-    //create the session keys
-    ret = crypto_kx_server_session_keys(session->receive_key,
-                                        session->transmit_key
-                                        ,rdev.pkx
-                                        ,rdev.skx
-                                        ,rdev.peer_pkx);
-
-
-    if (ret) {
-        //the peer key is invalid, we reject the session
-        ret = INDIGO_ERROR_INVALID_PEER_PARAM;
         goto cleanup;
     }
 
@@ -751,7 +771,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd
     //todo: why do we sent a nonce?
     randombytes_buf(nonce,crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
     build_packet(packet, MSG_FILE_SENDING_RESPONSE,pk,nonce, &file_sending_response_data);
-    ret = encrypt_packet(packet, session->transmit_key, nonce);
+    ret = encrypt_packet(packet, rdev.server_tk, nonce);
     if (ret) {
         goto cleanup;
     }
@@ -783,10 +803,6 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd
     return 0;
 
     cleanup:
-    if (session) {
-        free(session->receive_key);
-        free(session->transmit_key);
-    }
     free(packet);
     free(session);
     return ret;
@@ -797,8 +813,7 @@ int create_client_session(const packet_t *const packet
                           , tree_t *dev_tree
                           , tree_t *session_tree
                           , tree_t *xfp_tree
-                          , QUEUE *send_queue
-                          , QUEUE *cli_queue) {
+                          , QUEUE *send_queue) {
     //we got their one time public key, and confirmation to proceed
     //we calculate the send key
     //tell the sending thread to start sending the file
@@ -808,9 +823,11 @@ int create_client_session(const packet_t *const packet
     active_file_t *tmp_active_file = NULL;
     xfp_t xfp;
 
+    //check if the peer is in the device tree (if they are not, we shouldn't create a session)
     ret = dev_tree->search(dev_tree, &rdev);
     if (ret) goto cleanup;
 
+    //add an expected file packet (xfp) for this session
     memcpy(&(xfp.session_id.pk), packet->id, crypto_sign_PUBLICKEYBYTES);
     xfp.session_id.serial = ((file_sending_response_data_t *)(packet->data))->serial;
     ret = xfp_tree->search(xfp_tree, &xfp);
@@ -823,35 +840,7 @@ int create_client_session(const packet_t *const packet
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
-    session->receive_key = malloc(crypto_kx_SESSIONKEYBYTES);
-    session->transmit_key = malloc(crypto_kx_SESSIONKEYBYTES);
-    if (!session->receive_key || !session->transmit_key) {
-        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-    sodium_mlock(session->receive_key,crypto_kx_SESSIONKEYBYTES);
-    sodium_mlock(session->transmit_key,crypto_kx_SESSIONKEYBYTES);
 
-    //create the session keys
-    ret = crypto_kx_client_session_keys(session->receive_key,
-                                        session->transmit_key,
-                                        rdev.pkx,
-                                        rdev.skx,
-                                        rdev.peer_pkx
-                                        );
-
-    if (ret) {
-        session_id_t *session_id = malloc(sizeof(session_id_t));
-        if (!session_id) {
-            ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-            goto cleanup;
-        }
-        memcpy(session_id, &(session->session_id), sizeof(session_id_t));
-        //the peer key is invalid, we reject the session
-        //tell the cli that we rejected the session
-        ret = queue_push(cli_queue,session_id,QET_SESSION_REJECTED);
-        goto cleanup;
-    }
     memcpy(&(session->session_id), &(xfp.session_id), sizeof(session_id_t));
     session->bytes_moved = 0;
     session->start_time = time(NULL);
@@ -875,10 +864,6 @@ int create_client_session(const packet_t *const packet
 
     cleanup:
     free(tmp_active_file);
-    if (session) {
-        free(session->receive_key);
-        free(session->transmit_key);
-    }
     free(session);
     xfp_tree->remove(xfp_tree,&xfp);
     return ret;

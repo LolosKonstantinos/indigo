@@ -19,6 +19,8 @@ typedef struct xsr_t {
     time_t expiration_time;
     unsigned char nonce[INDIGO_NONCE_SIZE];
     unsigned char id[crypto_sign_PUBLICKEYBYTES];
+    unsigned char *pkx;
+    unsigned char *skx;
 }xsr_t;
 
 
@@ -70,7 +72,7 @@ int create_client_session(const packet_t *packet
                           , tree_t *session_tree
                           , tree_t *xfp_tree
                           , QUEUE *send_queue
-                          , QUEUE *cli_queue);
+);
 
 int sanitize_username(wchar_t username[MAX_USERNAME_LEN]);
 #endif //PACKET_HANDLER_H

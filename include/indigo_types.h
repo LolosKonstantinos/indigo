@@ -33,6 +33,22 @@
 #define PAC_ENCRYPT_OFFSET (offsetof(packet_t, zero))
 #define PAC_ENCRYPT_BYTES (PAC_DATA_BYTES_USABLE + 4)
 #define PAC_MAX_BYTES (sizeof(packet_t))
+
+//message types
+#define MSG_INIT_PACKET                 0x01
+#define MSG_RESEND                      0x02
+#define MSG_SIGNING_REQUEST             0x03
+#define MSG_SIGNING_RESPONSE            0x04
+#define MSG_FILE_SENDING_REQUEST        0x05
+#define MSG_FILE_SENDING_RESPONSE       0x06
+#define MSG_FILE_CHUNK                  0x07
+#define MSG_STOP_FILE_TRANSMISSION      0x08
+#define MSG_PAUSE_FILE_TRANSMISSION     0x09
+#define MSG_CONTINUE_FILE_TRANSMISSION  0x0a
+#define MSG_IP_CHANGE                   0x0b
+#define MSG_ERR                         0xff
+//more types may be added
+
 //the packet that is sent for everything, device discovery, signature handshakes, file chunks, etc.
 //it's a little big but since the buffer is at the end there is no need to send the whole thing
 typedef struct PACKED udp_packet_t{
@@ -118,9 +134,12 @@ typedef struct remote_device_t{
     int port;
     uint32_t ip;
     unsigned char peer_pk[crypto_sign_PUBLICKEYBYTES];
-    unsigned char peer_pkx[crypto_kx_PUBLICKEYBYTES];
-    unsigned char *pkx;
-    unsigned char *skx;
+
+    unsigned char *client_rk;
+    unsigned char *client_tk;
+    unsigned char *server_rk;
+    unsigned char *server_tk;
+
     wchar_t username[MAX_USERNAME_LEN];
     uint16_t dev_state_flag;
 } remote_device_t;
@@ -134,9 +153,6 @@ typedef struct session_t{
     session_id_t session_id;
     int port;
     uint32_t ip;
-    //the keys bellow are pointers to secure buffers
-    unsigned char *receive_key; // the key to decrypt the received data
-    unsigned char *transmit_key;//the key to encrypt data to send
     time_t start_time;
     time_t end_time;
     size_t bytes_moved;

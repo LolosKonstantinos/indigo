@@ -154,7 +154,7 @@ int send_discovery_packets(
 
             curr_time = time(NULL);
             //todo this is wrong because we sign the whole data and not just the timestamp
-            crypto_sign(packet_data.signed_time
+            crypto_sign((unsigned char *)&packet_data.timestamp
                               ,NULL
                               ,(unsigned char *)&curr_time
                               ,sizeof(time_t)
@@ -1067,6 +1067,7 @@ int *send_thread(SEND_ARGS *args) {
         return NULL;
     }
     *process_return = 0;
+
     fid_array = new_buffer(sizeof(void *), 1<<7);
     if (!fid_array) {
         set_event_flag(args->flag, EF_TERMINATION);
@@ -1125,6 +1126,15 @@ int *send_thread(SEND_ARGS *args) {
                 }
             }
             destroy_qnode(node);
+        }
+        //todo: there is a queue node with the info needed, check it and 
+        else if (flag_val & EF_RESEND_FILE_CHUNK) {
+        }
+        else if (flag_val & EF_STOP_FILE_TRANSMISSION) {
+        }
+        else if (flag_val & EF_PAUSE_FILE_TRANSMISSION) {
+        }
+        else if (flag_val & EF_CONTINUE_FILE_TRANSMISSION) {
         }//we don't care about other events, if they are there we shouldn't get them anyway
 
 
@@ -1132,18 +1142,26 @@ int *send_thread(SEND_ARGS *args) {
         ///  phase 2: send file and discovery packets  ///
         //////////////////////////////////////////////////
 
+        //send file packets
         tmp_af = NULL;
         curr_af = active_files;
-        while (curr_af) {
+        while (curr_af) { //for every active file send a packet, in circular way
             ret = send_file_packet(curr_af,args->sign_keys->public, args->sockets, args->flag);
-            if (ret) {
+            if (ret) { //todo: are all errors non recoverable? check it please
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
                 free_buffer(fid_array);
                 *process_return = ret;
                 return process_return;
             }
+            //if a file descriptor is null then the file has been transferred
+            /*todo: it is a good idea to have a flag, so that if something went wrong in the last packets,
+             * we can resend them. we need the fd to do that, so we dont wipe it out. wait something like 3 seconds
+             * or have them send a packet for successful transfer or both.
+            */
             if (!curr_af->fd) {
+                //tmp_af is the previous node
+
                 if (tmp_af) {
                     tmp_af->next = curr_af->next;
                     free(curr_af);
@@ -1154,6 +1172,13 @@ int *send_thread(SEND_ARGS *args) {
                     free(curr_af);
                     curr_af = active_files;
                 }
+
+                //check if we need to send discovery packets
+                clock_gettime(CLOCK_REALTIME, &current_ts);
+                if (deadline_ts.tv_sec <= current_ts.tv_sec && deadline_ts.tv_nsec <= current_ts.tv_nsec) break;
+
+                //if we remove a node, then curr_af is the next file to be sent
+                //if we don't continue we skip curr_af, and it's next packet is not sent
                 continue;
             }
 
@@ -1164,7 +1189,8 @@ int *send_thread(SEND_ARGS *args) {
             tmp_af = curr_af;
             curr_af = curr_af->next;
         }
-        //supply the username, if it will be file tied remove
+
+        //todo: remove username field if the username is in a file
         ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,1,0, args->sign_keys, TODO);
         if (ret > 0) {
             set_event_flag(args->flag, EF_TERMINATION);
@@ -1224,6 +1250,7 @@ int *send_thread(SEND_ARGS *args) {
         pthread_mutex_unlock(&(args->flag->mutex));
 
     }
+
     free_buffer(fid_array);
     return process_return;
 }
@@ -1436,7 +1463,7 @@ int *recv_thread(RECV_ARGS *args) {
                 //push the packet to be processed
                 //the buffer has enough space for the packet and metadata (packet_info)
                 //(its like a struct, but it's not),
-                //I've agreed that we don't need a struct, and I will mess up like real fag
+                //I've agreed that we don't need a struct, it may not work, but it's ok we can fix it if needed
 
                 //here we put the packet info at the end of the buffer that we received (there is enough space)
 
