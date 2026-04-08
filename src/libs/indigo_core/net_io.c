@@ -1136,8 +1136,10 @@ int *send_thread(SEND_ARGS *args) {
             }
             destroy_qnode(node);
         }
-        //todo: there is a queue node with the info needed, check it and 
+        //todo: there is a queue node with the info needed, check it and help your self
         else if (flag_val & EF_RESEND_FILE_CHUNK) {
+            //there is no fast way (better than O(N)) to search for the active file
+            //todo: implement linked hash map, hash table but nodes are a linked list too.
         }
         else if (flag_val & EF_STOP_FILE_TRANSMISSION) {
         }

@@ -145,8 +145,15 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     memcpy(signing_pk, signing_key_pair->public, crypto_sign_PUBLICKEYBYTES);
 
     //create threads
-    if (create_packet_handler_thread(&handler_args, args->flag, packet_queue, send_queue, mempool, args->device_tree,
-                                     args->master_key, sockets, &tid_handler)) {
+    if (create_sending_thread(&send_args, args->port, args->multicast_addr, sockets, args->flag, send_queue,
+                              args->master_key, &tid_send)) {
+        fprintf(stderr, "create_sending_thread failed\n");
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        goto cleanup;
+    }
+
+    if (create_packet_handler_thread(&handler_args, args->flag, packet_queue, send_queue, send_args->flag
+        , mempool,args->device_tree, args->master_key, sockets, &tid_handler)) {
         fprintf(stderr, "create_packet_handler_thread failed\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
@@ -158,12 +165,7 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
         goto cleanup;
     }
 
-    if (create_sending_thread(&send_args, args->port, args->multicast_addr, sockets, args->flag, send_queue,
-                              args->master_key, &tid_send)) {
-        fprintf(stderr, "create_sending_thread failed\n");
-        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
+
 
     override_flags[0] = handler_args->flag;
     override_flags[1] = recv_args->flag;
@@ -587,8 +589,8 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
 }
 
 int create_packet_handler_thread(
-    PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, QUEUE* send_queue, mempool_t* mempool, tree_t* device_tree
-    , const void* const master_key, socket_ll* sockets, pthread_t *tid){
+    PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, QUEUE* send_queue, EFLAG* send_flag, mempool_t* mempool
+    , tree_t* device_tree, const void* const master_key, socket_ll* sockets, pthread_t *tid){
 
     pthread_t thread;
 
@@ -625,6 +627,7 @@ int create_packet_handler_thread(
     handler_args->flag = flag;
     handler_args->device_tree = device_tree;
     handler_args->sockets = sockets;
+    handler_args->send_flag = send_flag;
 
     if (pthread_create(&thread, NULL, (void *)(&packet_handler_thread), handler_args)) {
         free_event_flag(flag);

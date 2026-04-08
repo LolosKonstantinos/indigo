@@ -51,5 +51,5 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
     EFLAG* override_flags[], socket_ll *sockets, pthread_t *tid);
 
 int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, QUEUE* send_queue,
-                                 mempool_t* mempool, tree_t* device_tree, const void *master_key, socket_ll* sockets, pthread_t *tid);
+                                 EFLAG* send_flag, mempool_t* mempool, tree_t* device_tree, const void *master_key, socket_ll* sockets, pthread_t *tid);
 #endif //THREAD_MANAGEMENT_H

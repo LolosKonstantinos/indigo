@@ -749,9 +749,24 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         args->session_tree->search_release(args->session_tree);
                         break;
                 }
-                case MSG_RESEND:
-                    fprintf(stderr, "DEBUG: Resend");
-                    break;
+                case MSG_RESEND:{
+                        fprintf(stderr, "DEBUG: Resend attempted\n");
+                        transmission_control_data_t *control_packet = malloc(sizeof(transmission_control_data_t));
+                        if (control_packet == NULL) {
+                            *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                            goto cleanup;
+                        }
+                        memcpy(control_packet, packet->data, sizeof(transmission_control_data_t));
+
+                        set_event_flag(args->send_flag, EF_RESEND_FILE_CHUNK);
+                        ret = queue_push(args->send_queue,control_packet,QET_RESEND_FILE_CHUNK);
+                        if (ret) {
+                            free(control_packet);
+                            *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                            goto cleanup;
+                        }
+                        break;
+                    }
                 case MSG_STOP_FILE_TRANSMISSION:
                 case MSG_PAUSE_FILE_TRANSMISSION:
                 case MSG_CONTINUE_FILE_TRANSMISSION:

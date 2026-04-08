@@ -39,6 +39,7 @@ typedef struct PACKET_HANDLER_ARGS {
     QUEUE *queue;
     QUEUE *cli_queue;
     QUEUE *send_queue;
+    EFLAG *send_flag;
     tree_t *device_tree;
     tree_t *session_tree;
     mempool_t *mempool;

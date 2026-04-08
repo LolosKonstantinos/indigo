@@ -8,9 +8,11 @@
 #include <string.h>
 #include "hash_functions.h"
 
+//todo: create normal hash table with 1.5 growth factor
+
 struct hash_table_priv {
     hashFunction hash;          //kinda useless, we always use MurMurHash anyway
-    unsigned char *table;                //the array of the hash table
+    unsigned char *table;       //the array of the hash table
     size_t data_size;           //the number of bytes of the data part of the bucket
     size_t bucket_count;        //the total number of buckets on the first level
     uint32_t key_length;        //the number of bytes of the key part of the buckets
@@ -89,7 +91,7 @@ int hash_table_insert(hash_table_t *ht, void *key, void *data){
         //we don't need to allocate more memory
         hash_code = priv->hash(key,priv->key_length);
         hash_code &= (1<<priv->hash_bit_length) - 1;
-        bucket = priv->table + hash_code * (priv->data_size + priv->key_length + sizeof(void *));
+        bucket = priv->table + (hash_code * (priv->data_size + priv->key_length + sizeof(void *)));
         /*if the key is 0 then the bucket is empty and ready to use*/
         if (is_zero(bucket + sizeof(void *), priv->key_length)) {
             memcpy(bucket + sizeof(void *), key, priv->key_length);
