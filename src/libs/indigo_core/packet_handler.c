@@ -62,6 +62,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     Q_FILE_SENDING_REQUEST *fwd = NULL;
 
     session_t *session = NULL;
+    session_t *found_session = NULL;
     unsigned char *session_pk = NULL;
     unsigned char *session_sk = NULL;
 
@@ -93,7 +94,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     }
 
     //the less the private key is exposed the better, we copy the public key since it is frequently used
-
     memcpy(public_key, args->signing_keys->public, crypto_sign_PUBLICKEYBYTES);
 
     //create the expected packet table
@@ -132,13 +132,51 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                 destroy_qnode(node);
                 node = NULL;
 
-                memcpy(&packet_header, packet, sizeof(packet_header));
                 //prepare the remote device struct to fill with the remote device info
                 //we zero so that previous garbage doesn't affect the new device
                 memset(&rdev, 0, sizeof(remote_device_t));
-
                 //most of the time we need to search the tree so we just copy it from the start
                 memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
+
+                //check if the packet is encrypted
+                if (packet->magic_number == MAGIC_NUMBER_2) {
+                    ret = args->device_tree->search(args->device_tree, &rdev);
+                    if (ret) {
+                        //we cant decrypt a packet from a device we don't know
+
+                        //we no longer need the packet
+                        args->mempool->free(args->mempool,packet);
+                        packet = NULL;
+                        packet_info = NULL;
+                        continue;
+                    }
+                    /* the most likely is that we need to use the server receive key.
+                     * we first try to decrypt with the server key. If it fails,
+                     * we try to decrypt with the client key.
+                     * If it fails then, something went wrong, it is either an attacker
+                     * or a weird error on the other side
+                     * It should be fast enough, it fails on the tag recalculation not the decryption
+                     */
+                    //todo: change the system so that we need to perform only one decryption
+                    /*todo: one idea is to have separate keys for each session and the peers public key
+                     * is the identifier in both the session tree and the packet id field
+                     */
+                    ret = decrypt_packet(packet, rdev.server_rk);
+                    if (ret) {
+                        ret = decrypt_packet(packet, rdev.client_rk);
+                        if (ret) {
+                            //we no longer need the packet
+                            args->mempool->free(args->mempool,packet);
+                            packet = NULL;
+                            packet_info = NULL;
+
+                            continue;
+                        }
+                    }
+                }
+
+                memcpy(&packet_header, packet, sizeof(packet_header));
+
 
                 //todo handle all types of packets
                 switch (packet_header.pac_type) {
@@ -151,7 +189,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
 
                     if (!ret){
                         //validate timestamp
-                        //todo: this is not valid for synchronised offline systems
+                        //todo: this is not valid for unsynchronised offline systems
                         curr_time = time(NULL);
                         if ((((init_packet_data_t *)packet)->timestamp < curr_time - 1)
                             || (((init_packet_data_t *)packet)->timestamp > curr_time)) {
@@ -159,7 +197,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                             printf("DEBUG: time rejected");
                             fflush(stdout);
                             break;
-                        }
+                            }
                     }
                     else break;
 
@@ -216,18 +254,18 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
 
                     if (ret) {
                         switch (ret) {
-                            case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
-                            case INDIGO_ERROR_INVALID_PARAM:
-                            case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
-                                *process_return = ret;
-                                goto cleanup;
-                            case INDIGO_ERROR_NO_SYS_RESOURCES: //todo: I don't think we should terminate for that
-                                break;
-                            case INDIGO_ERROR_NETWORK_RESET:
-                                set_event_flag(args->flag, EF_RESET_SOCKETS);
-                                break;
-                            default:
-                                break; //winlib errors go here
+                        case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
+                        case INDIGO_ERROR_INVALID_PARAM:
+                        case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
+                            *process_return = ret;
+                            goto cleanup;
+                        case INDIGO_ERROR_NO_SYS_RESOURCES: //todo: I don't think we should terminate for that
+                            break;
+                        case INDIGO_ERROR_NETWORK_RESET:
+                            set_event_flag(args->flag, EF_RESET_SOCKETS);
+                            break;
+                        default:
+                            break; //winlib errors go here
                         }
                     }
 
@@ -259,7 +297,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                             printf("DEBUG: time rejected");
                             fflush(stdout);
                             break;
-                        }
+                            }
                     }
                     else break;
 
@@ -567,7 +605,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                     }
                     break;
                 case MSG_FILE_SENDING_REQUEST:{
-                        //todo: this packet is encrypted, we decrypt it first
                         //we need permission to proceed, so we push it to the manager to handle
                         //tell the interface (cli or gui via queue), the interface will ask the user
                         //if the user agrees, we send back a response containing the preferred session serial number
@@ -605,14 +642,125 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         goto cleanup;
                     }
                     break;
-                case MSG_FILE_CHUNK:
+                case MSG_FILE_CHUNK:{
+                        /*TODO: the thing is that the file descriptor is in xfp, (and we need to check xfp anyway
+                         *      but we need to update the session too, it contains stats mainly
+                         *      we will do only one tree search, idc, and xfp needs to be found
+                         *      we may have to merge xfp and session
+                         *      session is not used as for now, i think its for the ui primarily
+                         *      FOR NOW JUST DO 2 SEARCHES AND UPDATE BOTH
+                         */
+                        size_t ret_val;
+                        uint64_t chunk_number;
+                        packet_t temp_packet;
 
+                        memcpy(xfp.session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
+                        xfp.session_id.serial = ((file_chunk_data_t *)packet->data)->serial;
+                        ret = xfp_tree->search_pin(xfp_tree, &xfp, (void **)&found_xfp);
+                        if (ret) {
+                            xfp_tree->search_release(xfp_tree);
+                            break;
+                        }
+
+                        memcpy(&(session->session_id), &(xfp.session_id), sizeof(session_id_t));
+                        ret = args->session_tree->search_pin(args->session_tree, session, (void **)&found_session);
+                        if (ret) {
+                            xfp_tree->search_release(xfp_tree);
+                            args->session_tree->search_release(args->session_tree);
+                            break;
+                        }
+
+                        found_xfp->expiration_time = EXPIRATION_TIME;
+                        chunk_number = ((file_chunk_data_t *)packet->data)->chunk_number;
+                        if (chunk_number < found_xfp->packet_number) {
+                            //we either received a duplicate packet or a resend
+                            //todo: we dont want to write duplicate packets, but it may also be a re-sent packet
+                            //in this case we dont update the packet number
+                        }
+                        if (chunk_number > found_xfp->packet_number) {
+                            //we lost a packet, send a re-send packet
+
+                            //create the packet
+                            build_packet(&temp_packet, MSG_RESEND, public_key, NULL, NULL);
+                            ((transmission_control_data_t *)(temp_packet.data))->serial = ((file_chunk_data_t *)packet->data)->serial;
+                            ((transmission_control_data_t *)(temp_packet.data))->first_packet_number = found_xfp->packet_number;
+                            ((transmission_control_data_t *)(temp_packet.data))->last_packet_number = chunk_number - 1;
+                            //send the packet
+                            ret = send_packet(htons(PORT)
+                                ,packet_info->address.sin_addr.S_un.S_addr
+                                , args->sockets
+                                , &temp_packet
+                                , args->flag);
+                            if (ret) {
+                                switch (ret) {
+                                case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
+                                case INDIGO_ERROR_INVALID_PARAM:
+                                case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
+                                    *process_return = ret;
+                                    goto cleanup;
+                                case INDIGO_ERROR_NO_SYS_RESOURCES: //todo: I don't think we should terminate for that
+                                    break;
+                                case INDIGO_ERROR_NETWORK_RESET:
+                                    set_event_flag(args->flag, EF_RESET_SOCKETS);
+                                    break;
+                                default:
+                                    break; //winlib errors go here
+                                }
+                            }
+                        }
+
+                        //set the position in the file (we are not writing necessarily at the end of the last write)
+                        if (chunk_number * PAC_DATA_PAYLOAD_BYTES < LLONG_MAX){
+                            fseeko64(found_xfp->file
+                            , (long long)(chunk_number * PAC_DATA_PAYLOAD_BYTES)
+                            ,SEEK_SET);
+                        }
+                        else {
+                            //not very sure who owns a file bigger than 2 exbi-bytes, but why not
+                            fseeko64(found_xfp->file, LLONG_MAX, SEEK_SET);
+                            fseeko64(found_xfp->file
+                            , (long long)((chunk_number * PAC_DATA_PAYLOAD_BYTES) - LLONG_MAX)
+                            , SEEK_SET);
+                        }
+
+                        ret_val = fwrite(((file_chunk_data_t *)packet->data)->data,1, PAC_DATA_PAYLOAD_BYTES, found_xfp->file);
+                        if (ret_val != PAC_DATA_PAYLOAD_BYTES) {
+                            ret = ferror(found_xfp->file);
+                            fprintf(stderr, "DEBUG: file error in fwrite in packet_handler");
+                            //todo: here are all the errors of fwrite, handle them. these are bad errors, most of them
+                            switch (ret) {
+                                case EAGAIN:
+                                case EBADF:
+                                case EFBIG:
+                                case EINTR:
+                                case EIO:
+                                case ENOSPC:
+                                case EPIPE:
+                                case ENOMEM:
+                                case ENXIO:
+                                default:
+                                    break;
+                            }
+                        }
+                        if (chunk_number >= found_xfp->packet_number) found_xfp->packet_number = chunk_number + 1;
+                        found_session->bytes_moved += PAC_DATA_PAYLOAD_BYTES;
+
+                        xfp_tree->search_release(xfp_tree);
+                        args->session_tree->search_release(args->session_tree);
+                        break;
+                }
                 case MSG_RESEND:
+                    fprintf(stderr, "DEBUG: Resend");
+                    break;
                 case MSG_STOP_FILE_TRANSMISSION:
                 case MSG_PAUSE_FILE_TRANSMISSION:
                 case MSG_CONTINUE_FILE_TRANSMISSION:
                 case MSG_IP_CHANGE:
+                    fprintf(stderr, "DEBUG: not implemented");
+                    break;
                 case MSG_ERR:
+                    fprintf(stderr, "DEBUG: RECEIVED ERROR MSG");
+                    break;
                 default:
                     printf("\noops...\n");
                     break;
@@ -657,38 +805,36 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                 node = NULL;
                 continue;
             }
-
-            //todo this code only runs when we get a new packet to process, isn't this code supposed to run in every cycle?
-            //here if there are more packets in the queue we go back up to process them,
-            //but we don't want to have ghost devises,
-            //so in case there are too many packets we refresh the list once per 10 packets processed
-            if (iterations_until_cleanup > 0) {
-                iterations_until_cleanup--;
-                if (!queue_is_empty(args->queue)) continue;
-            }
-            else {iterations_until_cleanup = 10;}
-
-            /////////////////////////////////////////
-            ///  phase 2: update the device list  ///
-            /////////////////////////////////////////
-
-            //todo: keep a linked list of all devices, as IDs, and check if there are devices to be removed
-            //todo: calculate the max sleep time we can get if the queue is empty
-
-            //there is no need to sleep if there is more stuff to do
-            if (!queue_is_empty(args->queue)) continue;
-
-            /////////////////////////////////////////////
-            ///  phase 3: wait a little and go again  ///
-            /////////////////////////////////////////////
-            clock_gettime(CLOCK_REALTIME,&timespec);
-            timespec.tv_sec +=lowest_time;
-
-            pthread_mutex_lock(&args->flag->mutex);
-            pthread_cond_timedwait(&args->flag->cond,&args->flag->mutex,&timespec);
-            pthread_mutex_unlock(&args->flag->mutex);
-
         }
+
+        //here if there are more packets in the queue we go back up to process them,
+        //but we don't want to have ghost devises,
+        //so in case there are too many packets we refresh the list once per 10 packets processed
+        if (iterations_until_cleanup > 0) {
+            iterations_until_cleanup--;
+            if (!queue_is_empty(args->queue)) continue;
+        }
+        else {iterations_until_cleanup = 10;}
+
+        /////////////////////////////////////////
+        ///  phase 2: update the device list  ///
+        /////////////////////////////////////////
+
+        //todo: keep a linked list of all devices, as IDs, and check if there are devices to be removed
+        //todo: calculate the max sleep time we can get if the queue is empty
+
+        //there is no need to sleep if there is more stuff to do
+        if (!queue_is_empty(args->queue)) continue;
+
+        /////////////////////////////////////////////
+        ///  phase 3: wait a little and go again  ///
+        /////////////////////////////////////////////
+        clock_gettime(CLOCK_REALTIME,&timespec);
+        timespec.tv_sec +=lowest_time;
+
+        pthread_mutex_lock(&args->flag->mutex);
+        pthread_cond_timedwait(&args->flag->cond,&args->flag->mutex,&timespec);
+        pthread_mutex_unlock(&args->flag->mutex);
     }
     free_tree(xsr_tree);
     free_tree(xfp_tree);
@@ -699,7 +845,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     return process_return;
 
     cleanup:
-    destroy_qnode(node);//todo: danger for double free
+    destroy_qnode(node);
     free_tree(xsr_tree);
     free_tree(xfp_tree);
     free(signing_request_data);

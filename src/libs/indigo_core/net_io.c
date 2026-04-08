@@ -14,6 +14,8 @@
 #include "indigo_core.h"
 #include <indigo_types.h>
 
+#include "config.h"
+
 //////////////////////////////////////////////////////
 ///                                                ///
 ///                  IO_FUNCTIONS                  ///
@@ -32,6 +34,7 @@ int send_discovery_packets(
     const int32_t msec,
     signing_key_pair_t * sign_key_pair,
     wchar_t username[MAX_USERNAME_LEN]) {
+
     uint8_t restart = 0;
     //temporary variables for memory allocation
     SEND_INFO temp_info = {0};
@@ -732,8 +735,8 @@ void build_packet(packet_t * restrict packet, const unsigned pac_type, const uns
             packet->magic_number = MAGIC_NUMBER_2;
             break;
         default:
-        packet->magic_number = MAGIC_NUMBER_1;
-        break;
+            packet->magic_number = MAGIC_NUMBER_1;
+            break;
     }
 
     memcpy(packet->id, id, crypto_sign_PUBLICKEYBYTES);
@@ -1056,6 +1059,7 @@ int *send_thread(SEND_ARGS *args) {
     BUF *fid_array;                     //todo for each active file assign a fid (serial number) (the fid is the index of the array)
     active_file_t *tmp_af;
     active_file_t *curr_af;
+    wchar_t username[MAX_USERNAME_LEN];
     int *process_return = NULL;
     int ret;
 
@@ -1076,6 +1080,11 @@ int *send_thread(SEND_ARGS *args) {
         return process_return;
     }
 
+    ret = load_username(username);
+    if (ret) {
+        memcpy(username, "remote_device", strlen("remote_device") + 1);
+    }
+
     //the main loop
     while (!termination_is_on(args->flag)) {
         ///////////////////////////////////
@@ -1092,7 +1101,7 @@ int *send_thread(SEND_ARGS *args) {
 
             reset_single_event(args->flag, EF_SEND_MULTIPLE_PACKETS);
 
-            ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,3,150, args->sign_keys,TODO);
+            ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,3,150, args->sign_keys,username);
             if (ret > 0) {
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
@@ -1191,7 +1200,7 @@ int *send_thread(SEND_ARGS *args) {
         }
 
         //todo: remove username field if the username is in a file
-        ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,1,0, args->sign_keys, TODO);
+        ret = send_discovery_packets(args->port,args->multicast_addr,args->sockets,args->flag,1,0, args->sign_keys, username);
         if (ret > 0) {
             set_event_flag(args->flag, EF_TERMINATION);
             set_event_flag(args->wake, EF_WAKE_MANAGER);

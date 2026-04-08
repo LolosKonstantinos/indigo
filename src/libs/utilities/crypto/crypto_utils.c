@@ -665,9 +665,7 @@ int encrypt_packet(packet_t *packet
 int decrypt_packet(packet_t *packet,unsigned char rk[crypto_kx_SESSIONKEYBYTES]) {
     int ret;
     unsigned long long decrypted_len;
-    if (!packet || !rk) {
-        return INDIGO_ERROR_INVALID_PARAM;
-    }
+    if (!packet || !rk) return INDIGO_ERROR_INVALID_PARAM;
 
     ret = crypto_aead_xchacha20poly1305_ietf_decrypt((unsigned char *)&(packet->zero)
                                                     ,&decrypted_len
@@ -681,7 +679,9 @@ int decrypt_packet(packet_t *packet,unsigned char rk[crypto_kx_SESSIONKEYBYTES])
                                                      );
 
     if (ret == 0) {
-        sodium_memzero(((unsigned char *)&(packet->zero)) + decrypted_len, PAC_ENCRYPT_BYTES + crypto_aead_xchacha20poly1305_ietf_ABYTES - decrypted_len);
+        //zero out the parts of the packet that is not data
+        sodium_memzero(((unsigned char *)&(packet->zero)) + decrypted_len
+            , PAC_ENCRYPT_BYTES + crypto_aead_xchacha20poly1305_ietf_ABYTES - decrypted_len);
         return INDIGO_SUCCESS;
     }
     if (ret == -1) return INDIGO_ERROR_INVALID_PACKET;

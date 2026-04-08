@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
+#define FORCE_INLINE inline __attribute__((always_inline))
 #define TREE_RIGHT (1)
 #define TREE_ROOT (0)
 #define TREE_LEFT (-1)
@@ -523,7 +523,7 @@ int avl_search_release(tree_t *t) {
 }
 
 /*AVL HELPERS*/
-inline void rotate_left(tree_node_t *node, tree_node_t *root, tree_priv_t* tree) {
+FORCE_INLINE void rotate_left(tree_node_t *node, tree_node_t *root, tree_priv_t* tree) {
     tree_node_t *b;
 
     if (!node) return;
@@ -548,7 +548,7 @@ inline void rotate_left(tree_node_t *node, tree_node_t *root, tree_priv_t* tree)
     node->height = GET_HEIGHT(node);
     b->height = GET_HEIGHT(b);
 }
-inline void rotate_right(tree_node_t *node, tree_node_t* root, tree_priv_t* tree) {
+FORCE_INLINE void rotate_right(tree_node_t *node, tree_node_t* root, tree_priv_t* tree) {
     tree_node_t *b;
 
     if (!node) return;
@@ -572,7 +572,7 @@ inline void rotate_right(tree_node_t *node, tree_node_t* root, tree_priv_t* tree
     node->height = GET_HEIGHT(node);
     b->height = GET_HEIGHT(b);
 }
-inline void rotate_left_right(tree_node_t *node, tree_node_t* root, tree_priv_t* tree) {
+FORCE_INLINE void rotate_left_right(tree_node_t *node, tree_node_t* root, tree_priv_t* tree) {
     tree_node_t *a;
     tree_node_t *b;
 
@@ -610,7 +610,7 @@ inline void rotate_left_right(tree_node_t *node, tree_node_t* root, tree_priv_t*
     node->height = GET_HEIGHT(node);
     b->height = GET_HEIGHT(b);
 }
-inline void rotate_right_left(tree_node_t *node, tree_node_t* root, tree_priv_t* tree) {
+FORCE_INLINE void rotate_right_left(tree_node_t *node, tree_node_t* root, tree_priv_t* tree) {
     tree_node_t *a;
     tree_node_t *b;
     if (!node) return;

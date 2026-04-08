@@ -21,6 +21,21 @@
 #define MAX_USERNAME_LEN 32
 #define INDIGO_NONCE_SIZE 32
 
+
+#define INDIGO_CRYPTO_DIR               "config/crypto/"
+#define INDIGO_PSW_DIR                  "config/crypto/psw/"
+#define INDIGO_KEY_DIR                  "config/crypto/key/"
+#define INDIGO_SIGN_KEY_FILE_NAME       "sign.dat"
+#define INDIGO_PSW_HASH_FILE_NAME       "psw-hash.txt"
+#define INDIGO_PSW_HASH_SETTINGS_FILE   "psw-hash-settings.dat"
+#define INDIGO_KNOWN_KEYS_FILE_NAME     "known-keys.dat" //todo use database (sqlite3)
+#define INDIGO_PROGRAM_DATA_DIR         "data"
+#define INDIGO_USER_DIR                 "config/user/"
+#define INDIGO_USERNAME_FILE_NAME       "username.txt"
+#define INDIGO_SETTINGS_DIR             "config/settings/"
+#define INDIGO_SETTINGS_FILE_NAME       "settings.config"
+
+
 //RDSF == RemoteDeviceStateFlag
 #define RDSF_UNVERIFIED     0x0000
 #define RDSF_VERIFIED       0x0001
@@ -28,7 +43,8 @@
 #define PAC_VERSION (1)
 #define DISCOVERY_SEND_PERIOD_SEC (10)
 
-#define PAC_DATA_BYTES_USABLE ((1<<10) + (sizeof(uint64_t)<<1))
+#define PAC_DATA_PAYLOAD_BYTES (1<<10)
+#define PAC_DATA_BYTES_USABLE (PAC_DATA_PAYLOAD_BYTES + (sizeof(uint64_t)<<1)) // 1KiB payload + 2 64bit ints
 #define PAC_DATA_BYTES (PAC_DATA_BYTES_USABLE + crypto_aead_xchacha20poly1305_ietf_ABYTES)
 #define PAC_MIN_BYTES (sizeof(udp_packet_header_t))
 #define PAC_ENCRYPT_OFFSET (offsetof(packet_t, zero))
@@ -85,14 +101,14 @@ typedef struct PACKED init_packet_data_t {
     wchar_t username[MAX_USERNAME_LEN];
     unsigned char signature[crypto_sign_BYTES];
 }init_packet_data_t;
-#define PAC_INIT_SIZE (64+sizeof(init_packet_data_t))
+#define PAC_INIT_SIZE (sizeof(udp_packet_header) + sizeof(init_packet_data_t))
 
 typedef struct PACKED signing_request_data_t {
     time_t timestamp;
     unsigned char nonce[INDIGO_NONCE_SIZE];
     unsigned char signature[crypto_sign_BYTES];
 }signing_request_data_t;
-#define PAC_SIGNING_REQUEST_SIZE (64 + sizeof(signing_request_data_t))
+#define PAC_SIGNING_REQUEST_SIZE (sizeof(udp_packet_header) + sizeof(signing_request_data_t))
 
 typedef struct PACKED signing_response_data_t {
     unsigned char signed_nonce[INDIGO_NONCE_SIZE + crypto_sign_BYTES];
@@ -102,32 +118,33 @@ typedef struct PACKED signing_response_data_t {
     unsigned char nonce[INDIGO_NONCE_SIZE];
     unsigned char signature[crypto_sign_BYTES];
 }signing_response_data_t;
-#define PAC_SIGNING_RESPONSE (64+sizeof(signing_response_data_t))
+#define PAC_SIGNING_RESPONSE (sizeof(udp_packet_header) + sizeof(signing_response_data_t))
 
 typedef struct PACKED file_sending_request_data_t {
     uint64_t serial;
     size_t file_size;
     wchar_t file_name[MAX_PATH];
 }file_sending_request_data_t;
-#define PAC_FILE_SENDING_REQUEST_SIZE (64 +sizeof(file_sending_request_data_t))
+#define PAC_FILE_SENDING_REQUEST_SIZE (sizeof(udp_packet_header) +sizeof(file_sending_request_data_t))
 
 typedef struct PACKED file_sending_response_data_t {
     uint64_t serial;
 }file_sending_response_data_t;
-#define FILE_SENDING_RESPONSE_SIZE (64 + sizeof(file_sending_response_data_t))
+#define FILE_SENDING_RESPONSE_SIZE (sizeof(udp_packet_header) + sizeof(file_sending_response_data_t))
 
 typedef struct PACKED file_chunk_data_t {
     uint64_t serial;
     uint64_t chunk_number;
-    unsigned char data[PAC_DATA_BYTES_USABLE];
+    unsigned char data[PAC_DATA_PAYLOAD_BYTES];
 }file_chunk_data_t;
-#define PAC_FILE_CHUNK_SIZE (64 + sizeof(file_chunk_data_t))
+#define PAC_FILE_CHUNK_SIZE (sizeof(udp_packet_header) + sizeof(file_chunk_data_t))
 
 typedef struct PACKED transmission_control_data_t {
     uint64_t serial;
-    uint64_t packet_number; //used only for resend, otherwise should be 0 and ignored
+    uint64_t first_packet_number; //used only for resend, otherwise should be 0 and ignored
+    uint64_t last_packet_number;  //the end of the range, if we need a range of packets to be resent
 }transmission_control_data_t;
-#define PAC_TRANSMISSION_CONTROL_SIZE (64 + sizeof(transmission_control_data_t))
+#define PAC_TRANSMISSION_CONTROL_SIZE (sizeof(udp_packet_header) + sizeof(transmission_control_data_t))
 
 typedef struct remote_device_t{
     time_t expiration_time; //the time until which we consider the device active, updated with any packet

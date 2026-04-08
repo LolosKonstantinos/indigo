@@ -30,6 +30,7 @@ struct mempool_private {
 
     uint8_t flags;         //flag attributes for the pool
 
+    uint16_t zero;
 
     void *ext;//the root of an AVL tree of extensions or the first node of linked list
 };
@@ -48,7 +49,8 @@ struct memory_extension_ll_node {
 };
 
 mempool_t *new_mempool(const size_t cell_count, size_t cell_size, const mempool_attr* const attr) {
-    void *curr_cell, *next_cell;
+    void *curr_cell;
+    void *next_cell;
 
     mempool_t *pool;
     mempool_private_t *private;
@@ -105,12 +107,12 @@ mempool_t *new_mempool(const size_t cell_count, size_t cell_size, const mempool_
 
         //create the free list
         for (size_t i = 0; i < cell_count - 1; i++) {
-            curr_cell = private->data + i * cell_size;
+            curr_cell = private->data + (i * cell_size);
             next_cell = curr_cell + cell_size;
 
             memcpy(curr_cell, &next_cell, sizeof(void *));
         }
-        curr_cell = private->data + (cell_count - 1) * cell_size;
+        curr_cell = private->data + ((cell_count - 1) * cell_size);
         next_cell = NULL;
         memcpy(curr_cell, &next_cell, sizeof(void *));
     }
@@ -126,19 +128,19 @@ mempool_t *new_mempool(const size_t cell_count, size_t cell_size, const mempool_
 
         //create the free list
         for (size_t i = 0; i < cell_count - 1; i++) {
-            curr_cell = private->data + i * cell_size;
+            curr_cell = private->data + (i * cell_size);
             next_cell = curr_cell + cell_size;
 
             memcpy(curr_cell, &next_cell, sizeof(void *));
         }
-        curr_cell = private->data + (cell_count - 1) * cell_size;
+        curr_cell = private->data + ((cell_count - 1) * cell_size);
         next_cell = NULL;
         memcpy(curr_cell, &next_cell, sizeof(void *));
 
         private->last_free_cell = curr_cell;
 
     }
-    else if (!attr->dynamic_pool) {
+    else {
         pool->alloc = salloc;
         pool->free = sfree;
         pool->extend = NULL;
@@ -151,12 +153,12 @@ mempool_t *new_mempool(const size_t cell_count, size_t cell_size, const mempool_
 
         //create the free list
         for (size_t i = 0; i < cell_count - 1; i++) {
-            curr_cell = private->data + i * cell_size;
+            curr_cell = private->data + (i * cell_size);
             next_cell = curr_cell + cell_size;
 
             memcpy(curr_cell, &next_cell, sizeof(void *));
         }
-        curr_cell = private->data + (cell_count - 1) * cell_size;
+        curr_cell = private->data + ((cell_count - 1) * cell_size);
         next_cell = NULL;
         memcpy(curr_cell, &next_cell, sizeof(void *));
     }
@@ -165,7 +167,8 @@ mempool_t *new_mempool(const size_t cell_count, size_t cell_size, const mempool_
 }
 
 void free_mempool(mempool_t *pool)  {
-    ext_ll *curr, *prev;
+    ext_ll *curr;
+    ext_ll *prev;
 
     mempool_private_t *private;
 
@@ -212,15 +215,17 @@ void *dalloc(mempool_t *pool) {
     private = pool->private;
 
     //if there is no available space then we extend the pool
-    if (private->first_free_cell == NULL)
+    if (private->first_free_cell == NULL){
         if (memextend_list(pool) != 0) return NULL;
+    }
+    if (private->first_free_cell == NULL) return NULL; //this is unnecessary, but clang f-ing screams
 
     cell = private->first_free_cell;
     private->first_free_cell = *(void **)cell;
     if (private->first_free_cell == NULL) private->last_free_cell = NULL;
 
     //find the extension it belongs and adjust capacity
-    if ((cell >= private->data) && (cell < private->data + private->cell_count * private->cell_size)) {
+    if ((cell >= private->data) && (cell < private->data + (private->cell_count * private->cell_size))) {
         private->capacity--;
     }
     else {
@@ -249,7 +254,7 @@ void dfree(mempool_t *pool, void *cell) {
     //find if the cell is in an extension or the main pool and adjust capacity
 
     //if the cell is in the pool
-    if ((cell >= private->data) && (cell < private->data + private->cell_count * private->cell_size)) {
+    if ((cell >= private->data) && (cell < private->data + (private->cell_count * private->cell_size))) {
         memcpy(cell,&(private->first_free_cell), sizeof(void *));
         private->first_free_cell = cell;
         private->capacity++;
@@ -329,12 +334,14 @@ void sfree(mempool_t *pool, void *cell) {
 
 
 int memextend_list(mempool_t *pool) {
-    size_t ext_cells, cell_count;
+    size_t ext_cells;
+    size_t cell_count;
     mempool_private_t *private;
 
     ext_ll *ext;
 
-    void *curr_cell, *next_cell;
+    void *curr_cell;
+    void *next_cell;
 
     if (pool == NULL) return -1;
 
@@ -357,7 +364,7 @@ int memextend_list(mempool_t *pool) {
     ext = malloc(sizeof(ext_ll));
     if (ext == NULL) return 1;
 
-    ext->data = _aligned_malloc(ext_cells * private->cell_size + sizeof(void *), 1<<private->alignment);
+    ext->data = _aligned_malloc((ext_cells * private->cell_size) + sizeof(void *), 1<<private->alignment);
     if (ext->data == NULL) {
         free(ext);
         return 1;
@@ -380,23 +387,23 @@ int memextend_list(mempool_t *pool) {
     //write the addr of the first cell to the last cell of the private->last_free_cell
 
     for (size_t i = 0; i < ext_cells-1; i++) {
-        curr_cell = ext->data + sizeof(void *) + i * private->cell_size;
+        curr_cell = ext->data + sizeof(void *) + (i * private->cell_size);
         next_cell = curr_cell + private->cell_size;
         *(void **)curr_cell = next_cell;
     }
 
-    curr_cell = ext->data + sizeof(void *) + (ext_cells - 1) * private->cell_size;
+    curr_cell = ext->data + sizeof(void *) + ((ext_cells - 1) * private->cell_size);
     *(void **)curr_cell = NULL;
 
     //attach to the free list
     if (private->first_free_cell == NULL) {
         private->first_free_cell = ext->data + sizeof(void *);
-        private->last_free_cell = ext->data + sizeof(void *) + (ext_cells - 1) * private->cell_size;
+        private->last_free_cell = ext->data + sizeof(void *) + ((ext_cells - 1) * private->cell_size);
         return 0;
     }
     curr_cell = private->last_free_cell;
     *(void **)curr_cell = ext->data + sizeof(void *);
-    private->last_free_cell = ext->data + sizeof(void *) + (ext_cells - 1) * private->cell_size;
+    private->last_free_cell = ext->data + sizeof(void *) + ((ext_cells - 1) * private->cell_size);
 
     pthread_mutex_unlock(&pool->mutex);
 
@@ -408,7 +415,8 @@ EXT_HANDLE memextend_list_manual(mempool_t* pool, size_t cell_count) {
 
     ext_ll *ext;
 
-    void *curr_cell, *next_cell;
+    void *curr_cell;
+    void *next_cell;
 
     if (pool == NULL) return NULL;
 
@@ -429,7 +437,7 @@ EXT_HANDLE memextend_list_manual(mempool_t* pool, size_t cell_count) {
     ext = malloc(sizeof(ext_ll));
     if (ext == NULL) return NULL;
 
-    ext->data = _aligned_malloc(cell_count * private->cell_size + sizeof(void *), 1<<private->alignment);
+    ext->data = _aligned_malloc((cell_count * private->cell_size) + sizeof(void *), 1<<private->alignment);
     if (ext->data == NULL) {
         free(ext);
         return NULL;
@@ -453,23 +461,23 @@ EXT_HANDLE memextend_list_manual(mempool_t* pool, size_t cell_count) {
     //write the addr of the first cell to the last cell of the private->last_free_cell
 
     for (size_t i = 0; i < cell_count-1; i++) {
-        curr_cell = ext->data + sizeof(void *) + i * private->cell_size;
+        curr_cell = ext->data + sizeof(void *) + (i * private->cell_size);
         next_cell = curr_cell + private->cell_size;
         *(void **)curr_cell = next_cell;
     }
 
-    curr_cell = ext->data + sizeof(void *) + (cell_count - 1) * private->cell_size;
+    curr_cell = ext->data + sizeof(void *) + ((cell_count - 1) * private->cell_size);
     *(void **)curr_cell = NULL;
 
     if (private->first_free_cell == NULL) {
         private->first_free_cell = ext->data + sizeof(void *);
-        private->last_free_cell = ext->data + sizeof(void *) + (cell_count - 1) * private->cell_size;
+        private->last_free_cell = ext->data + sizeof(void *) + ((cell_count - 1) * private->cell_size);
         return ext->handle;
     }
 
     curr_cell = private->last_free_cell;
     *(void **)curr_cell = ext->data + sizeof(void *);
-    private->last_free_cell = ext->data + sizeof(void *) + (cell_count - 1) * private->cell_size;
+    private->last_free_cell = ext->data + sizeof(void *) + ((cell_count - 1) * private->cell_size);
 
     pthread_mutex_unlock(&pool->mutex);
     return ext->handle;
@@ -477,8 +485,10 @@ EXT_HANDLE memextend_list_manual(mempool_t* pool, size_t cell_count) {
 
 void free_extension_list_manual(mempool_t *pool, EXT_HANDLE handle) {
     mempool_private_t *private;
-    ext_ll *temp_ext, *ext;
-    void *curr, *prev;
+    ext_ll *temp_ext;
+    ext_ll *ext;
+    void *curr;
+    void *prev;
     uintptr_t data_addr;
 
     if (pool == NULL || handle == NULL) return;
@@ -491,7 +501,7 @@ void free_extension_list_manual(mempool_t *pool, EXT_HANDLE handle) {
     curr = private->first_free_cell;
     //handle the case where the first cell is in the extension to be removed
     while (curr != NULL ) {
-        if ((curr >= private->data) && (curr < private->data + private->cell_count * private->cell_size)) break;
+        if ((curr >= private->data) && (curr < private->data + (private->cell_count * private->cell_size))) break;
 
         data_addr = (uintptr_t)curr & -(1<<private->alignment);
         temp_ext = *(void **)data_addr;
@@ -515,7 +525,7 @@ void free_extension_list_manual(mempool_t *pool, EXT_HANDLE handle) {
 
         if (curr == NULL) break;
 
-        if ((curr >= private->data) && (curr < private->data + private->cell_count * private->cell_size)) {
+        if ((curr >= private->data) && (curr < private->data + (private->cell_count * private->cell_size))) {
             continue;
         }
         data_addr = (uintptr_t)curr & -(1<<private->alignment);
@@ -538,7 +548,8 @@ void free_extension_list_manual(mempool_t *pool, EXT_HANDLE handle) {
 void remove_extension_list(mempool_t *pool, ext_ll *ext) {
     mempool_private_t *private;
     ext_ll *temp_ext;
-    void *curr, *prev;
+    void *curr;
+    void *prev;
     uintptr_t data_addr;
 
     if (pool == NULL || ext == NULL) return;
@@ -551,7 +562,7 @@ void remove_extension_list(mempool_t *pool, ext_ll *ext) {
     curr = private->first_free_cell;
     //handle the case where the first cell is in the extension to be removed
     while (curr != NULL ) {
-        if ((curr >= private->data) && (curr < private->data + private->cell_count * private->cell_size)) break;
+        if ((curr >= private->data) && (curr < private->data + (private->cell_count * private->cell_size))) break;
 
         data_addr = (uintptr_t)curr & -(1<<private->alignment);
         temp_ext = *(void **)data_addr;
@@ -575,7 +586,7 @@ void remove_extension_list(mempool_t *pool, ext_ll *ext) {
 
         if (curr == NULL) break;
 
-        if ((curr >= private->data) && (curr < private->data + private->cell_count * private->cell_size)) {
+        if ((curr >= private->data) && (curr < private->data + (private->cell_count * private->cell_size))) {
             continue;
         }
         data_addr = (uintptr_t)curr & -(1<<private->alignment);

@@ -19,13 +19,6 @@
 #define INDIGO_PSW_HASH_TIMELIMIT_UPPER 5
 #define INDIGO_PSW_HASH_TIMELIMIT_LOWER 3
 
-#define INDIGO_CRYPTO_DIR               "config/crypto/"
-#define INDIGO_PSW_DIR                  "config/crypto/psw/"
-#define INDIGO_KEY_DIR                  "config/crypto/key/"
-#define INDIGO_SIGN_KEY_FILE_NAME       "sign.dat"
-#define INDIGO_PSW_HASH_FILE_NAME       "psw-hash.txt"
-#define INDIGO_PSW_HASH_SETTINGS_FILE   "psw-hash-settings.dat"
-
 typedef struct PSW_HASH_SETTINGS PSW_HASH_SETTINGS;
 
 struct signing_key_pair_t {
@@ -71,8 +64,7 @@ int delete_signing_key_pair();
 
 int encrypt_packet(packet_t *packet
                    ,unsigned char tk[crypto_kx_SESSIONKEYBYTES]
-                   , const unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES]
-                   );
+                   , const unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES]);
 int decrypt_packet(packet_t *packet,unsigned char rk[crypto_kx_SESSIONKEYBYTES]);
 int nonce_increment(unsigned char *nonce, size_t nonce_len, uint64_t increment);
 #endif //CRYPTO_UTILS_H
