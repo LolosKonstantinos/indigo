@@ -1,6 +1,4 @@
-//
-// Created by Constantin on 03/01/2026.
-//
+
 #include "hash_functions.h"
 
 unsigned int MurMurHash(const char *str, unsigned int length) {
