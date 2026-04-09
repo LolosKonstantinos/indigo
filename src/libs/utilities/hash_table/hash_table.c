@@ -40,6 +40,29 @@ struct hash_table_priv {
     pthread_cond_t cond;
 };
 
+int is_zero(const unsigned char * buf, const size_t size) {
+    size_t iter;
+    uint_fast64_t res = 0;
+    uint_fast64_t temp1;
+    unsigned char temp2;
+    size_t i;
+
+    if (buf == NULL || size == 0) return -1;
+
+    iter = (size / sizeof(uint_fast64_t));
+    for (i = 0; i < iter; i++) {
+        memcpy(&temp1, buf + (i * sizeof(uint_fast64_t)), sizeof(uint_fast64_t));
+        res |= temp1;
+    }
+    buf += iter * sizeof(uint_fast64_t);
+    for (i = 0; i < size - (iter * sizeof(uint_fast64_t)); i++) {
+        memcpy(&temp2, buf + i, sizeof(unsigned char));
+        res |= temp2;
+    }
+
+    return res == 0;
+}
+
 
 hash_table_t *new_hash_table(size_t data_size, size_t key_length, size_t init_size) {
     hash_table_priv *priv;
@@ -297,27 +320,4 @@ int hash_table_bucket_insert(const hash_table_priv *table, unsigned char *bucket
         memcpy(new_bucket + sizeof(void *) + table->key_length, data, table->data_size);
     }
     return 0;
-}
-
-int is_zero(const unsigned char * buf, const size_t size) {
-    size_t iter;
-    uint_fast64_t res = 0;
-    uint_fast64_t temp1;
-    unsigned char temp2;
-    size_t i;
-
-    if (buf == NULL || size == 0) return -1;
-
-    iter = (size / sizeof(uint_fast64_t));
-    for (i = 0; i < iter; i++) {
-        memcpy(&temp1, buf + (i * sizeof(uint_fast64_t)), sizeof(uint_fast64_t));
-        res |= temp1;
-    }
-    buf += iter * sizeof(uint_fast64_t);
-    for (i = 0; i < size - (iter * sizeof(uint_fast64_t)); i++) {
-        memcpy(&temp2, buf + i, sizeof(unsigned char));
-        res |= temp2;
-    }
-
-    return res == 0;
 }

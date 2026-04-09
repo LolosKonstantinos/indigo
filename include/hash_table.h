@@ -51,5 +51,5 @@ int hash_table_delete(hash_table_t *ht, void *key);
 //int hash_table_resize(hash_table_t *ht, size_t new_size);
 
 int hash_table_bucket_insert(const hash_table_priv *table, unsigned char *bucket, const void *key, const void *data);
-int is_zero(const unsigned char *buf, size_t size);
+
 #endif //HASH_TABLE_H
