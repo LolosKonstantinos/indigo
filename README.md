@@ -45,6 +45,7 @@ Currently, there is no official release.
 However, if one wants to compile the project in its current state.  
 Usage of CMake is probably the recommended way.  
 It is recommended that a MinGW UCRT64 environment is used, as the project relies on pthread for multi threading functionality.  
+USE GCC !  
 Also the libsodium library needs to be installed before compilation. 
   
 On MSYS2/UCRT64, install libsodium via: 
