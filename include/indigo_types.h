@@ -38,6 +38,8 @@ SOFTWARE.
 #define MAX_USERNAME_LEN 32
 #define INDIGO_NONCE_SIZE 32
 
+#define ON 1
+#define OFF 0
 
 #define INDIGO_CRYPTO_DIR               "config/crypto/"
 #define INDIGO_PSW_DIR                  "config/crypto/psw/"
