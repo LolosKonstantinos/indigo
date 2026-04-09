@@ -73,7 +73,7 @@ hash_table_t *new_hash_table(size_t data_size, size_t key_length, size_t init_si
     ht = (hash_table_t *)malloc(sizeof(hash_table_t));
     if (ht == NULL) return NULL;
     priv= malloc(sizeof(struct hash_table_priv));
-    if (ht->private == NULL) {
+    if (priv == NULL) {
         free(ht);
         return NULL;
     }

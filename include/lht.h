@@ -32,6 +32,11 @@ typedef int (*lht_insertFunction)(linked_hash_table_t *, void *, void *);
 typedef int (*lht_removeFunction)(linked_hash_table_t *, void *);
 typedef void *(*lht_searchFunction)(linked_hash_table_t *, void *);
 
+typedef struct lht_node_t {
+    struct lht_node_t *next;
+    struct lht_node_t *prev;
+    void *data;
+}lht_node_t;
 
 struct linked_hash_table_t {
     lht_insertFunction insert;
@@ -47,7 +52,10 @@ int lht_insert(linked_hash_table_t *ht, void *key, void *data);
 void *lht_search(linked_hash_table_t *ht, void *key);
 int lht_delete(linked_hash_table_t *ht, void *key);
 
-
 int lht_bucket_insert(const lht_priv *table, unsigned char *bucket, const void *key, const void *data);
 
+int lht_lock(lht_t *ht);
+int lht_unlock(lht_t *ht);
+
+int lht_list(lht_t *ht, lht_node_t *list);
 #endif //INDIGO_LHT_H

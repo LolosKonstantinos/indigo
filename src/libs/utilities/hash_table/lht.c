@@ -26,11 +26,6 @@ SOFTWARE.
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct lht_node_t {
-    struct lht_node_t *next;
-    struct lht_node_t *prev;
-    void *data;
-}lht_node_t;
 
 struct lht_priv {
     lht_node_t *head;           //the head of the linked list
@@ -68,6 +63,60 @@ int is_zero(const unsigned char * buf, const size_t size) {
     return res == 0;
 }
 
+lht_t *new_lht(size_t data_size, size_t key_length, size_t init_size) {
+    lht_priv *priv;
+    lht_t *ht;
+    if (data_size == 0) {
+        return NULL;
+    }
+    ht = (lht_t *)malloc(sizeof(lht_t));
+    if (ht == NULL) return NULL;
+    priv = malloc(sizeof(lht_priv));
+    if (priv == NULL) {
+        free(ht);
+        return NULL;
+    }
+    pthread_mutex_init(&priv->mutex, NULL);
+    pthread_cond_init(&priv->cond, NULL);
+    ht->private = priv;
+    priv->head = NULL;
+    priv->hash = FastHash;
+    priv->bucket_count = init_size ? init_size : 1;
+    priv->hash_bit_length = (sizeof(size_t) * 8) - __builtin_ctz((init_size * init_size) - 1);
+    priv->data_size = data_size;
+    priv->key_length = key_length ? key_length : sizeof(uint32_t);
+    priv->table = (unsigned char *)malloc((1<<priv->hash_bit_length) * ((sizeof(void *)<<1) + priv->data_size + priv->key_length));
+    if (priv->table == NULL) {
+        free(priv);
+        free(ht);
+        return NULL;
+    }
+    ht->insert = lht_insert;
+    ht->remove = lht_delete;
+    ht->search = lht_search;
+    return ht;
+}
+void delete_hash_table(lht_t *ht) {
+    if (!ht || !ht->private) return;
+    lht_priv *priv = ht->private;
+    void * temp;
+    void *prev = NULL;
+    pthread_mutex_destroy(&ht->private->mutex); //I don't really know what to do with this?
+    pthread_cond_destroy(&ht->private->cond);
+
+    // remove the linked list nodes
+    for (lht_node_t *curr = priv->head; curr != NULL; curr = curr->next) {
+        temp = *((void **)(curr->data - priv->key_length - (sizeof(void *)<<1)));
+        if (temp == NULL) continue;
+        free(curr->data - priv->key_length - (sizeof(void *)<<1));
+        free(curr->prev);
+        prev = curr;
+    }
+    free(prev);
+    free(ht->private->table);
+    free(ht->private);
+    free(ht);
+}
 
 int lht_insert(lht_t *ht, void *key, void *data){
     //the hash table should have a size of (at least) n^2 where n is the number of buckets
@@ -335,5 +384,25 @@ int lht_bucket_insert(const lht_priv *table, unsigned char *bucket, const void *
         memcpy(new_bucket + sizeof(void *), key, table->key_length);
         memcpy(new_bucket + sizeof(void *) + table->key_length, data, table->data_size);
     }
+    return 0;
+}
+
+int lht_lock(lht_t *ht) {
+    if (!ht) return 1;
+    if (!ht->private) return 1;
+    pthread_mutex_lock(&(ht->private->mutex));
+    return 0;
+}
+int lht_unlock(lht_t *ht) {
+    if (!ht) return 1;
+    if (!ht->private) return 1;
+    pthread_mutex_unlock(&(ht->private->mutex));
+    return 0;
+}
+
+int lht_list(lht_t *ht, lht_node_t *list) {
+    if (!list || !ht || !ht->private) return 1;
+
+    *list = *(ht->private->head);
     return 0;
 }

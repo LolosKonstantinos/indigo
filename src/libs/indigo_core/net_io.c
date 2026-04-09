@@ -33,6 +33,7 @@ SOFTWARE.
 #include <indigo_types.h>
 
 #include "config.h"
+#include "lht.h"
 
 //////////////////////////////////////////////////////
 ///                                                ///
@@ -1073,8 +1074,7 @@ int *send_thread(SEND_ARGS *args) {
     struct timespec deadline_ts;
     struct timespec current_ts;
     QNODE *node;
-    active_file_t *active_files = NULL; //todo: use an array of pointers to the nodes, the empty nodes do a linked list of empty nodes,
-    BUF *fid_array;                     //todo for each active file assign a fid (serial number) (the fid is the index of the array)
+    lht_t *active_files = NULL;
     active_file_t *tmp_af;
     active_file_t *curr_af;
     wchar_t username[MAX_USERNAME_LEN];
@@ -1090,8 +1090,8 @@ int *send_thread(SEND_ARGS *args) {
     }
     *process_return = 0;
 
-    fid_array = new_buffer(sizeof(void *), 1<<7);
-    if (!fid_array) {
+    active_files = new_lht(sizeof(active_file_t), sizeof(session_id_t), 1<<4);
+    if (!active_files) {
         set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
