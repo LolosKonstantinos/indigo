@@ -1,4 +1,5 @@
-/*Copyright (c) 2026 Lolos Konstantinos
+/*
+Copyright (c) 2026 Lolos Konstantinos
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,16 +20,20 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#include "hash_table.h"
-
+#include "lht.h"
 #include <pthread.h>
+#include <hash_functions.h>
 #include <stdlib.h>
 #include <string.h>
-#include "hash_functions.h"
 
-//todo: create normal hash table with 1.5 growth factor
+typedef struct lht_node_t {
+    struct lht_node_t *next;
+    struct lht_node_t *prev;
+    void *data;
+}lht_node_t;
 
-struct hash_table_priv {
+struct lht_priv {
+    lht_node_t *head;           //the head of the linked list
     hashFunction hash;          //kinda useless, we always use MurMurHash anyway
     unsigned char *table;       //the array of the hash table
     size_t data_size;           //the number of bytes of the data part of the bucket
@@ -39,265 +44,6 @@ struct hash_table_priv {
     pthread_mutex_t mutex;
     pthread_cond_t cond;
 };
-
-
-hash_table_t *new_hash_table(size_t data_size, size_t key_length, size_t init_size) {
-    hash_table_priv *priv;
-    hash_table_t *ht;
-    if (data_size == 0) {
-        return NULL;
-    }
-    ht = (hash_table_t *)malloc(sizeof(hash_table_t));
-    if (ht == NULL) return NULL;
-    priv= malloc(sizeof(struct hash_table_priv));
-    if (ht->private == NULL) {
-        free(ht);
-        return NULL;
-    }
-    pthread_mutex_init(&priv->mutex, NULL);
-    pthread_cond_init(&priv->cond, NULL);
-    ht->private = priv;
-
-    priv->hash = FastHash;
-    priv->bucket_count = init_size ? init_size : 1;
-    priv->hash_bit_length = sizeof(size_t) * 8 - __builtin_ctz(init_size * init_size - 1);
-    priv->data_size = data_size;
-    priv->key_length = key_length ? key_length : sizeof(uint32_t);
-    priv->table = (unsigned char *)malloc((1<<priv->hash_bit_length) * (sizeof(void *) + priv->data_size + priv->key_length));
-    if (priv->table == NULL) {
-        free(priv);
-        free(ht);
-        return NULL;
-    }
-    ht->insert = hash_table_insert;
-    ht->remove = hash_table_delete;
-    ht->search = hash_table_search;
-    return ht;
-}
-void delete_hash_table(hash_table_t *ht) {
-    pthread_mutex_destroy(&ht->private->mutex); //I don't really know what to do with this?
-    pthread_cond_destroy(&ht->private->cond);
-    /*todo remove the linked list nodes*/
-    free(ht->private->table);
-    free(ht->private);
-    free(ht);
-
-}
-
-int hash_table_insert(hash_table_t *ht, void *key, void *data){
-    //the hash table should have a size of (at least) n^2 where n is the number of buckets
-    size_t new_size;
-    size_t old_size;
-    hash_table_priv *priv;
-    unsigned int hash_code;
-
-    unsigned char *bucket;
-    unsigned char *new_bucket;
-    unsigned char *new_table;
-
-    if (!ht || !key || !data) {
-        return -1;
-    }
-
-    if (hash_table_search(ht,key) != NULL) return -1;
-
-    priv = ht->private;
-    pthread_mutex_lock(&priv->mutex);
-
-    new_size = (sizeof(size_t) * 8) - __builtin_clzll(((priv->bucket_count+1) + ((priv->bucket_count+1)>>1)) - 1);
-    old_size = priv->hash_bit_length;
-    if (old_size >= new_size) {
-        //we don't need to allocate more memory
-        hash_code = priv->hash(key,priv->key_length);
-        hash_code &= (1<<priv->hash_bit_length) - 1;
-        bucket = priv->table + (hash_code * (priv->data_size + priv->key_length + sizeof(void *)));
-        /*if the key is 0 then the bucket is empty and ready to use*/
-        if (is_zero(bucket + sizeof(void *), priv->key_length)) {
-            memcpy(bucket + sizeof(void *), key, priv->key_length);
-            memcpy(bucket + sizeof(void *) + priv->key_length, data, priv->data_size);
-        }
-        else {
-            new_bucket = malloc(priv->data_size + priv->key_length + sizeof(void *));
-            if (!new_bucket) {
-                pthread_mutex_unlock(&priv->mutex);
-                return 1;
-            }
-
-            /*insert the bucket to the linked list*/
-            memcpy(new_bucket, bucket,sizeof(void *));
-            memcpy(bucket, &new_bucket, sizeof(void *));
-
-            memcpy(new_bucket + sizeof(void *), key, priv->key_length);
-            memcpy(new_bucket + sizeof(void *) + priv->key_length, data, priv->data_size);
-        }
-    }
-    else {
-        /*we need to resize the hash table (allocate a new table and move all the previous buckets to the new table)*/
-        new_table = malloc((1<<new_size) * (sizeof(void *) + priv->key_length + priv->data_size));
-        if (!new_table) {
-            pthread_mutex_unlock(&priv->mutex);
-            return 1;
-        }
-        priv->hash_bit_length += 1;
-        for (size_t i = 0; i < old_size; i++) {
-            bucket = priv->table + i * (sizeof(void*) + priv->key_length+priv->data_size);
-            if (is_zero(bucket + sizeof(void *), priv->key_length)) continue;
-
-            for (unsigned char * b = bucket; b != NULL; b = *(void**)b) {
-                hash_code = priv->hash((char *)b + sizeof(void*),priv->key_length);
-                hash_code &= (1<<priv->hash_bit_length) - 1;
-
-                new_bucket = new_table + hash_code * (priv->data_size + priv->key_length + sizeof(void *));
-                if (hash_table_bucket_insert(priv,new_bucket,b + sizeof(void *),b + sizeof(void *) + priv->key_length)){
-                    free(new_table);
-                    priv->hash_bit_length -= 1;
-                    pthread_mutex_unlock(&priv->mutex);
-                    return 1;
-                }
-            }
-        }
-
-        free(priv->table); //todo is this safe? are the linked list nodes deleted
-        priv->table = new_table;
-
-        /*the old table has been resized, now we insert the new element*/
-
-        hash_code = priv->hash(key,priv->key_length);
-        hash_code &= (1<<priv->hash_bit_length) - 1;
-        bucket = priv->table + hash_code * (priv->data_size + priv->key_length + sizeof(void *));
-        hash_table_bucket_insert(priv,bucket,key,data);
-    }
-    priv->bucket_count++;
-
-    pthread_mutex_unlock(&priv->mutex);
-
-    return 0;
-}
-void *hash_table_search(hash_table_t *ht, void *key) {
-    int hash_code;
-    unsigned char *bucket;
-    hash_table_priv *priv;
-    if (!ht || !key) {
-        return NULL;
-    }
-    priv = ht->private;
-
-    pthread_mutex_lock(&priv->mutex);
-
-    hash_code = priv->hash(key,priv->key_length);
-    hash_code &= (1<<priv->hash_bit_length) - 1;
-    bucket = priv->table + hash_code * (priv->data_size + priv->key_length + sizeof(void *));
-
-    while (memcmp(key,bucket + sizeof(void *), priv->key_length) != 0) {
-        bucket = *(void **)bucket;
-        if (!bucket) {
-            pthread_mutex_unlock(&priv->mutex);
-            return NULL;
-        }
-    }
-    pthread_mutex_unlock(&priv->mutex);
-    return bucket + sizeof(void *) + priv->key_length;
-}
-int hash_table_delete(hash_table_t *ht, void *key) {
-    int hash_code;
-    unsigned char *bucket;
-    unsigned char *prev = NULL;
-    unsigned char *temp;
-    unsigned char *new_bucket;
-    unsigned char *new_table;
-    size_t old_size;
-    size_t new_size;
-    hash_table_priv *priv;
-    if (!ht || !key) {
-        return -1;
-    }
-    priv = ht->private;
-
-    pthread_mutex_lock(&priv->mutex);
-
-    hash_code = priv->hash(key,priv->key_length);
-    hash_code &= (1<<priv->hash_bit_length) - 1;
-    bucket = priv->table + (hash_code * (priv->data_size + priv->key_length + sizeof(void *)));
-    while (memcmp(key,bucket + sizeof(void *), priv->key_length) != 0) {
-        prev = bucket;
-        bucket = *(void **)bucket;
-        if (!bucket) {
-            pthread_mutex_unlock(&priv->mutex);
-            return 1;
-        }
-    }
-    if (!prev) {
-        temp = *(void **)bucket;
-        if (temp) {
-            memcpy(bucket, temp, sizeof(void *) + priv->key_length + priv->data_size);
-            free(temp);
-        }
-        else {
-            memset(bucket, 0, sizeof(void *) + priv->key_length + priv->data_size);
-        }
-    }
-    else {
-        memcpy(prev, bucket, sizeof(void *));
-        free(bucket);
-    }
-
-    old_size = priv->hash_bit_length;
-    priv->bucket_count--;
-    new_size = (sizeof(size_t) * 8) - __builtin_clzll((priv->bucket_count + (priv->bucket_count>>1)) - 1);
-
-    if (new_size < old_size) {
-        /*we need to resize the hash table (allocate a new table and move all the previous buckets to the new table)*/
-        new_table = malloc((1<<new_size) * (sizeof(void *) + priv->key_length + priv->data_size));
-        if (!new_table) {
-            pthread_mutex_unlock(&priv->mutex);
-            return 1;
-        }
-        priv->hash_bit_length += 1;
-        for (size_t i = 0; i < old_size; i++) {
-            bucket = priv->table + i * (sizeof(void*) + priv->key_length+priv->data_size);
-            if (is_zero(bucket + sizeof(void *), priv->key_length)) continue;
-
-            for (unsigned char * b = bucket; b != NULL; b = *(void**)b) {
-                hash_code = priv->hash((char *)b + sizeof(void*),priv->key_length);
-                hash_code &= (1<<priv->hash_bit_length) - 1;
-
-                new_bucket = new_table + hash_code * (priv->data_size + priv->key_length + sizeof(void *));
-                if (hash_table_bucket_insert(priv,new_bucket,b + sizeof(void *),b + sizeof(void *) + priv->key_length)){
-                    free(new_table);
-                    priv->hash_bit_length -= 1;
-                    pthread_mutex_unlock(&priv->mutex);
-                    return 1;
-                }
-            }
-        }
-
-        free(priv->table);
-        priv->table = new_table;
-    }
-    pthread_mutex_unlock(&priv->mutex);
-    return 0;
-}
-
-int hash_table_bucket_insert(const hash_table_priv *table, unsigned char *bucket, const void *key, const void *data) {
-    unsigned char *new_bucket;
-
-    if (is_zero(bucket + sizeof(void *), table->key_length)) {
-        memcpy(bucket + sizeof(void *), key, table->key_length);
-        memcpy(bucket + sizeof(void *) + table->key_length, data, table->data_size);
-    }
-    else {
-        new_bucket = malloc(table->data_size + table->key_length + sizeof(void *));
-        if (!new_bucket) return 1;
-
-        /*insert the bucket to the linked list*/
-        memcpy(new_bucket, bucket,sizeof(void *));
-        memcpy(bucket, &new_bucket, sizeof(void *));
-
-        memcpy(new_bucket + sizeof(void *), key, table->key_length);
-        memcpy(new_bucket + sizeof(void *) + table->key_length, data, table->data_size);
-    }
-    return 0;
-}
 
 int is_zero(const unsigned char * buf, const size_t size) {
     size_t iter;
@@ -320,4 +66,274 @@ int is_zero(const unsigned char * buf, const size_t size) {
     }
 
     return res == 0;
+}
+
+
+int lht_insert(lht_t *ht, void *key, void *data){
+    //the hash table should have a size of (at least) n^2 where n is the number of buckets
+    size_t new_size;
+    size_t old_size;
+    lht_priv *priv;
+    unsigned int hash_code;
+
+    unsigned char *bucket;
+    unsigned char *new_bucket;
+    unsigned char *new_table;
+
+    lht_node_t *new_node;
+
+    if (!ht || !key || !data) {
+        return -1;
+    }
+
+    if (lht_search(ht,key) != NULL) return -1;
+
+    priv = ht->private;
+
+    new_node = malloc(sizeof(lht_node_t));
+    if (!new_node) {
+        return 1;
+    }
+
+    pthread_mutex_lock(&priv->mutex);
+    new_size = (sizeof(size_t) * 8) - __builtin_clzll(((priv->bucket_count+1) + ((priv->bucket_count+1)>>1)) - 1);
+    old_size = priv->hash_bit_length;
+    if (old_size >= new_size) {
+        //we don't need to allocate more memory
+        hash_code = priv->hash(key,priv->key_length);
+        hash_code &= (1<<priv->hash_bit_length) - 1;
+        bucket = priv->table + (hash_code * (priv->data_size + priv->key_length + sizeof(void *)));
+        /*if the key is 0 then the bucket is empty and ready to use*/
+        if (is_zero(bucket + (sizeof(void *)<<1), priv->key_length)) {
+            memcpy(bucket + (sizeof(void *)<<1), key, priv->key_length);
+            memcpy(bucket + (sizeof(void *)<<1) + priv->key_length, data, priv->data_size);
+        }
+        else {
+            new_bucket = malloc(priv->data_size + priv->key_length + (sizeof(void *)<<1));
+            if (!new_bucket) {
+                pthread_mutex_unlock(&priv->mutex);
+                free(new_node);
+                return 1;
+            }
+
+            /*insert the bucket to the linked list*/
+            memcpy(new_bucket, bucket,sizeof(void *));
+            memcpy(bucket, &new_bucket, sizeof(void *));
+
+            memcpy(new_bucket + (sizeof(void *)<<1), key, priv->key_length);
+            memcpy(new_bucket + (sizeof(void *)<<1) + priv->key_length, data, priv->data_size);
+            bucket = new_bucket; // so that we can universally add the node to the list
+        }
+    }
+    else {
+        /*we need to resize the hash table (allocate a new table and move all the previous buckets to the new table)*/
+        new_table = malloc((1<<new_size) * ((sizeof(void *)<<1) + priv->key_length + priv->data_size));
+        if (!new_table) {
+            pthread_mutex_unlock(&priv->mutex);
+            free(new_node);
+            return 1;
+        }
+        priv->hash_bit_length += 1;
+        for (size_t i = 0; i < old_size; i++) {
+            bucket = priv->table + (i * (sizeof(void*) + priv->key_length+priv->data_size));
+            if (is_zero(bucket + sizeof(void *), priv->key_length)) continue;
+
+            for (unsigned char * b = bucket; b != NULL; b = *(void**)b) {
+                hash_code = priv->hash((char *)b + sizeof(void*),priv->key_length);
+                hash_code &= (1<<priv->hash_bit_length) - 1;
+
+                new_bucket = new_table + (hash_code * (priv->data_size + priv->key_length + sizeof(void *)));
+                if (lht_bucket_insert(priv,new_bucket,b + sizeof(void *),b + sizeof(void *) + priv->key_length)){
+                    free(new_table);
+                    priv->hash_bit_length -= 1;
+                    pthread_mutex_unlock(&priv->mutex);
+                    free(new_node);
+                    return 1;
+                }
+            }
+        }
+
+        free(priv->table); //todo is this safe? are the linked list nodes deleted
+        priv->table = new_table;
+
+        /*the old table has been resized, now we insert the new element*/
+
+        hash_code = priv->hash(key,priv->key_length);
+        hash_code &= (1<<priv->hash_bit_length) - 1;
+        bucket = priv->table + (hash_code * (priv->data_size + priv->key_length + sizeof(void *)));
+        lht_bucket_insert(priv,bucket,key,data);
+    }
+
+    //add the pointer to the data
+    new_node->data = bucket + sizeof(void *) + priv->key_length;
+    memcpy(bucket + sizeof(void *), &new_node, sizeof(void *));
+
+    //attach the node to the list
+    if (priv->head) {
+        new_node->next = priv->head;
+        new_node->next->prev = new_node;
+        new_node->prev = NULL;
+        priv->head = new_node;
+    }
+    else{
+        priv->head = new_node;
+        new_node->next = NULL;
+        new_node->prev = NULL;
+    }
+
+    priv->bucket_count++;
+
+    pthread_mutex_unlock(&priv->mutex);
+
+    return 0;
+}
+
+void *lht_search(lht_t *ht, void *key) {
+    unsigned int hash_code;
+    unsigned char *bucket;
+    lht_priv *priv;
+
+    if (!ht || !key) {
+        return NULL;
+    }
+    priv = ht->private;
+
+    pthread_mutex_lock(&priv->mutex);
+
+    hash_code = priv->hash(key,priv->key_length);
+    hash_code &= (1<<priv->hash_bit_length) - 1;
+    bucket = priv->table + (hash_code * (priv->data_size + priv->key_length + (sizeof(void *)<<1)));
+
+    while (memcmp(key,bucket + (sizeof(void *)<<1), priv->key_length) != 0) {
+        bucket = *(void **)bucket;
+        if (!bucket) {
+            pthread_mutex_unlock(&priv->mutex);
+            return NULL;
+        }
+    }
+    pthread_mutex_unlock(&priv->mutex);
+    return bucket + sizeof(void *) + priv->key_length;
+}
+
+int lht_delete(linked_hash_table_t *ht, void *key) {
+    unsigned int hash_code;
+    unsigned char *bucket;
+    unsigned char *prev = NULL;
+    unsigned char *temp;
+    unsigned char *new_bucket;
+    unsigned char *new_table;
+    size_t old_size;
+    size_t new_size;
+    lht_node_t *list_node;
+    lht_node_t *temp_node;
+    lht_priv *priv;
+    if (!ht || !key) {
+        return -1;
+    }
+    priv = ht->private;
+
+    pthread_mutex_lock(&priv->mutex);
+
+    hash_code = priv->hash(key,priv->key_length);
+    hash_code &= (1<<priv->hash_bit_length) - 1;
+    bucket = priv->table + (hash_code * (priv->data_size + priv->key_length + (sizeof(void *)<<1)));
+    while (memcmp(key,bucket + (sizeof(void *)<<1), priv->key_length) != 0) {
+        prev = bucket;
+        bucket = *(void **)bucket;
+        if (!bucket) {
+            pthread_mutex_unlock(&priv->mutex);
+            return 1;
+        }
+    }
+
+    //get the address of the list node
+    list_node = *((void **)(bucket + sizeof(void *)));
+
+    //remove the node from the list
+    if (list_node == priv->head) {
+        temp_node = list_node->next;
+        priv->head = temp_node;
+        temp_node->prev = NULL;
+        free(list_node);
+    }
+    else {
+        temp_node = list_node;
+        list_node->next->prev = list_node->prev;
+        list_node->prev->next = list_node->next;
+        free(temp_node);
+    }
+
+    if (!prev) {
+        //if we delete the head of the list (the node in the table), we need to move the next node to the table
+        temp = *(void **)bucket;
+        if (temp) {
+            memcpy(bucket, temp, (sizeof(void *)<<1) + priv->key_length + priv->data_size);
+            free(temp);
+        }
+        else {
+            //there is no other node so we just zero out the bucket
+            memset(bucket, 0, (sizeof(void *)<<1) + priv->key_length + priv->data_size);
+        }
+    }
+    else {
+        memcpy(prev, bucket, sizeof(void *));
+        free(bucket);
+    }
+
+    old_size = priv->hash_bit_length;
+    priv->bucket_count--;
+    new_size = (sizeof(size_t) * 8) - __builtin_clzll((priv->bucket_count + (priv->bucket_count>>1)) - 1);
+
+    if (new_size < old_size) {
+        /*we need to resize the hash table (allocate a new table and move all the previous buckets to the new table)*/
+        new_table = malloc((1<<new_size) * ((sizeof(void *)<<1) + priv->key_length + priv->data_size));
+        if (!new_table) {
+            pthread_mutex_unlock(&priv->mutex);
+            return 1;
+        }
+        priv->hash_bit_length += 1;
+        for (size_t i = 0; i < old_size; i++) {
+            bucket = priv->table + (i * ((sizeof(void*)<<1) + priv->key_length + priv->data_size));
+            if (is_zero(bucket + (sizeof(void *)<<1), priv->key_length)) continue;
+
+            for (unsigned char * b = bucket; b != NULL; b = *(void**)b) {
+                hash_code = priv->hash((char *)b + (sizeof(void*)<<1),priv->key_length);
+                hash_code &= (1<<priv->hash_bit_length) - 1;
+
+                new_bucket = new_table + (hash_code * (priv->data_size + priv->key_length + sizeof(void *)));
+                if (lht_bucket_insert(priv,new_bucket,b + (sizeof(void *)<<1),b + (sizeof(void *)<<1) + priv->key_length)){
+                    free(new_table);
+                    priv->hash_bit_length -= 1;
+                    pthread_mutex_unlock(&priv->mutex);
+                    return 1;
+                }
+            }
+        }
+
+        free(priv->table);
+        priv->table = new_table;
+    }
+    pthread_mutex_unlock(&priv->mutex);
+    return 0;
+}
+
+int lht_bucket_insert(const lht_priv *table, unsigned char *bucket, const void *key, const void *data) {
+    unsigned char *new_bucket;
+
+    if (is_zero(bucket + (sizeof(void *)<<1), table->key_length)) {
+        memcpy(bucket + (sizeof(void *)<<1), key, table->key_length);
+        memcpy(bucket + (sizeof(void *)<<1) + table->key_length, data, table->data_size);
+    }
+    else {
+        new_bucket = malloc(table->data_size + table->key_length + (sizeof(void *)<<1));
+        if (!new_bucket) return 1;
+
+        /*insert the bucket to the linked list*/
+        memcpy(new_bucket, bucket,sizeof(void *));
+        memcpy(bucket, &new_bucket, sizeof(void *));
+
+        memcpy(new_bucket + sizeof(void *), key, table->key_length);
+        memcpy(new_bucket + sizeof(void *) + table->key_length, data, table->data_size);
+    }
+    return 0;
 }
