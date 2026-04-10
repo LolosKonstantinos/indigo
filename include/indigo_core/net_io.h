@@ -118,7 +118,8 @@ int register_single_receiver(SOCKET sock, RECV_INFO **info, mempool_t* mempool);
 int register_multiple_receivers(socket_ll *sockets, RECV_ARRAY *info, mempool_t* mempool, EFLAG *flag);
 
 int send_packet(int port, uint32_t addr, socket_ll* sockets, const packet_t* packet, EFLAG *flag);
-int send_file_packet(active_file_t *file, const unsigned char *pk, socket_ll* sockets, EFLAG *flag);
+int send_next_file_packet(active_file_t *file, const unsigned char *pk, socket_ll* sockets, EFLAG *flag);
+int send_file_packet(active_file_t *file, uint64_t counter,const unsigned char *pk, socket_ll* sockets, EFLAG *flag);
 
 /////////////////////////////////////////////////////////////
 ///                                                       ///
@@ -151,6 +152,5 @@ void free_recv_array(const RECV_ARRAY *info, mempool_t* mempool);
 
 int *send_thread(SEND_ARGS *args);
 int *recv_thread(RECV_ARGS *args);
-
 
 #endif //NET_IO_H

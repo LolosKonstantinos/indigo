@@ -11,7 +11,6 @@ target_link_libraries(indigo_core PUBLIC
         sodium
         mempool
         crypto_utils
-        hash_table
-        simple_buffer
+        lht
         binary_tree
         config)

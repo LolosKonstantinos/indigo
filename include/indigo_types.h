@@ -197,14 +197,14 @@ typedef struct session_t{
 } session_t;
 
 typedef struct active_file_t {
+    struct active_file_t *next;
     FILE *fd;
-    uint64_t counter; //it's a bool but for alignment reasons it will be 64-bit
-    uint64_t fid;
+    uint64_t counter;
+    session_id_t session_id;
     unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
     unsigned char *tk;
     int port;
     uint32_t ip;
-    struct active_file_t *next;
 }active_file_t;
 
 

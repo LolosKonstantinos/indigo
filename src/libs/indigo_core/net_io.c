@@ -29,7 +29,6 @@ SOFTWARE.
 
 #include "buffer.h"
 #include "crypto_utils.h"
-#include "indigo_core.h"
 #include <indigo_types.h>
 
 #include "config.h"
@@ -77,7 +76,9 @@ int send_discovery_packets(
     int routine_ret = 0;
 
     build_packet(&packet, MSG_INIT_PACKET, sign_key_pair->public, NULL, NULL);
-    wcsncpy(packet_data.username, username, MAX_USERNAME_LEN);
+
+    memcpy(username, packet_data.username, MAX_USERNAME_LEN * sizeof(wchar_t));
+    wcsncpy(username, username, MAX_USERNAME_LEN);
 
 
     while (1) {
@@ -677,14 +678,14 @@ int send_packet(const int port, const uint32_t addr, socket_ll* sockets, const p
     free_send_info(&temp_info);
     return routine_ret;
 }
-int send_file_packet(active_file_t *file, const unsigned char *const pk, socket_ll* sockets, EFLAG *flag) {
+int send_next_file_packet(active_file_t *file, const unsigned char *const pk, socket_ll* sockets, EFLAG *flag) {
     unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
     packet_t packet;
     size_t read_ret;
     int ret;
 
     if (!file) {
-        fprintf(stderr, "send_file_packet(): wrong parameters\n");
+        fprintf(stderr, "send_next_file_packet(): wrong parameters\n");
         return INDIGO_ERROR_INVALID_PARAM;
     }
     if (!(file->fd)) {
@@ -696,7 +697,7 @@ int send_file_packet(active_file_t *file, const unsigned char *const pk, socket_
     memcpy(nonce,file->nonce,crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
     ret = nonce_increment(nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES, file->counter);
     if (ret) {
-        fprintf(stderr, "nonce_increment() failed in send_file_packet()\n");
+        fprintf(stderr, "nonce_increment() failed in send_next_file_packet()\n");
         return ret;
     }
 
@@ -705,7 +706,7 @@ int send_file_packet(active_file_t *file, const unsigned char *const pk, socket_
     if (read_ret != 0) {
         ret = feof(file->fd);
         if (ret != 0) {
-            fprintf(stderr, "fread() failed in send_file_packet()\n");
+            fprintf(stderr, "fread() failed in send_next_file_packet()\n");
             return -1;
         }
         fclose(file->fd);
@@ -714,18 +715,66 @@ int send_file_packet(active_file_t *file, const unsigned char *const pk, socket_
 
     ret = encrypt_packet(&packet, file->tk, nonce);
     if (ret) {
-        fprintf(stderr,"encrypt_packet() failed in send_file_packet()\n");
+        fprintf(stderr,"encrypt_packet() failed in send_next_file_packet()\n");
         return ret;
     }
     ret = send_packet(file->port, file->ip, sockets, &packet, flag);
     if (ret != 0) {
-        fprintf(stderr, "send_packet() failed in send_file_packet()\n");
+        fprintf(stderr, "send_packet() failed in send_next_file_packet()\n");
         return ret;
     }
+    file->counter++;
 
     return INDIGO_SUCCESS;
 }
 
+int send_file_packet(active_file_t *file, uint64_t counter,const unsigned char *const pk, socket_ll* sockets, EFLAG *flag) {
+    unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
+    packet_t packet;
+    size_t read_ret;
+    int ret;
+
+    if (!file) {
+        fprintf(stderr, "send_next_file_packet(): wrong parameters\n");
+        return INDIGO_ERROR_INVALID_PARAM;
+    }
+    if (!(file->fd)) {
+        return INDIGO_SUCCESS;
+    }
+    if (file->counter == 0) {
+        randombytes_buf(file->nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
+    }
+    memcpy(nonce,file->nonce,crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
+    ret = nonce_increment(nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES, counter);
+    if (ret) {
+        fprintf(stderr, "nonce_increment() failed in send_next_file_packet()\n");
+        return ret;
+    }
+
+    build_packet(&packet, MSG_FILE_CHUNK,pk, nonce, NULL);
+    read_ret = fread(packet.data, PAC_DATA_BYTES_USABLE, 1, file->fd);
+    if (read_ret != 0) {
+        ret = feof(file->fd);
+        if (ret != 0) {
+            fprintf(stderr, "fread() failed in send_next_file_packet()\n");
+            return -1;
+        }
+        fclose(file->fd);
+        file->fd = NULL;
+    }
+
+    ret = encrypt_packet(&packet, file->tk, nonce);
+    if (ret) {
+        fprintf(stderr,"encrypt_packet() failed in send_next_file_packet()\n");
+        return ret;
+    }
+    ret = send_packet(file->port, file->ip, sockets, &packet, flag);
+    if (ret != 0) {
+        fprintf(stderr, "send_packet() failed in send_next_file_packet()\n");
+        return ret;
+    }
+    return INDIGO_SUCCESS;
+}
 /////////////////////////////////////////////////////////////
 ///                                                       ///
 ///                  IO_HELPER_FUNCTIONS                  ///
@@ -1075,8 +1124,8 @@ int *send_thread(SEND_ARGS *args) {
     struct timespec current_ts;
     QNODE *node;
     lht_t *active_files = NULL;
-    active_file_t *tmp_af;
     active_file_t *curr_af;
+    lht_node_t *list;
     wchar_t username[MAX_USERNAME_LEN];
     int *process_return = NULL;
     int ret;
@@ -1123,7 +1172,7 @@ int *send_thread(SEND_ARGS *args) {
             if (ret > 0) {
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
-                free_buffer(fid_array);
+                delete_lht(active_files);
                 *process_return = ret;
                 return process_return;
             }
@@ -1131,7 +1180,7 @@ int *send_thread(SEND_ARGS *args) {
             if (ret == -1) {
                 flag_val = get_event_flag(args->flag);
                 if(flag_val & EF_TERMINATION){
-                    free_buffer(fid_array);
+                    delete_lht(active_files);
                     *process_return = 0;
                     return process_return;
                 }
@@ -1143,21 +1192,45 @@ int *send_thread(SEND_ARGS *args) {
             if (node == NULL) continue;
 
             if (node->type == QET_SEND_FILE) {
-                if (active_files) {
-                    tmp_af = node->data;
-                    tmp_af->next = active_files;
-                    active_files = tmp_af;
-                }
-                else {
-                    active_files = node->data;
+                ret = active_files->insert(active_files,&(((active_file_t *)node->data)->session_id), node->data);
+                if (ret) {
+                    //todo: do something
                 }
             }
             destroy_qnode(node);
+            node = NULL;
         }
         //todo: there is a queue node with the info needed, check it and help your self
         else if (flag_val & EF_RESEND_FILE_CHUNK) {
-            //there is no fast way (better than O(N)) to search for the active file
-            //todo: implement linked hash map, hash table but nodes are a linked list too.
+            node = queue_pop(args->queue,QOPT_NON_BLOCK);
+            if (node == NULL) continue;
+            if (node->type == QET_RESEND_FILE_CHUNK) {
+                active_file_t *af;
+                transmission_control_data_t *data = ((Q_RESEND_FILE_CHUNK *)(node->data))->control;
+
+                af = lht_search(active_files, &(((Q_RESEND_FILE_CHUNK *)(node->data))->session_id));
+                if (!af) {
+                    free(node->data);
+                    destroy_qnode(node);
+                    node = NULL;
+                    continue;
+                }
+
+                for (size_t i = data->first_packet_number; i < data->last_packet_number + 1; i++) {
+                    ret = send_file_packet(af, i, args->sign_keys->public, args->sockets, args->flag);
+                    if (ret) { //todo: are all errors non recoverable? check it please
+                        set_event_flag(args->flag, EF_TERMINATION);
+                        set_event_flag(args->wake, EF_WAKE_MANAGER);
+                        delete_lht(active_files);
+                        *process_return = ret;
+                        return process_return;
+                    }
+                }
+            }
+
+            free(node->data);
+            destroy_qnode(node);
+            node = NULL;
         }
         else if (flag_val & EF_STOP_FILE_TRANSMISSION) {
         }
@@ -1172,14 +1245,18 @@ int *send_thread(SEND_ARGS *args) {
         //////////////////////////////////////////////////
 
         //send file packets
-        tmp_af = NULL;
-        curr_af = active_files;
+
+        //get the list
+        ret = lht_list(active_files,&list);
+
+        curr_af = list->data;
+
         while (curr_af) { //for every active file send a packet, in circular way
-            ret = send_file_packet(curr_af,args->sign_keys->public, args->sockets, args->flag);
+            ret = send_next_file_packet(curr_af,args->sign_keys->public, args->sockets, args->flag);
             if (ret) { //todo: are all errors non recoverable? check it please
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
-                free_buffer(fid_array);
+                delete_lht(active_files);
                 *process_return = ret;
                 return process_return;
             }
@@ -1189,18 +1266,7 @@ int *send_thread(SEND_ARGS *args) {
              * or have them send a packet for successful transfer or both.
             */
             if (!curr_af->fd) {
-                //tmp_af is the previous node
-
-                if (tmp_af) {
-                    tmp_af->next = curr_af->next;
-                    free(curr_af);
-                    curr_af = tmp_af->next;
-                }
-                else {
-                    active_files = curr_af->next;
-                    free(curr_af);
-                    curr_af = active_files;
-                }
+                lht_delete(active_files,&(curr_af->session_id));
 
                 //check if we need to send discovery packets
                 clock_gettime(CLOCK_REALTIME, &current_ts);
@@ -1215,8 +1281,8 @@ int *send_thread(SEND_ARGS *args) {
             clock_gettime(CLOCK_REALTIME, &current_ts);
             if (deadline_ts.tv_sec <= current_ts.tv_sec && deadline_ts.tv_nsec <= current_ts.tv_nsec) break;
 
-            tmp_af = curr_af;
-            curr_af = curr_af->next;
+            list = list->next;
+            curr_af = list->data;
         }
 
         //todo: remove username field if the username is in a file
@@ -1224,7 +1290,7 @@ int *send_thread(SEND_ARGS *args) {
         if (ret > 0) {
             set_event_flag(args->flag, EF_TERMINATION);
             set_event_flag(args->wake, EF_WAKE_MANAGER);
-            free_buffer(fid_array);
+            delete_lht(active_files);
             *process_return = ret;
             return process_return;
         }
@@ -1232,7 +1298,7 @@ int *send_thread(SEND_ARGS *args) {
         if (ret == -1) {
             flag_val = get_event_flag(args->flag);
             if(flag_val & EF_TERMINATION){
-                free_buffer(fid_array);
+                delete_lht(active_files);
                 *process_return = 0;
                 return process_return;
             }
@@ -1253,9 +1319,10 @@ int *send_thread(SEND_ARGS *args) {
             *process_return = 0;
             break;
         }
+        lht_list(active_files,&list);
         ret = 0;
         //while there are no more files to send, and we didn't time out and the termination or new file flag is risen
-        while (!active_files && ret == 0 && !(args->flag->event_flag & (EF_TERMINATION | EF_SEND_NEW_FILE))) {
+        while (!list && ret == 0 && !(args->flag->event_flag & (EF_TERMINATION | EF_SEND_NEW_FILE))) {
             ret = pthread_cond_timedwait(&(args->flag->cond), &(args->flag->mutex), &deadline_ts);
 
             if ((ret != ETIMEDOUT) && (ret != 0)) {
@@ -1263,14 +1330,14 @@ int *send_thread(SEND_ARGS *args) {
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
                 pthread_mutex_unlock(&(args->flag->mutex));
-                free_buffer(fid_array);
+                delete_lht(active_files);
                 *process_return = INDIGO_ERROR_INVALID_STATE;
                 return process_return;
             }
             if (ret == 0) {
                 if (args->flag->event_flag & EF_TERMINATION) {
                     pthread_mutex_unlock(&(args->flag->mutex));
-                    free_buffer(fid_array);
+                    delete_lht(active_files);
                     *process_return = 0;
                     return process_return;
                 }
@@ -1280,7 +1347,7 @@ int *send_thread(SEND_ARGS *args) {
 
     }
 
-    free_buffer(fid_array);
+    delete_lht(active_files);
     return process_return;
 }
 

@@ -96,7 +96,7 @@ lht_t *new_lht(size_t data_size, size_t key_length, size_t init_size) {
     ht->search = lht_search;
     return ht;
 }
-void delete_hash_table(lht_t *ht) {
+void delete_lht(lht_t *ht) {
     if (!ht || !ht->private) return;
     lht_priv *priv = ht->private;
     void * temp;
@@ -400,9 +400,9 @@ int lht_unlock(lht_t *ht) {
     return 0;
 }
 
-int lht_list(lht_t *ht, lht_node_t *list) {
+int lht_list(lht_t *ht, lht_node_t **list) {
     if (!list || !ht || !ht->private) return 1;
 
-    *list = *(ht->private->head);
+    *list = ht->private->head;
     return 0;
 }

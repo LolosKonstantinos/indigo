@@ -62,8 +62,13 @@ typedef struct Q_FILE_SENDING_REQUEST {
 }Q_FILE_SENDING_REQUEST, Q_SESSION_START;
 
 typedef session_id_t Q_SESSION_REJECTED, Q_EXPECT_SEND_RESPONSE ;
+
 typedef active_file_t Q_SEND_FILE;
-typedef transmission_control_data_t Q_RESEND_FILE_CHUNK;
+
+typedef struct Q_RESEND_FILE_CHUNK {
+    transmission_control_data_t *control;
+    session_id_t session_id;
+}Q_RESEND_FILE_CHUNK;
 
 
 

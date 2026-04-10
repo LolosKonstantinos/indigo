@@ -46,7 +46,7 @@ struct linked_hash_table_t {
 };
 
 lht_t *new_lht(size_t data_size, size_t key_length, size_t init_size);
-void delete_hash_table(linked_hash_table_t *ht);
+void delete_lht(linked_hash_table_t *ht);
 
 int lht_insert(linked_hash_table_t *ht, void *key, void *data);
 void *lht_search(linked_hash_table_t *ht, void *key);
@@ -57,5 +57,5 @@ int lht_bucket_insert(const lht_priv *table, unsigned char *bucket, const void *
 int lht_lock(lht_t *ht);
 int lht_unlock(lht_t *ht);
 
-int lht_list(lht_t *ht, lht_node_t *list);
+int lht_list(lht_t *ht, lht_node_t **list);
 #endif //INDIGO_LHT_H

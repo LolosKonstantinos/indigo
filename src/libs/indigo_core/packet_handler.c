@@ -51,7 +51,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     unsigned char iterations_until_cleanup = 10;
 
     unsigned char nonce[INDIGO_NONCE_SIZE];
-    unsigned char signed_nonce[crypto_sign_BYTES + INDIGO_NONCE_SIZE];
 
     unsigned char public_key[crypto_sign_PUBLICKEYBYTES];
 
@@ -82,11 +81,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     session_t *found_session = NULL;
     unsigned char *session_pk = NULL;
     unsigned char *session_sk = NULL;
-
-    active_file_t *tmp_active_file;
-
-    FILE *recent_files[2]; //an array of the last 2 file descriptors used
-    FILE *tmp_file;
 
     wchar_t tmp_username[MAX_USERNAME_LEN];
 
@@ -1037,6 +1031,8 @@ int create_client_session(const packet_t *const packet
     tmp_active_file->fd = xfp.file; //todo xfp should contain a file descriptor, as for now it is not initialized
     tmp_active_file->counter = 0;
     tmp_active_file->next = NULL;
+    memcpy(tmp_active_file->session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
+    tmp_active_file->session_id.serial = ((file_sending_response_data_t *)(packet->data))->serial;
 
     ret = queue_push(send_queue, tmp_active_file,QET_SEND_FILE);
     if (ret != 0) goto cleanup;

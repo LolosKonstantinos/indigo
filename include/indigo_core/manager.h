@@ -21,7 +21,6 @@ SOFTWARE.
 
 #ifndef THREAD_MANAGEMENT_H
 #define THREAD_MANAGEMENT_H
-#include <indigo_core/indigo_core.h>
 #include <indigo_core/net_io.h>
 #include <indigo_core/net_monitor.h>
 #include <indigo_core/packet_handler.h>
