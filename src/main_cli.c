@@ -39,6 +39,7 @@ int main(int argc, char *argv[]) {
     //network
     int port;
     uint32_t multicast_addr;
+    struct in_addr maddr;
 
     //device table
     tree_t *device_tree;
@@ -71,10 +72,10 @@ int main(int argc, char *argv[]) {
     }
 
 
-    //create the device ll
+    //create the device tree
 
     ret = new_tree(&device_tree, cmp_rdev, sizeof(remote_device_t), BINARY_TREE_TYPE_AVL);
-    if (!ret) {
+    if (ret) {
         fprintf(stderr, "malloc failed\n");
         endwin();
         WSACleanup();
@@ -82,15 +83,16 @@ int main(int argc, char *argv[]) {
     }
 
     // todo import from network config the ports and multicast addresses
-    inet_pton(AF_INET, MULTICAST_ADDR,&multicast_addr);
-    port = (int) htonl(PORT);
-    ret = create_thread_manager_thread(&manager_args, port, multicast_addr, device_tree, &manager_tid);
-    if (ret != 0) {
-        fprintf(stderr, "Error creating thread_manager thread\n");
-        endwin();
-        WSACleanup();
-        return 1;
-    }
+    inet_pton(AF_INET, MULTICAST_ADDR, &multicast_addr);
+    port = htons(PORT);
+
+     ret = create_thread_manager_thread(&manager_args, port, multicast_addr, device_tree, &manager_tid);
+     if (ret != 0) {
+         fprintf(stderr, "Error creating thread_manager thread\n");
+         endwin();
+         WSACleanup();
+         return 1;
+     }
 
     //create the main cli interface
     create_main_interface(device_tree);

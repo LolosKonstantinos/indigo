@@ -40,7 +40,7 @@ typedef int(*tree_search)(tree_t *, void *);
 typedef int(*tree_search_pin)(tree_t *, void *, void **);
 typedef int(*tree_search_release)(tree_t *);
 struct tree_t{
-    tree_insert  insert;
+    tree_insert insert;
     tree_remove remove;
     tree_search search;
     //thread unsafe search function
