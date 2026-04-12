@@ -61,7 +61,12 @@ typedef struct Q_FILE_SENDING_REQUEST {
     char zero[4];
 }Q_FILE_SENDING_REQUEST, Q_SESSION_START;
 
-typedef session_id_t Q_SESSION_REJECTED, Q_EXPECT_SEND_RESPONSE ;
+typedef struct Q_EXPECT_SEND_RESPONSE {
+    session_id_t session_id;
+    FILE *file;
+}Q_EXPECT_SEND_RESPONSE;
+
+typedef session_id_t Q_SESSION_REJECTED;
 
 typedef active_file_t Q_SEND_FILE;
 

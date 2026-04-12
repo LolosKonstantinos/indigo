@@ -37,8 +37,6 @@ SOFTWARE.
 //todo: check if session creation is ok
 //todo: implement control signals and ip change
 //todo: i know for sure that there is some code around here that does not work at all, we need to find it
-//todo: we use 2 magic numbers, one for encrypted and one for unencrypted packets, distinguish them, and handle them
-//todo: decrypt packets before checking the packet type
 int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     uint32_t flag_val = 0;
     QNODE *node = NULL;
@@ -68,12 +66,15 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     //the expected signing response table
     tree_t *xsr_tree = NULL;
     xsr_t xsr;
-    xsr_t *found_xsr = NULL;
 
     //the expected file packet table
     tree_t *xfp_tree = NULL;
-    xfp_t xfp;
+    xfp_t xfp = {0};
     xfp_t *found_xfp = NULL;
+
+    //the fus (file until session) tree
+    tree_t *fus_tree = NULL;
+
 
     Q_FILE_SENDING_REQUEST *fwd = NULL;
 
@@ -363,12 +364,14 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         if (found_rdev->dev_state_flag == RDSF_UNVERIFIED) {
                             randombytes_buf(signing_response_data->nonce,INDIGO_NONCE_SIZE);
                             signing_response_data->sig_request = 1;
+
                             //insert into xsr
                             xsr.expiration_time = time(NULL) + EXPIRATION_TIME;
                             xsr.pkx = session_pk;
                             xsr.skx = session_sk;
                             memcpy(xsr.nonce, signing_response_data->nonce, INDIGO_NONCE_SIZE);
                             memcpy(xsr.id, packet->id, crypto_sign_PUBLICKEYBYTES);
+
                             ret = xsr_tree->insert(xsr_tree, &xsr);
                             if (ret) {
                                 printf("DEBUG: xsr_tree->insert() failed in packet_handler");
@@ -626,19 +629,20 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         //if it gets accepted we receive a session_t struct via queue, and store an expected file packet
 
                         Q_FILE_SENDING_REQUEST *fsr = malloc(sizeof(Q_FILE_SENDING_REQUEST));
+                        file_sending_request_data_t *data = (file_sending_request_data_t *)packet->data;
                         if (!fsr) {
                             *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                             goto cleanup;
                         }
                         memcpy(fsr->id, packet->id, crypto_sign_PUBLICKEYBYTES);
-                        memcpy(&(fsr->file_size), packet->data + crypto_kx_PUBLICKEYBYTES, sizeof(size_t));
+                        fsr->file_size = data->file_size;
                         wcsncpy(fsr->file_name
-                               ,(wchar_t *)(packet->data + crypto_kx_PUBLICKEYBYTES + sizeof(size_t))
-                               ,MAX_PATH);
-                        fsr->file_name[MAX_PATH - 1] = L'\0';
+                               ,data->file_name
+                               ,PATH_MAX);
+                        fsr->file_name[PATH_MAX - 1] = L'\0';
                         fsr->addr = packet_info->address.sin_addr.S_un.S_addr;
 
-                        if (queue_push(args->cli_queue, fsr, QET_FILE_SENDING_REQUEST)) {
+                        if (queue_push(args->ui_queue, fsr, QET_FILE_SENDING_REQUEST)) {
                             *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                             goto cleanup;
                         }
@@ -646,11 +650,11 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                 }
                 case MSG_FILE_SENDING_RESPONSE:
                     ret = create_client_session(packet
-                                                , packet_info
-                                                , args->device_tree
-                                                , args->session_tree
-                                                , xfp_tree
-                                                , args->send_queue
+                                              , packet_info
+                                              , args->device_tree
+                                              , args->session_tree
+                                              , xfp_tree
+                                              , args->send_queue
                     );
                     if (ret) {
                         *process_return = ret;
@@ -671,8 +675,13 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
 
                         memcpy(xfp.session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
                         xfp.session_id.serial = ((file_chunk_data_t *)packet->data)->serial;
+
                         ret = xfp_tree->search_pin(xfp_tree, &xfp, (void **)&found_xfp);
                         if (ret) {
+                            xfp_tree->search_release(xfp_tree);
+                            break;
+                        }
+                        if (xfp.packet_number == XFP_CLIENT_FILE) {
                             xfp_tree->search_release(xfp_tree);
                             break;
                         }
@@ -685,20 +694,29 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                             break;
                         }
 
-                        found_xfp->expiration_time = EXPIRATION_TIME;
+                        if (found_xfp->packet_number == XFP_CLIENT_FILE) {
+                            //the xfp is for a file we don't receive
+                            xfp_tree->search_release(xfp_tree);
+                            args->session_tree->search_release(args->session_tree);
+                            break;
+                        }
+
+                        found_xfp->expiration_time = time(NULL) + EXPIRATION_TIME;
+
                         chunk_number = ((file_chunk_data_t *)packet->data)->chunk_number;
-                        if (chunk_number < found_xfp->packet_number) {
+
+                        if (chunk_number < found_xfp->last_chunk) {
                             //we either received a duplicate packet or a resend
                             //todo: we dont want to write duplicate packets, but it may also be a re-sent packet
                             //in this case we dont update the packet number
                         }
-                        if (chunk_number > found_xfp->packet_number) {
+                        if (chunk_number > found_xfp->last_chunk) {
                             //we lost a packet, send a re-send packet
 
                             //create the packet
                             build_packet(&temp_packet, MSG_RESEND, public_key, NULL, NULL);
                             ((transmission_control_data_t *)(temp_packet.data))->serial = ((file_chunk_data_t *)packet->data)->serial;
-                            ((transmission_control_data_t *)(temp_packet.data))->first_packet_number = found_xfp->packet_number;
+                            ((transmission_control_data_t *)(temp_packet.data))->first_packet_number = found_xfp->last_chunk;
                             ((transmission_control_data_t *)(temp_packet.data))->last_packet_number = chunk_number - 1;
                             //send the packet
                             ret = send_packet(htons(PORT)
@@ -757,7 +775,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                                     break;
                             }
                         }
-                        if (chunk_number >= found_xfp->packet_number) found_xfp->packet_number = chunk_number + 1;
+                        if (chunk_number >= found_xfp->last_chunk) found_xfp->last_chunk = chunk_number + 1;
                         found_session->bytes_moved += PAC_DATA_PAYLOAD_BYTES;
 
                         xfp_tree->search_release(xfp_tree);
@@ -816,15 +834,20 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                 node = NULL;
             }
             else if (node->type == QET_EXPECT_SEND_RESPONSE) {
+                Q_EXPECT_SEND_RESPONSE *qe = (Q_EXPECT_SEND_RESPONSE *)node->data;
                 //we sent a request to send a file, and we expect a response to that request
                 memset(&xfp, 0 , sizeof(xfp_t));
-                memcpy(&(xfp.session_id), node->data, sizeof(session_id_t));
+                memcpy(&(xfp.session_id), &(qe->session_id), sizeof(session_id_t));
+                xfp.file = qe->file;
+                xfp.expiration_time = time(NULL) + EXPIRATION_TIME;
+                xfp.packet_number = XFP_CLIENT_FILE;
                 free(node->data);
                 destroy_qnode(node);
                 node = NULL;
 
                 ret = xfp_tree->insert(xfp_tree, &xfp);
                 if (ret) {
+                    fclose(xfp.file);
                     *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                     goto cleanup;
                 }
@@ -844,7 +867,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
             iterations_until_cleanup--;
             if (!queue_is_empty(args->queue)) continue;
         }
-        else {iterations_until_cleanup = 10;}
+        else iterations_until_cleanup = 10;
 
         /////////////////////////////////////////
         ///  phase 2: update the device list  ///
@@ -915,6 +938,11 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd
     file_sending_response_data_t file_sending_response_data = {0};
     xfp_t xfp;
 
+    //there is no point to receive a file of 0 bytes, I mean we don't transfer metadata, so I guess there is no point
+    if (fwd->file_size == 0) {
+        ret = 1;
+        goto cleanup;
+    }
     memcpy(&(rdev.peer_pk),fwd->id,crypto_sign_PUBLICKEYBYTES);
     ret = dev_tree->search(dev_tree, &rdev);
     if (ret) {
@@ -931,20 +959,25 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd
         goto cleanup;
     }
 
+    //zero out the xfp. Not sure if this is necessary, probably will be optimized out by the compiler
+    memset(&xfp,0,sizeof(xfp_t));
+    //create the file we will write to
     xfp.file = tmpfile();
     if (!xfp.file) {
         ret = INDIGO_ERROR_CAN_NOT_OPEN_FILE;
         goto cleanup;
     }
 
-    //todo: check if the serial is in the currently used fids
+    //check if the serial is valid
     if (rdev.last_fid >= fwd->serial) {
+        //reject the session, no bargaining, if the serial cant be used, then no session
         ret = INDIGO_ERROR_INVALID_PEER_PARAM;
         goto cleanup;
     }
     file_sending_response_data.serial = fwd->serial;
+    //todo: increment the last_serial in rdev.
 
-    //todo: why do we sent a nonce?
+    //todo: i think this nonce is for the encryption, but i cant remember
     randombytes_buf(nonce,crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
     build_packet(packet, MSG_FILE_SENDING_RESPONSE,pk,nonce, &file_sending_response_data);
     ret = encrypt_packet(packet, rdev.server_tk, nonce);
@@ -957,10 +990,12 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd
 
     free(packet);
     packet = NULL;
+
     //create expected file packets
     xfp.expiration_time = time(NULL) + EXPIRATION_TIME;
     xfp.packet_number = (uint64_t)ceil((double)(fwd->file_size)/(double)10);
-    xfp.session_id.serial = 0; //todo: assign the smallest valid serial number
+    xfp.last_chunk = 0;
+    xfp.session_id.serial = file_sending_response_data.serial;
     memcpy(xfp.session_id.pk,fwd->id,crypto_sign_PUBLICKEYBYTES);
 
     ret = xfp_tree->insert(xfp_tree,&xfp);
@@ -1006,8 +1041,21 @@ int create_client_session(const packet_t *const packet
     //add an expected file packet (xfp) for this session
     memcpy(&(xfp.session_id.pk), packet->id, crypto_sign_PUBLICKEYBYTES);
     xfp.session_id.serial = ((file_sending_response_data_t *)(packet->data))->serial;
+    /*We sent a packet with a seral to begin a session.
+     * we created an xfp with that serial. (don't worry there is an expiration time, it will not stay forever).
+     * we expect a response with the serial we sent (it is an identifier for that session that is being created).
+     * If we don't receive a response, nothing should happen.
+     */
+    //if the session id is not found, then the returned serial is not valid, and the session is rejected
     ret = xfp_tree->search(xfp_tree, &xfp);
     if (ret) goto cleanup;
+
+    //if they sent us a serial of a file we are receiving then we reject.
+    //(an attacker or a badly writen mod, either way me not happy).
+    if (xfp.packet_number != XFP_CLIENT_FILE) {
+        //we don't goto cleanup here. we don't want to remove an active file
+        return INDIGO_ERROR_INVALID_PEER_PARAM;
+    }
 
     //necessary allocations
     tmp_active_file = malloc(sizeof(active_file_t));

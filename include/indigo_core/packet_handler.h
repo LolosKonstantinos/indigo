@@ -47,15 +47,17 @@ typedef struct xfp_t {
     session_id_t session_id;
     time_t expiration_time;
     uint64_t packet_number;//the expected amount of packets
+    uint64_t last_chunk;
     FILE *file;
 }xfp_t;
-
+//packet_number takes this value when the xfp is used to store the file of a file we want to send
+#define XFP_CLIENT_FILE 0
 
 typedef struct PACKET_HANDLER_ARGS {
     EFLAG *flag;
     EFLAG *wake;
     QUEUE *queue;
-    QUEUE *cli_queue;
+    QUEUE *ui_queue;
     QUEUE *send_queue;
     EFLAG *send_flag;
     tree_t *device_tree;

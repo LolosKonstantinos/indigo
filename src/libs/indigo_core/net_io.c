@@ -1219,6 +1219,9 @@ int *send_thread(SEND_ARGS *args) {
                 for (size_t i = data->first_packet_number; i < data->last_packet_number + 1; i++) {
                     ret = send_file_packet(af, i, args->sign_keys->public, args->sockets, args->flag);
                     if (ret) { //todo: are all errors non recoverable? check it please
+                        free(node->data);
+                        destroy_qnode(node);
+                        node = NULL;
                         set_event_flag(args->flag, EF_TERMINATION);
                         set_event_flag(args->wake, EF_WAKE_MANAGER);
                         delete_lht(active_files);
