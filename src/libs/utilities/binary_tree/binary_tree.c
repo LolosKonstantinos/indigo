@@ -35,7 +35,7 @@ SOFTWARE.
     ( (node)->left?\
         (1 + (((node)->right->height > (node)->left->height)?(node)->right->height:(node)->left->height)):\
 ((node)->right->height+1) ):\
-    ( (node)->left?((node)->left->height+1):0 ))
+    ( (node)->left?((node)->left->height+1):1 ))
 
 
 struct tree_priv_t {
