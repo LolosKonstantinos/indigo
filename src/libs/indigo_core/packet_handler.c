@@ -636,9 +636,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         }
                         memcpy(fsr->id, packet->id, crypto_sign_PUBLICKEYBYTES);
                         fsr->file_size = data->file_size;
-                        wcsncpy(fsr->file_name
-                               ,data->file_name
-                               ,PATH_MAX);
+                        memcpy(fsr->file_name, data->file_name, PATH_MAX * sizeof(wchar_t));
                         fsr->file_name[PATH_MAX - 1] = L'\0';
                         fsr->addr = packet_info->address.sin_addr.S_un.S_addr;
 

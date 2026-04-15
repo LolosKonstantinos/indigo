@@ -39,6 +39,7 @@ typedef int(*tree_remove)(tree_t *, void *);
 typedef int(*tree_search)(tree_t *, void *);
 typedef int(*tree_search_pin)(tree_t *, void *, void **);
 typedef int(*tree_search_release)(tree_t *);
+
 struct tree_t{
     tree_insert insert;
     tree_remove remove;
@@ -66,4 +67,11 @@ int avl_search_release(tree_t* t);
 
 /*AVL HELPERS*/
 tree_node_t** avl_balance(tree_node_t** stack, tree_node_t** top, tree_priv_t* tree);
+
+//debugging tools
+
+size_t tree_height(tree_t *tree);
+void print_child_heights(tree_t *tree);
+void print_tree(tree_t *tree);
+void print_root(tree_t *tree);
 #endif //BINARY_TREE_H
