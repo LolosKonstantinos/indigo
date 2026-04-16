@@ -78,7 +78,9 @@ int test_binary_tree() {
         ret = tree->insert(tree, &temp_data);
         if (ret) return TEST_FAILED;
     }
+    if (!is_bts_avl(tree)) return TEST_FAILED;
 
+    //check if bts property is preserved
     for (int i = 0; i < (1<<10) + 1; i++) {
         temp_data = i;
         ret = tree->search_pin(tree, &temp_data, (void **)&found_data);
@@ -86,13 +88,45 @@ int test_binary_tree() {
         if (*found_data != temp_data) return TEST_FAILED;
         tree->search_release(tree);
     }
+    //remove the root
+    temp_data = 511;
+    ret = tree->remove(tree, &temp_data);
+    if (ret) return TEST_FAILED;
+    if (!is_bts_avl(tree)) return TEST_FAILED;
+
+    //check if bts property is preserved
+    for (int j = 0; j < (1<<10) + 1; j++) {
+        if (j == 511) {
+            if (!is_bts_avl(tree)) return TEST_FAILED;
+            continue;
+        }
+        temp_data = j;
+        ret = tree->search_pin(tree, &temp_data, (void **)&found_data);
+        tree->search_release(tree);
+        if (ret) return TEST_FAILED;
+        if (*found_data != temp_data) return TEST_FAILED;
+    }
 
     for (int i = 0; i < (1<<10) + 1; i++) {
+        if (i == 511) {
+            if (!is_bts_avl(tree)) return TEST_FAILED;
+            continue;
+        }
         temp_data = i;
         ret = tree->remove(tree, &temp_data);
         if (ret) return TEST_FAILED;
+        //check if bts property is preserved
+        for (int j = i + 1; j < (1<<10) + 1; j++) {
+            if (j == 511) continue;
+            temp_data = j;
+            ret = tree->search_pin(tree, &temp_data, (void **)&found_data);
+            tree->search_release(tree);
+            if (ret) return TEST_FAILED;
+            if (*found_data != temp_data) return TEST_FAILED;
+        }
     }
-
+    //test if all nodes are deleted
+    if (tree_height(tree) != 0) return TEST_FAILED;
     return TEST_PASSED;
 }
 

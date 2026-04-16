@@ -71,7 +71,5 @@ tree_node_t** avl_balance(tree_node_t** stack, tree_node_t** top, tree_priv_t* t
 //debugging tools
 
 size_t tree_height(tree_t *tree);
-void print_child_heights(tree_t *tree);
-void print_tree(tree_t *tree);
-void print_root(tree_t *tree);
+int is_bts_avl(tree_t *tree);
 #endif //BINARY_TREE_H

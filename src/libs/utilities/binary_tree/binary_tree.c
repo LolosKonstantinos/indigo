@@ -781,68 +781,45 @@ size_t tree_height(tree_t *tree) {
     return tree->priv->height;
 }
 
-void print_child_heights(tree_t *tree) {
-    if (!tree) return;
-    printf("\n%d ", tree->priv->root->right->height);
-    printf("%d\n", tree->priv->root->left->height);
-}
+int is_bts_avl(tree_t *tree) {
+    if (!tree) return 0;
+    if (!tree->priv) return 0;
 
-void print_tree(tree_t *tree) {
-    if (!tree) return;
-    tree_node_t **stack_1 = malloc(sizeof(tree_node_t *) * (1<<(tree->priv->height-1)));
-    tree_node_t **stack_2 = malloc(sizeof(tree_node_t *) * (1<<(tree->priv->height-1)));
-    if (!stack_1 || !stack_2) {
-        free(stack_1);
-        free(stack_2);
-        return;
-    }
-    tree_node_t **top_1 = stack_1 - 1;
-    tree_node_t **top_2 = stack_2 - 1;
+    tree_node_t *node = tree->priv->root;
+    tree_node_t *tmp_node = NULL;
     tree_node_t **stack;
     tree_node_t **top;
-    tree_node_t *node;
-    uint64_t non_null = 0;
 
-    FILE *fd = fopen("tree.txt", "w");
-    if (fd == NULL) {
-        free(stack_1);
-        free(stack_2);
-        return;
-    }
+    stack = malloc(sizeof(tree_node_t*) * ((2 * tree->priv->height) + 1));
+    if (!stack) return 0;
 
-    *(++top_1) = tree->priv->root;
-    if (tree->priv->root) non_null = 1;
+    top = stack - 1;
+    *(++top) = node;
 
-    while (non_null) {
-        non_null = 0;
-        while (top_1 >= stack_1) {
-            node = *top_1;
-            top_1--;
-            if (node) {
-                printf(" %llu ", *(uint64_t *)(node->data));
-                fprintf(fd, " %llu ", *(uint64_t *)(node->data));
-                *(++top_2) = node->right;
-                if (node->right) non_null++;
-                *(++top_2) = node->left;
-                if (node->left) non_null++;
-            }
-            else {
-                printf(" null ");
-                fprintf(fd, " null ");
+    while (top > stack) {
+        node = *top;
+        if (node->right) *(++top) = node->right;
+        if (node->left) *(++top) = node->left;
+        if (!(node->right || node->left)) {
+            node->height = 1;
+            node->bf = 0;
+            --top;
+            tmp_node = *top;
+            while (tmp_node->right == node || tmp_node->right == NULL) {
+                tmp_node->height = GET_HEIGHT(tmp_node);
+                tmp_node->bf = (int32_t)((tmp_node->right?(int64_t)(tmp_node->right->height):0)
+                    - (tmp_node->left?(int64_t)(tmp_node->left->height):0));
+                if (tmp_node->bf > 1 || tmp_node->bf < -1) {
+                    free(stack);
+                    return 0;
+                }
+                node = tmp_node;
+                if (--top < stack) break;
+                tmp_node = *(top);
             }
 
         }
-        stack = stack_1;
-        stack_1 = stack_2;
-        stack_2 = stack;
-        top = top_1;
-        top_1 = top_2;
-        top_2 = top;
-        printf("\n\n");
-        fprintf(fd, "\n\n");
     }
-
-    free(stack_1);
-    free(stack_2);
-    fclose(fd);
+    free(stack);
+    return 1;
 }
