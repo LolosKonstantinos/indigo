@@ -127,6 +127,7 @@ int test_binary_tree() {
     }
     //test if all nodes are deleted
     if (tree_height(tree) != 0) return TEST_FAILED;
+    free_tree(tree);
     return TEST_PASSED;
 }
 

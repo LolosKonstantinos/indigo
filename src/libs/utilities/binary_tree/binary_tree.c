@@ -115,12 +115,19 @@ void free_tree(tree_t *t) {
     if (!t) return;
     priv = t->priv;
 
-    stack = (tree_node_t **)malloc(sizeof(tree_node_t *) * (priv->height + 2));
+    stack = malloc(sizeof(tree_node_t *) * (2 * priv->height + 2));
+    if (!stack) {
+        return;
+    }
     top = stack - 1;
-
+    if (priv->root == NULL) {
+        free(stack);
+        return;
+    }
     *(++top) = priv->root;
     while (top >= stack) {
-        temp = *(top--);
+        temp = *top;
+        --top;
         if (temp->left) *(++top) = temp->left;
         if (temp->right) *(++top) = temp->right;
         free(temp->data);
@@ -128,7 +135,8 @@ void free_tree(tree_t *t) {
     }
     pthread_mutex_destroy(&priv->mutex);
     free(priv);
-    free((void *)stack);
+    free(t);
+    free(stack);
 }
 
 tree_node_t *new_node() {
