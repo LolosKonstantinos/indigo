@@ -323,6 +323,92 @@ int avl_insert_copy(tree_t *t, void* data) {
     free(stack);
     return 0;
 }
+//same as avl_insert_copy() but thread unsafe
+int avl_insert_copy_unlocked(tree_t *t, void* data) {
+    tree_priv_t *priv;
+    tree_node_t *node;
+    tree_node_t *temp;
+    tree_node_t **stack = NULL;
+    tree_node_t **top;
+    int cmp_res;
+
+    if (!t) return -1;
+    if (!(t->priv)) return -1;
+
+    priv = t->priv;
+
+    //create the node we will insert
+    node = new_node();
+    if (!node) {
+        return 1;
+    }
+
+    //allocate the data field of the node
+    node->data = calloc(1,priv->data_size);
+    if (!node->data) {
+        free(node);
+        return 1;
+    }
+    //copy the data to the node
+    memcpy(node->data, data, priv->data_size);
+
+    //allocate the stack we will use to remember the path we followed in the tree to insert the node
+    stack = malloc(sizeof(tree_node_t *) * (priv->height + 2));
+    if (!stack) {
+        free(node->data);
+        free(node);
+        return 1;
+    }
+    top = stack - 1;
+
+    //if there is no root, the tree is empty, insertion is just putting the node as root
+    if (!priv->root) {
+        priv->root = node;
+        priv->height = 1;
+        free(stack);
+        return 0;
+    }
+
+    temp = priv->root;
+
+    while (1) {
+        //compare the data to the current node's data
+        cmp_res = priv->cmp(data, temp->data);
+
+        //if the node already exists we do not re-insert it
+        if (cmp_res == 0) {
+            free(node->data);
+            free(node);
+            free(stack);
+            return 0;
+        }
+
+        //add the current node to the stack, so that after the insertion we have the stack trace of the new node
+        *(++top) = temp;
+
+        //move down the tree
+        if (cmp_res > 0) {
+            if (temp->right == NULL) {
+                temp->right = node;
+                break;
+            }
+            temp = temp->right;
+        }
+        else {
+            if (temp->left == NULL) {
+                temp->left = node;
+                break;
+            }
+            temp = temp->left;
+        }
+    }
+
+    avl_balance(stack, top, priv);
+    priv->height = priv->root->height;
+
+    free(stack);
+    return 0;
+}
 
 //todo: this function fails to remove nodes after the first is removed, it causes segfault
 int avl_delete(tree_t *t, void* data) {
@@ -498,6 +584,175 @@ int avl_delete(tree_t *t, void* data) {
 
     return 0;
 }
+int avl_delete_unlocked(tree_t *t, void* data) {
+    tree_priv_t *priv;
+    tree_node_t *node;
+    tree_node_t *prev = NULL;
+    tree_node_t *temp;
+    tree_node_t *temp_prev;
+    tree_node_t **stack = NULL;
+    tree_node_t **top;
+    char direction = TREE_ROOT;
+    char temp_direction;
+    int cmp_res;
+    cmp_f cmp;
+
+    if (!(t && data)) return -1;
+
+    priv = t->priv;
+    node = priv->root;
+    cmp = priv->cmp;
+
+    stack = malloc(priv->height * sizeof(tree_node_t *));
+    if (!stack) {
+        return -1;
+    }
+    top = stack - 1; //so, when we push for the first time the top pointer points to the top element and not above it
+
+    //find the node and create a stack trace
+    while (node != NULL) {
+        //compare
+        cmp_res = cmp(data, node->data);
+        if (cmp_res == 0) break;
+
+        //add to the stack
+        *(++top) = node;
+
+        prev = node;
+
+        if (cmp_res < 0) {
+            node = node->left;
+            direction = TREE_LEFT;
+        }
+        else {
+            node = node->right;
+            direction = TREE_RIGHT;
+        }
+    }
+
+    //the node was not found in the tree
+    if (!node) {
+        free(stack);
+        return 1;
+    }
+
+    //delete the node (based on the children it has)
+    if (!(node->left || node->right)) {
+        //if it has no children
+        if (!prev || direction == TREE_ROOT) {
+            priv->root = NULL;
+            priv->height = 0;
+        }
+        else if (direction == TREE_LEFT) {
+            prev->left = NULL;
+        }
+        else{
+            prev->right = NULL;
+        }
+    }
+    else if (node->left && node->right) {
+        //if it has both children
+
+        //we favor the tallest subtree, so that the resulting tree is more balanced
+        //we find the node that will replace the deleted node
+
+        {//we open a new code block to create a new temporary stack
+            tree_node_t** temp_top;
+
+            temp_top = top + 1;
+
+            //find the replacement node
+            temp_prev = node;
+            if (node->left->height > node->right->height) {
+                temp = node->left;
+                *(++temp_top) = temp;
+                temp_direction = TREE_LEFT;
+                while (temp->right) {
+                    temp_prev = temp;
+                    temp = temp->right;
+                    *(++temp_top) = temp;
+                }
+            }
+            else {
+                temp = node->right;
+                *(++temp_top) = temp;
+                temp_direction = TREE_RIGHT;
+                while (temp->left) {
+                    temp_prev = temp;
+                    temp = temp->left;
+                    *(++temp_top) = temp;
+                }
+            }
+
+            *(++top) = temp; //the temp_top node is the one that replaces the deleted node
+            top = temp_top;  //make top point to the top of the stack
+        }
+        //if the found node isn't the deleted nodes child, we need to "cut it apart" from where it was
+        //we remove the found node, and connect its only child (there is no case where it has both)
+        //to the found node's root
+        if (temp != node->left && temp != node->right) {
+            if (temp_direction == TREE_LEFT) {
+                if (temp->left) {
+                    temp_prev->right = temp->left;
+                }
+                else temp_prev->right = NULL;
+            }
+            else {
+                if (temp->right) {
+                    temp_prev->left = temp->right;
+                }
+                else temp_prev->left = NULL;
+            }
+            temp->left = NULL;
+            temp->right = NULL;
+        }
+
+        //attach the replacement node (temp)
+        if (!prev || direction == TREE_ROOT) {
+            priv->root = temp;
+        }
+        else if (direction == TREE_LEFT) {
+            prev->left = temp;
+        }
+        else {
+            prev->right = temp;
+        }
+
+        //attach the replacement node to the rest of the tree
+        if (!temp->right) temp->right = node->right;
+        if (!temp->left) temp->left = node->left;
+
+    }
+    else {
+        //if it has only one child
+        if (node->left) temp = node->left;
+        else temp = node->right;
+
+        if (!prev || direction == TREE_ROOT) {
+            priv->root = temp;
+            priv->height = temp? temp->height:0;
+        }
+        else if (direction == TREE_LEFT) prev->left = temp;
+        else prev->right = temp;
+
+    }
+
+    //todo: i think that this is the problem
+    if (top >= stack) {
+        while (top) {
+            top = avl_balance(stack, top, priv);
+        }
+    }
+
+    priv->height = priv->root? priv->root->height : 0;
+
+    free(stack);
+    //todo: use user defined free for data
+    free(node->data);
+    free(node);
+
+    return 0;
+}
 
 int avl_search(tree_t* t, void* data) {
     tree_node_t *node;
@@ -530,6 +785,36 @@ int avl_search(tree_t* t, void* data) {
         return 0;
     }
     pthread_mutex_unlock(&(t->priv->mutex));
+    return 1;
+}
+
+int avl_search_unlocked(tree_t *t, void* data) {
+    tree_node_t *node;
+    tree_node_t *turn_node = NULL;
+    int cmp_res;
+    cmp_f cmp;
+
+    if (!(t && data)) return -1;
+
+    node = t->priv->root;
+    cmp = t->priv->cmp;
+
+    while (node != NULL) {
+        cmp_res = cmp(data, node->data);
+
+        if (cmp_res < 0) node = node->left;
+        else {
+            turn_node = node;
+            node = node->right;
+        }
+    }
+    if (!turn_node) {
+        return 1;
+    }
+    if (cmp(data, turn_node->data) == 0) {
+        memcpy(data, turn_node->data, t->priv->data_size);
+        return 0;
+    }
     return 1;
 }
 
@@ -802,6 +1087,11 @@ int new_tree_iterator(tree_t *tree, tree_iterator_t **iterator) {
     *iterator = malloc(sizeof(tree_iterator_t));
     if (!(*iterator)) return 1;
 
+    if (!tree->priv->root) {
+        *iterator = NULL;
+        return 0;
+    }
+
     stack = malloc(sizeof(tree_node_t *) * ((2 * tree->priv->height) + 2));
     if (!stack){
         free(*iterator);
@@ -846,6 +1136,12 @@ int tree_next(tree_iterator_t *iterator, void **data) {
 
     *data = next_node->data;
     return 0;
+}
+
+int tree_has_next(tree_iterator_t *iterator) {
+    if (!iterator) return 0;
+    if (iterator->top < iterator->stack) return 0;
+    return 1;
 }
 
 size_t tree_height(tree_t *tree) {

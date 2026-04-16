@@ -59,10 +59,13 @@ tree_node_t *new_node();
 //todo keep one of the 2
 int avl_insert(tree_t* t, void* data);
 int avl_insert_copy(tree_t *t, void* data);
+int avl_insert_copy_unlocked(tree_t *t, void* data);
 
 int avl_delete(tree_t *t, void* data);
+int avl_delete_unlocked(tree_t *t, void* data);
 
 int avl_search(tree_t* t, void* data);
+int avl_search_unlocked(tree_t *t, void* data);
 int avl_search_pin(tree_t* t, void* data, void** ret_data);
 int avl_search_release(tree_t* t);
 
@@ -78,6 +81,7 @@ int new_tree_iterator(tree_t *t, tree_iterator_t **iterator);
 void free_tree_iterator(tree_iterator_t **iterator);
 //returns -1 on error, 0 on success and 1 when the iteration is finished
 int tree_next(tree_iterator_t *, void** data);
+int tree_has_next(tree_iterator_t *iterator);
 
 //debugging tools
 size_t tree_height(tree_t *tree);

@@ -25,6 +25,7 @@ SOFTWARE.
 #include <math.h>
 #include <sodium/crypto_kx.h>
 #include "indigo_types.h"
+#include <limits.h>
 
 //////////////////////////////////////////////////////////
 ///                                                    ///
@@ -66,15 +67,14 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     //the expected signing response table
     tree_t *xsr_tree = NULL;
     xsr_t xsr;
+    xsr_t *found_xsr;
+    tree_iterator_t *xsr_iterator = NULL;
 
     //the expected file packet table
     tree_t *xfp_tree = NULL;
     xfp_t xfp = {0};
     xfp_t *found_xfp = NULL;
-
-    //the fus (file until session) tree
-    tree_t *fus_tree = NULL;
-
+    tree_iterator_t *xfp_iterator = NULL;
 
     Q_FILE_SENDING_REQUEST *fwd = NULL;
 
@@ -82,6 +82,9 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     session_t *found_session = NULL;
     unsigned char *session_pk = NULL;
     unsigned char *session_sk = NULL;
+
+    tree_iterator_t *session_iterator = NULL;
+    tree_iterator_t *rdev_iterator = NULL;
 
     wchar_t tmp_username[MAX_USERNAME_LEN];
 
@@ -858,9 +861,11 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
             }
         }
 
-        //here if there are more packets in the queue we go back up to process them,
-        //but we don't want to have ghost devises,
-        //so in case there are too many packets we refresh the list once per 10 packets processed
+        /*  here if there are more packets in the queue we go back up to process them,
+         *  but we don't want to have ghost devises and ghost expected packets
+         *  so in case there are too many packets we refresh the list once per 10 packets processed
+         */
+
         if (iterations_until_cleanup > 0) {
             iterations_until_cleanup--;
             if (!queue_is_empty(args->queue)) continue;
@@ -868,11 +873,124 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
         else iterations_until_cleanup = 10;
 
         /////////////////////////////////////////
-        ///  phase 2: update the device list  ///
+        ///     phase 2: update the trees     ///
         /////////////////////////////////////////
+        curr_time = time(NULL);
 
-        //todo: keep a linked list of all devices, as IDs, and check if there are devices to be removed
-        //todo: calculate the max sleep time we can get if the queue is empty
+        //update the xsr tree
+        ret = new_tree_iterator(xsr_tree, &xsr_iterator);
+        if (ret) {
+            *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+            goto cleanup;
+        }
+        if (xsr_iterator) {
+            while (tree_has_next(xsr_iterator)) {
+                ret = tree_next(xsr_iterator, (void **)&found_xsr);
+                if (ret) {
+                    free_tree_iterator(&xsr_iterator);
+                    *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                    goto cleanup;
+                }
+                time_diff = found_xsr->expiration_time - curr_time;
+                if (time_diff < 0) {
+                    memcpy(&xsr, found_xsr, sizeof(xsr_t));
+                    ret = xsr_tree->remove(xsr_tree, &xsr);
+                    if (ret) {
+                        //todo: i dont remember what errors it returns
+                        // it is not an error about the node not existing,
+                        // that would indicate an implementation error
+                        free_tree_iterator(&xsr_iterator);
+                        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                        goto cleanup;
+                    }
+                }
+                else {
+                    //branchless minimum
+                    lowest_time = time_diff +
+                        ((lowest_time - time_diff) & ((lowest_time-time_diff)>>(sizeof(time_t) * CHAR_BIT - 1)));
+                }
+            }
+            free_tree_iterator(&xsr_iterator);
+        }
+
+        //update the xfp tree
+        /*TODO: there is a case where we delete the xfp but the session persists,
+         *      since xfp and session will merge, this is not that important for now
+         */
+        ret = new_tree_iterator(xfp_tree, &xfp_iterator);
+        if (ret) {
+            *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+            goto cleanup;
+        }
+        if (xfp_iterator) {
+            while (tree_has_next(xfp_iterator)) {
+                ret = tree_next(xfp_iterator, (void **)&found_xfp);
+                if (ret) {
+                    free_tree_iterator(&xfp_iterator);
+                    *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                    goto cleanup;
+                }
+                time_diff = found_xfp->expiration_time - curr_time;
+                if (time_diff < 0) {
+                    memcpy(&xfp, found_xfp, sizeof(xfp_t));
+                    ret = xfp_tree->remove(xfp_tree, &xfp);
+                    if (ret) {
+                        //todo: i dont remember what errors it returns
+                        // it is not an error about the node not existing,
+                        // that would indicate an implementation error
+                        free_tree_iterator(&xfp_iterator);
+                        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                        goto cleanup;
+                    }
+                }
+                else {
+                    //branchless minimum
+                    lowest_time = time_diff +
+                        ((lowest_time - time_diff) & ((lowest_time-time_diff)>>(sizeof(time_t) * CHAR_BIT - 1)));
+                }
+            }
+            free_tree_iterator(&xfp_iterator);
+        }
+
+        //update the device tree
+        tree_lock(args->device_tree);
+        ret = new_tree_iterator(args->device_tree, &rdev_iterator);
+        if (ret) {
+            *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+            goto cleanup;
+        }
+        if (rdev_iterator) {
+            while (tree_has_next(rdev_iterator)) {
+                ret = tree_next(rdev_iterator, (void **)&found_rdev);
+                if (ret) {
+                    free_tree_iterator(&rdev_iterator);
+                    *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                    goto cleanup;
+                }
+                time_diff = found_rdev->expiration_time - curr_time;
+                if (time_diff < 0) {
+                    memcpy(&rdev, found_rdev, sizeof(xfp_t));
+                    //if we use thread safe remove function (tree->remove), we create a deadlock.
+                    //and we cant just unlock the tree because the iterator may not remain valid.
+                    ret = avl_delete_unlocked(args->device_tree, &rdev);
+                    if (ret) {
+                        //todo: i dont remember what errors it returns
+                        // it is not an error about the node not existing,
+                        // that would indicate an implementation error
+                        free_tree_iterator(&rdev_iterator);
+                        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                        goto cleanup;
+                    }
+                }
+                else {
+                    //branchless minimum
+                    lowest_time = time_diff +
+                        ((lowest_time - time_diff) & ((lowest_time-time_diff)>>(sizeof(time_t) * CHAR_BIT - 1)));
+                }
+            }
+            free_tree_iterator(&rdev_iterator);
+        }
+        tree_unlock(args->device_tree);
 
         //there is no need to sleep if there is more stuff to do
         if (!queue_is_empty(args->queue)) continue;
@@ -881,12 +999,13 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
         ///  phase 3: wait a little and go again  ///
         /////////////////////////////////////////////
         clock_gettime(CLOCK_REALTIME,&timespec);
-        timespec.tv_sec +=lowest_time;
+        timespec.tv_sec += lowest_time;
 
         pthread_mutex_lock(&args->flag->mutex);
         pthread_cond_timedwait(&args->flag->cond,&args->flag->mutex,&timespec);
         pthread_mutex_unlock(&args->flag->mutex);
     }
+
     free_tree(xsr_tree);
     free_tree(xfp_tree);
     free(signing_request_data);

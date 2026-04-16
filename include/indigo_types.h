@@ -178,7 +178,7 @@ typedef struct remote_device_t{
     unsigned char *server_tk;
 
     wchar_t username[MAX_USERNAME_LEN];
-    uint16_t dev_state_flag;
+    uint64_t dev_state_flag;
 } remote_device_t;
 
 typedef struct session_id_t {
