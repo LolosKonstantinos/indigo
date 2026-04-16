@@ -33,6 +33,7 @@ typedef void* (*usr_free_f)(void* node);
 typedef struct tree_priv_t tree_priv_t;
 typedef struct tree_t tree_t;
 typedef struct tree_node_avl_t tree_node_t;
+typedef struct tree_iterator_t tree_iterator_t;
 
 typedef int(*tree_insert)(tree_t *, void *);
 typedef int(*tree_remove)(tree_t *, void *);
@@ -67,9 +68,18 @@ int avl_search_release(tree_t* t);
 
 /*AVL HELPERS*/
 tree_node_t** avl_balance(tree_node_t** stack, tree_node_t** top, tree_priv_t* tree);
+void tree_lock(tree_t *t);
+void tree_unlock(tree_t *t);
+
+//NOTE: the iterator functions should be used while the tree is locked if thread safety is needed.
+//      lock the tree, create the iterator, use the iterator, unlock the tree.
+//      if the tree is unlocked the iterator may not be valid and cannot be used again.
+int new_tree_iterator(tree_t *t, tree_iterator_t **iterator);
+void free_tree_iterator(tree_iterator_t **iterator);
+//returns -1 on error, 0 on success and 1 when the iteration is finished
+int tree_next(tree_iterator_t *, void** data);
 
 //debugging tools
-
 size_t tree_height(tree_t *tree);
 int is_bts_avl(tree_t *tree);
 #endif //BINARY_TREE_H

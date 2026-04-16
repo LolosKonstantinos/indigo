@@ -61,6 +61,11 @@ struct tree_node_avl_t {
     int32_t bf;
 };
 
+struct tree_iterator_t {
+    tree_node_t **stack;
+    tree_node_t **top;
+};
+
 
 int new_tree(tree_t **t, const cmp_f cmp, const size_t data_size, const char type) {
     tree_t *temp;
@@ -778,12 +783,71 @@ tree_node_t** avl_balance(tree_node_t** stack, tree_node_t** top, tree_priv_t* t
     return ret_node;
 }
 
-
-
-void print_root(tree_t *tree) {
-    if (!tree) return;
-    printf("root:%llu\n", *(uint64_t *)tree->priv->root->data);
+void tree_lock(tree_t *t) {
+    if (!t || !(t->priv)) return;
+    pthread_mutex_lock(&(t->priv->mutex));
 }
+
+void tree_unlock(tree_t *t) {
+    if (!t || !(t->priv)) return;
+    pthread_mutex_unlock(&(t->priv->mutex));
+}
+
+int new_tree_iterator(tree_t *tree, tree_iterator_t **iterator) {
+    tree_node_t **stack = NULL;
+
+    if (!tree) return 1;
+    if (!tree->priv) return 1;
+
+    *iterator = malloc(sizeof(tree_iterator_t));
+    if (!(*iterator)) return 1;
+
+    stack = malloc(sizeof(tree_node_t *) * ((2 * tree->priv->height) + 2));
+    if (!stack){
+        free(*iterator);
+        *iterator = NULL;
+        free(stack);
+        return 1;
+    }
+
+    (*iterator)->top = stack;
+    (*iterator)->stack = stack;
+
+    *((*iterator)->stack) = tree->priv->root;
+
+    return 0;
+}
+
+void free_tree_iterator(tree_iterator_t **iterator) {
+    if (!iterator || !(*iterator)) return;
+    free((*iterator)->stack);
+    free(*iterator);
+    *iterator = NULL;
+}
+
+int tree_next(tree_iterator_t *iterator, void **data) {
+    tree_node_t *next_node = NULL;
+    tree_node_t **stack;
+    tree_node_t **top;
+
+    if (!iterator || !data) return -1;
+
+    stack = iterator->stack;
+    top = iterator->top;
+    //we will not iterate in order, that uses more memory, and we don't care about order
+    if (top < stack) {
+        *data = NULL;
+        return 1;
+    }
+    next_node = *top;
+    --top;
+    if (next_node->left) *(++top) = next_node->left;
+    if (next_node->right) *(++top) = next_node->right;
+
+    *data = next_node->data;
+    return 0;
+}
+
 size_t tree_height(tree_t *tree) {
     if (!tree) return 0;
     return tree->priv->height;
