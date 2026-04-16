@@ -1,4 +1,5 @@
-/*Copyright (c) 2026 Lolos Konstantinos
+/*
+Copyright (c) 2026 Lolos Konstantinos
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -24,8 +25,9 @@ SOFTWARE.
 
 #include <stdint.h>
 
-#define BINARY_TREE_TYPE_AVL 0
-#define BINARY_TREE_TYPE_RED_BLACK 1
+#define BINARY_TREE_FLAG_AVL            0x01
+#define BINARY_TREE_FLAG_RED_BLACK      0x02
+#define BINARY_TREE_FLAG_THREAD_UNSAFE  0x04
 
 typedef int(*cmp_f)(void *, void *);
 typedef void* (*usr_free_f)(void* node);

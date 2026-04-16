@@ -65,7 +65,7 @@ int test_binary_tree() {
     int ret = 0;
 
     //test if the tree pointer is created and returned
-    ret = new_tree(&tree, bts_cmp, DATA_SIZE, BINARY_TREE_TYPE_AVL);
+    ret = new_tree(&tree, bts_cmp, DATA_SIZE, BINARY_TREE_FLAG_AVL);
     if (ret) return TEST_FAILED;
     if (tree == NULL) return TEST_FAILED;
     //test if all fields are initialized

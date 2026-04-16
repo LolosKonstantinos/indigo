@@ -115,12 +115,12 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     memcpy(public_key, args->signing_keys->public, crypto_sign_PUBLICKEYBYTES);
 
     //create the expected packet table
-    ret = new_tree(&xsr_tree, cmp_xsr, sizeof(xsr_t), BINARY_TREE_TYPE_AVL);
+    ret = new_tree(&xsr_tree, cmp_xsr, sizeof(xsr_t), BINARY_TREE_FLAG_AVL);
     if (!ret) {
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
-    ret = new_tree(&xfp_tree, cmp_xfp, sizeof(xfp_t), BINARY_TREE_TYPE_AVL);
+    ret = new_tree(&xfp_tree, cmp_xfp, sizeof(xfp_t), BINARY_TREE_FLAG_AVL);
     if (!ret) {
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;

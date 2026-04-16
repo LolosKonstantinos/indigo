@@ -93,14 +93,14 @@ int new_tree(tree_t **t, const cmp_f cmp, const size_t data_size, const char typ
     pthread_mutex_init(&(priv->mutex), NULL);
 
     temp->priv = priv;
-    if (type == BINARY_TREE_TYPE_AVL) {
+    if (type == BINARY_TREE_FLAG_AVL) {
         temp->search = avl_search;
         temp->remove = avl_delete;
         temp->insert = avl_insert_copy;
         temp->search_pin = avl_search_pin;
         temp->search_release = avl_search_release;
     }
-    else if (type == BINARY_TREE_TYPE_RED_BLACK) {
+    else if (type == BINARY_TREE_FLAG_RED_BLACK) {
         printf("to be implemented");
     }
     else {
