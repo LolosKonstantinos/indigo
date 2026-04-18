@@ -1,5 +1,4 @@
-/*
-Copyright (c) 2026 Lolos Konstantinos
+/*Copyright (c) 2026 Lolos Konstantinos
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +18,24 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
+
+
+
+#ifndef CLI_H
+#define CLI_H
+#define _XOPEN_SOURCE_EXTENDED
+#include <ncursesw/curses.h>
+#include <binary_tree.h>
+#include <Queue.h>
+
+int verify_user(void** master_key);
+
+//todo: make it return via pointer the master key
+int verify_password(void** master_key);
+
+WINDOW *create_welcome_screen();
+int create_new_password();
+int iswspecialchar(wint_t ch);
+
+int create_main_interface(tree_t * dev_tree, QUEUE * ui_queue);
+#endif //CLI_H

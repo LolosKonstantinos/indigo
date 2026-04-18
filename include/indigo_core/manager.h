@@ -34,6 +34,7 @@ typedef struct MANAGER_ARGS {
     EFLAG *flag;
     void *master_key;
     QUEUE *queue;
+    QUEUE *ui_queue;
     tree_t *device_tree;
 }MANAGER_ARGS;
 
@@ -56,7 +57,7 @@ int *thread_manager_thread(MANAGER_ARGS *args);
 
 int cancel_device_discovery(pthread_t tid, EFLAG *flag);
 
-int create_thread_manager_thread(MANAGER_ARGS **args, int port, uint32_t multicast_address, tree_t* dev_tree, pthread_t *tid);
+int create_thread_manager_thread(MANAGER_ARGS **args, int port, uint32_t multicast_address, tree_t* dev_tree, QUEUE* ui_queue, pthread_t *tid);
 
 int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, socket_ll *sockets,
                           EFLAG *wake_mngr, QUEUE* queue, const void* master_key, pthread_t *tid);
@@ -66,6 +67,6 @@ int create_receiving_thread(RECV_ARGS **args, socket_ll *sockets, QUEUE *queue, 
 int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint32_t multicast_address, EFLAG *wake_mngr,
     EFLAG* override_flags[], socket_ll *sockets, pthread_t *tid);
 
-int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, QUEUE* send_queue,
-                                 EFLAG* send_flag, mempool_t* mempool, tree_t* device_tree, const void *master_key, socket_ll* sockets, pthread_t *tid);
+int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, QUEUE* ui_queue,
+                                 QUEUE* send_queue, EFLAG* send_flag, mempool_t* mempool, tree_t* device_tree, const void *master_key, socket_ll* sockets, pthread_t *tid);
 #endif //THREAD_MANAGEMENT_H

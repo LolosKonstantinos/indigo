@@ -169,8 +169,8 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
         goto cleanup;
     }
 
-    if (create_packet_handler_thread(&handler_args, args->flag, packet_queue, send_queue, send_args->flag
-        , mempool,args->device_tree, args->master_key, sockets, &tid_handler)) {
+    if (create_packet_handler_thread(&handler_args, args->flag, packet_queue, args->ui_queue, send_queue
+                                     , send_args->flag,mempool, args->device_tree, args->master_key, sockets, &tid_handler)) {
         fprintf(stderr, "create_packet_handler_thread failed\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
@@ -181,7 +181,6 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
-
 
 
     override_flags[0] = handler_args->flag;
@@ -426,7 +425,8 @@ int cancel_device_discovery(pthread_t tid, EFLAG *flag) {
     return val;
 }
 
-int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint32_t multicast_address, tree_t *dev_tree, pthread_t *tid){
+int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint32_t multicast_address, tree_t *dev_tree, QUEUE*
+                                 ui_queue, pthread_t *tid){
     pthread_t thread;
 
     MANAGER_ARGS *manager_args = malloc(sizeof(MANAGER_ARGS));
@@ -447,6 +447,7 @@ int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint
     manager_args->port = port;
     manager_args->multicast_addr = multicast_address;
     manager_args->device_tree = dev_tree;
+    manager_args->ui_queue = ui_queue;
 
     if (pthread_create(&thread, NULL, (void *)(&thread_manager_thread), manager_args)) {
         free_event_flag(flag);
@@ -606,8 +607,8 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
 }
 
 int create_packet_handler_thread(
-    PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, QUEUE* send_queue, EFLAG* send_flag, mempool_t* mempool
-    , tree_t* device_tree, const void* const master_key, socket_ll* sockets, pthread_t *tid){
+    PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, QUEUE* ui_queue, QUEUE* send_queue, EFLAG* send_flag
+    , mempool_t* mempool, tree_t* device_tree, const void* const master_key, socket_ll* sockets, pthread_t *tid){
 
     pthread_t thread;
 
@@ -645,6 +646,7 @@ int create_packet_handler_thread(
     handler_args->device_tree = device_tree;
     handler_args->sockets = sockets;
     handler_args->send_flag = send_flag;
+    handler_args->ui_queue = ui_queue;
 
     if (pthread_create(&thread, NULL, (void *)(&packet_handler_thread), handler_args)) {
         free_event_flag(flag);

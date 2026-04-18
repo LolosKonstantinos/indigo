@@ -20,11 +20,11 @@ SOFTWARE.
 */
 
 #include "crypto_utils.h"
-#include "cli.h"
+#include "tui.h"
 #include "indigo_types.h"
 #include <wctype.h>
 #include "indigo_errors.h"
-#include <indigo_core/manager.h>
+#include "indigo_core/manager.h"
 
 
 int verify_user(void** master_key) {
@@ -474,7 +474,8 @@ int iswspecialchar(const wint_t ch) {
     }
 }
 
-int create_main_interface(tree_t * dev_tree) {
+int create_main_interface(tree_t * dev_tree, QUEUE * ui_queue) {
+    tree_iterator_t *dev_iter;
     WINDOW *dialog_win;
     WINDOW *device_win;
     WINDOW *devinfo_win;
