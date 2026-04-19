@@ -60,7 +60,7 @@ int derive_master_key(const char* psw, const uint64_t psw_len, void** master_key
         *master_key = NULL;
         return INDIGO_ERROR_INCOMPATIBLE_FILE;//possible file changed to incompatible values
     }
-    if (ret  == INDIGO_FILE_NOT_FOUND) {
+    if (ret  == INDIGO_ERROR_FILE_NOT_FOUND) {
         *master_key = NULL;
         return INDIGO_ERROR_FILE_NOT_FOUND;
     }
@@ -115,7 +115,7 @@ int create_psw_salt(const char overwrite) {
 
     if (overwrite == 0 && access(file_name,F_OK) == 0) {
         free(file_name);
-        return INDIGO_FILE_NOT_FOUND;
+        return INDIGO_ERROR_FILE_NOT_FOUND;
     }
 
     fp_salt = fopen(file_name, "wb");
@@ -199,10 +199,10 @@ int psw_salt_exists() {
     strcpy(file_name, INDIGO_PSW_DIR);
     strcat(file_name, "salt.dat");
 
-    if (access(file_name, F_OK)) {
-        return 0;
+    if (access(file_name, F_OK) == 0) {
+        return 1;
     }
-    return 1;
+    return 0;
 }
 
 int create_key_derivation_settings() {
@@ -285,7 +285,7 @@ int create_key_derivation_settings() {
     settings.mem_cost = (char)mem_cost;
     settings.time_cost = (char)time_cost;
 
-    printf("debug: memcost-> 1<<%lld, timecost->  %lld, mean_elapsed->%lf \n",mem_cost,time_cost, mean_elapsed);
+    //printf("debug: memcost-> 1<<%lld, timecost->  %lld, mean_elapsed->%lf \n",mem_cost,time_cost, mean_elapsed);
     strcpy(filename, INDIGO_PSW_DIR);
     strcat(filename, INDIGO_PSW_HASH_SETTINGS_FILE);
     fp = fopen(filename, "wb");
@@ -344,8 +344,8 @@ int key_derivation_settings_exist() {
     strcpy(file_name, INDIGO_PSW_DIR);
     strcat(file_name, INDIGO_PSW_HASH_SETTINGS_FILE);
 
-    if (access(file_name, F_OK)) {return 0;}
-    return 1;
+    if (access(file_name, F_OK) == 0) return 1;
+    return 0;
 }
 
 int save_password_hash(const char* password, const uint64_t psw_len) {
@@ -494,9 +494,9 @@ int password_hash_exists() {
     char file_name [32] = {0};
     strcpy(file_name, INDIGO_PSW_DIR);
     strcat(file_name, INDIGO_PSW_HASH_FILE_NAME);
-
-    if (access(file_name, F_OK)) {return 0;}
-    return 1;
+    //returns 0 on success
+    if (access(file_name, F_OK) == 0) return 1;
+    return 0;
 }
 
 int create_signing_key_pair(void* master_key) {

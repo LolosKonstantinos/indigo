@@ -22,16 +22,29 @@ SOFTWARE.
 
 #ifndef INDIGO_CLI_H
 #define INDIGO_CLI_H
+#include "indigo_types.h"
 
 typedef struct progress_bar_t progress_bar_t;
 
 int get_src_size(int *rows, int *cols);
 
 void clear_screen();
+void delete_lines(int count);
+
+//progress bar utilities
 
 int new_progress_bar(progress_bar_t **progress_bar);
 int delete_progress_bar(progress_bar_t **progress_bar);
 int update_progress_bar(progress_bar_t *progress_bar, char progress);
 int move_progress_bar(progress_bar_t *progress_bar, int x, int y);
+int refresh_progress_bar(progress_bar_t *progress_bar);
 
+//login utilities
+//this function is only for testing environments with password set to "test" and needs all parameters set
+void bypass_login(void **master_key);
+int isspecialchar(char ch);
+int password_is_valid(char psw[MAX_PSW_LEN + 1]);
+int create_new_password();
+int login(void **master_key);
+int init_indigo(void **master_key);
 #endif //INDIGO_CLI_H

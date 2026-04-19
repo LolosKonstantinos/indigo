@@ -1,4 +1,5 @@
-/*Copyright (c) 2026 Lolos Konstantinos
+/*
+Copyright (c) 2026 Lolos Konstantinos
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,16 +23,9 @@ SOFTWARE.
 #ifndef CRYPTO_UTILS_H
 #define CRYPTO_UTILS_H
 
-
-
 #include <stdint.h>
 #include <sodium.h>
 #include "indigo_types.h"
-
-//todo use sodium one time authentication with the master key on important config files
-//todo move these in indigo_errors
-#define INDIGO_FILE_NOT_FOUND 0x02
-#define INDIGO_FILE_NOT_AUTHORIZED 0x03
 
 #define INDIGO_PSW_HASH_TIMELIMIT_UPPER 5
 #define INDIGO_PSW_HASH_TIMELIMIT_LOWER 3

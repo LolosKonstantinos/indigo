@@ -42,16 +42,16 @@ SOFTWARE.
 #define INDIGO_ERROR_BUG                      15
 #define INDIGO_ERROR_NETWORK_RESET            16 //can be recovered from, renew the sockets, and any overlapped struct
 #define INDIGO_ERROR_NO_SYS_RESOURCES         17 //recoverable, just wait, the os buffers are full
-
+#define INDIGO_ERROR_FILE_NOT_AUTHORIZED      18
 //negative values are for errors the user or a peer caused
-#define INDIGO_ERROR_INVALID_INPUT      -1
-#define INDIGO_ERROR_INCOMPATIBLE_FILE  -2
-#define INDIGO_ERROR_FALSE_SIGNATURE    -3
-#define INDIGO_ERROR_FALSE_KEY          -4
-#define INDIGO_ERROR_PEER_DISCONNECTED  -5
-#define INDIGO_ERROR_PEER_TIMEOUT       -6
-#define INDIGO_ERROR_WRONG_PASSWORD     -7
-#define INDIGO_ERROR_INVALID_PACKET     -8
-#define INDIGO_ERROR_ACCESS_DENIED      -9
-#define INDIGO_ERROR_INVALID_PEER_PARAM -10
+#define INDIGO_ERROR_INVALID_INPUT      (-1)
+#define INDIGO_ERROR_INCOMPATIBLE_FILE  (-2)
+#define INDIGO_ERROR_FALSE_SIGNATURE    (-3)
+#define INDIGO_ERROR_FALSE_KEY          (-4)
+#define INDIGO_ERROR_PEER_DISCONNECTED  (-5)
+#define INDIGO_ERROR_PEER_TIMEOUT       (-6)
+#define INDIGO_ERROR_WRONG_PASSWORD     (-7)
+#define INDIGO_ERROR_INVALID_PACKET     (-8)
+#define INDIGO_ERROR_ACCESS_DENIED      (-9)
+#define INDIGO_ERROR_INVALID_PEER_PARAM (-10)
 #endif //INDIGO_ERRORS_H

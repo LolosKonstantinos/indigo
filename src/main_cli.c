@@ -21,14 +21,14 @@ SOFTWARE.
 */
 
 #include <stdio.h>
-#include <cli/cli.h>
+#include <cli.h>
 
 int main(int argc, const char *argv[]) {
-    for (int i = 1; i < 1000; i++) {
-        printf("#");
+    void *key;
+    for (int i = 0; i < 300; i++) {
+        putchar('#');
     }
-    getchar();
-
-    printf("\033[2J\033[H");
+    putchar('\n');
+    login(&key);
     getchar();
 }

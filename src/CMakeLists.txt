@@ -10,4 +10,4 @@ add_executable(${PROJECT_NAME}_gui main_gui.c)
 # Link the executable with the library.
 target_link_libraries(${PROJECT_NAME}_tui PRIVATE indigo_core crypto_utils tui ncursesw)
 
-target_link_libraries(${PROJECT_NAME}_cli PRIVATE crypto_utils cli)
+target_link_libraries(${PROJECT_NAME}_cli PRIVATE cli)
