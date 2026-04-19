@@ -627,7 +627,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                     break;
                 case MSG_FILE_SENDING_REQUEST:{
                         //we need permission to proceed, so we push it to the manager to handle
-                        //tell the interface (tui or gui via queue), the interface will ask the user
+                        //tell the interface (ui via queue), the interface will ask the user
                         //if the user agrees, we send back a response containing the preferred session serial number
                         //if it gets accepted we receive a session_t struct via queue, and store an expected file packet
 

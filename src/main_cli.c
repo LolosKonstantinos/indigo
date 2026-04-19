@@ -19,3 +19,16 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
+
+#include <stdio.h>
+#include <cli/cli.h>
+
+int main(int argc, const char *argv[]) {
+    for (int i = 1; i < 1000; i++) {
+        printf("#");
+    }
+    getchar();
+
+    printf("\033[2J\033[H");
+    getchar();
+}

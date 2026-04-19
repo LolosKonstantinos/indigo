@@ -23,4 +23,15 @@ SOFTWARE.
 #ifndef INDIGO_CLI_H
 #define INDIGO_CLI_H
 
+typedef struct progress_bar_t progress_bar_t;
+
+int get_src_size(int *rows, int *cols);
+
+void clear_screen();
+
+int new_progress_bar(progress_bar_t **progress_bar);
+int delete_progress_bar(progress_bar_t **progress_bar);
+int update_progress_bar(progress_bar_t *progress_bar, char progress);
+int move_progress_bar(progress_bar_t *progress_bar, int x, int y);
+
 #endif //INDIGO_CLI_H
