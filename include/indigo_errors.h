@@ -43,6 +43,8 @@ SOFTWARE.
 #define INDIGO_ERROR_NETWORK_RESET            16 //can be recovered from, renew the sockets, and any overlapped struct
 #define INDIGO_ERROR_NO_SYS_RESOURCES         17 //recoverable, just wait, the os buffers are full
 #define INDIGO_ERROR_FILE_NOT_AUTHORIZED      18
+#define INDIGO_ERROR_RESOURCE_NOT_FOUND       19
+
 //negative values are for errors the user or a peer caused
 #define INDIGO_ERROR_INVALID_INPUT      (-1)
 #define INDIGO_ERROR_INCOMPATIBLE_FILE  (-2)

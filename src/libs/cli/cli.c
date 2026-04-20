@@ -22,19 +22,34 @@ SOFTWARE.
 #include "cli.h"
 #include <stdio.h>
 #include <crypto_utils.h>
+
 #include "indigo_types.h"
 #include "indigo_errors.h"
 
-#ifdef WIN32
+#ifdef _WIN32
 #include <windef.h>
 #include <Winbase.h>
 #include <WinCon.h>
+#include <Winuser.h>
+#ifndef CONSOLE_READ_NOWAIT
+#define CONSOLE_READ_NOWAIT     0x0002
+#endif
 #else
 /*assume Linux*/
 #include <sys/ioctl.h>
 #include <unistd.h>
 #endif
 #define FORCE_INLINE inline __attribute__((always_inline))
+
+static const int command_count = 6;
+static const char recognised_commands[6][64] = {
+    "DEV",
+    "DOC",
+    "HELP",
+    "FILES",
+    "TRANSFER",
+    "SETTINGS"
+};
 struct progress_bar_t {
     int x;
     int y;
@@ -67,7 +82,7 @@ FORCE_INLINE void clear_screen() {
 }
 
 FORCE_INLINE void delete_lines(const int count) {
-    for (int i = 0; i < count; i++) printf("\x1bM\x1b[2K");
+    for (int i = 0; i < count; i++) printf("\x1b[2K\x1bM");
 }
 
 int new_progress_bar(progress_bar_t **progress_bar) {
@@ -347,5 +362,333 @@ int login(void **master_key) {
         return ret;
     }
     free(psw);
+
+    if (!signing_key_pair_exists()) {
+        ret = create_signing_key_pair(*master_key);
+        if (ret != INDIGO_SUCCESS) {
+            return ret;
+        }
+    }
+
     return 0;
 }
+
+int create_main_loop(tree_t *device_tree, QUEUE *ui_queue) {
+    QNODE *node = NULL;
+    char in_key;
+    int key_repeat_count = 0;
+    char command[CHAR_MAX + 1];
+    char command_len = 0;
+    int command_num = 0;
+    int ret = 0;
+    int termination_flag = 0;
+#ifdef _WIN32
+    WIN_CONSOLE_INPUT ReadConsoleInputExA =
+        (WIN_CONSOLE_INPUT)GetProcAddress(GetModuleHandle("kernel32.dll"), "ReadConsoleInputExA");
+    if (ReadConsoleInputExA == NULL) {
+        return INDIGO_ERROR_RESOURCE_NOT_FOUND;
+    }
+#endif
+
+
+    while (!termination_flag) {
+        //get queue events
+        node = queue_pop(ui_queue, QOPT_NON_BLOCK);
+        if (node) {
+            switch (node->type) {
+            case QET_TERMINATION:
+                termination_flag = 1;
+                break;
+            default:
+                break;
+            }
+            destroy_qnode(node);
+            node = NULL;
+        }
+
+        //get user input
+        #ifdef _WIN32
+        ret = get_next_input(&in_key, 1, ReadConsoleInputExA);
+        if (ret == -1) {
+            break; //no idea what error this might be
+        }
+        key_repeat_count = ret;
+        #else
+        #endif
+        if (key_repeat_count > 0){
+            if (in_key == KEY_ENTER) {
+                //execute the command
+                command[CHAR_MAX] = '\0';
+                //check if the command exists
+                for (command_num = 0; command_num < command_count; command_num++) {
+                    if (strcmp(recognised_commands[command_num], command) == 0)break;
+                }
+                if (command_num < command_count) {
+                    command_len = 0;
+                    command[0] = '\0';
+                    //execute command with command number command_num
+                }
+                else {
+                    //print error message
+                }
+
+            }
+            else if (in_key == KEY_BACKSPACE) {
+
+            }
+            else if (is_special_key(in_key)) {
+
+            }
+            else {
+                for (int i = 0; i < key_repeat_count; i++) {
+                    if (command_len < CHAR_MAX) {
+                        command[command_len] = in_key;
+                        ++command_len;
+                        command[command_len] = '\0';
+                    }
+                    else {
+                        memmove(command, command + 1, CHAR_MAX - 1);
+                        command[CHAR_MAX - 1] = in_key;
+                        command[CHAR_MAX] = '\0';
+                    }
+                }
+            }
+        }
+
+        //refresh ui
+    }
+}
+int is_special_key(char key) {
+    switch (key) {
+    case KEY_ARROW_UP:
+    case KEY_ARROW_DOWN:
+    case KEY_ARROW_LEFT:
+    case KEY_ARROW_RIGHT:
+    case KEY_ENTER:
+    case KEY_SPACE:
+    case KEY_BACKSPACE:
+    case KEY_TAB:
+    case KEY_CTRL:
+    case KEY_ALT:
+    case KEY_SHIFT:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+#ifdef _WIN32
+int get_next_input(char *input, char echo, WIN_CONSOLE_INPUT ReadConsoleInputExA) {
+    int ret;
+    INPUT_RECORD buf;
+    int events_read;
+    int repeat = 0;
+
+    ret = ReadConsoleInputExA(GetStdHandle(STD_INPUT_HANDLE), &buf, sizeof(INPUT_RECORD), (void *)&events_read,CONSOLE_READ_NOWAIT);
+    if (ret == 0) {
+        return -1;
+    }
+    if (events_read == 0) {
+        return 0;
+    }
+    if (buf.EventType == KEY_EVENT && buf.Event.KeyEvent.bKeyDown) {
+        repeat = buf.Event.KeyEvent.wRepeatCount;
+        switch (buf.Event.KeyEvent.wVirtualKeyCode) {
+            //numbers 0-9
+            case 0x30:
+            *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+            if (echo) {
+                if (buf.Event.KeyEvent.dwControlKeyState&SHIFT_PRESSED) {
+                    for (int i = 0; i < repeat; i++)
+                        putchar(')');
+                }
+                else {
+                    for (int i = 0; i < repeat; i++)
+                        putchar('0');
+                }
+            }
+            break;
+            case 0x31:
+            *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+            if (echo) {
+                if (buf.Event.KeyEvent.dwControlKeyState&SHIFT_PRESSED) {
+                    for (int i = 0; i < repeat; i++)putchar('!');
+                }
+                else {
+                    for (int i = 0; i < repeat; i++) putchar('1');}
+            }
+            break;
+            case 0x32:
+            *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+            if (echo) {
+                if (buf.Event.KeyEvent.dwControlKeyState&SHIFT_PRESSED) {
+                    for (int i = 0; i < repeat; i++)putchar('@');
+                }
+                else {
+                    for (int i = 0; i < repeat; i++) putchar('2');
+                }
+            }
+            break;
+            case 0x33:
+            *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+            if (echo) {
+                if (buf.Event.KeyEvent.dwControlKeyState&SHIFT_PRESSED) {
+                    for (int i = 0; i < repeat; i++) putchar('#');
+                }
+                else {
+                    for (int i = 0; i < repeat; i++) putchar('3');
+                }
+            }
+            break;
+            case 0x34:
+            *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+            if (echo) {
+                if (buf.Event.KeyEvent.dwControlKeyState&SHIFT_PRESSED) {
+                    for (int i = 0; i < repeat; i++) putchar('$');
+                }
+                else {
+                    for (int i = 0; i < repeat; i++) putchar('4');
+                }
+            }
+            break;
+            case 0x35:
+            *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+            if (echo) {
+                if (buf.Event.KeyEvent.dwControlKeyState&SHIFT_PRESSED) {
+                    for (int i = 0; i < repeat; i++) putchar('%');
+                }
+                else {
+                    for (int i = 0; i < repeat; i++) putchar('5');
+                }
+            }
+            break;
+            case 0x36:
+            *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+            if (echo) {
+                if (buf.Event.KeyEvent.dwControlKeyState&SHIFT_PRESSED) {
+                    for (int i = 0; i < repeat; i++) putchar('^');
+                }
+                else {
+                    for (int i = 0; i < repeat; i++) putchar('6');
+                }
+            }
+            break;
+            case 0x37:
+            *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+            if (echo) {
+                if (buf.Event.KeyEvent.dwControlKeyState&SHIFT_PRESSED) {
+                    for (int i = 0; i < repeat; i++) putchar('&');
+                }
+                else {
+                    for (int i = 0; i < repeat; i++) putchar('7');
+                }
+            }
+            break;
+            case 0x38:
+            *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+            if (echo) {
+                if (buf.Event.KeyEvent.dwControlKeyState&SHIFT_PRESSED) {
+                    for (int i = 0; i < repeat; i++) putchar('*');
+                }
+                else {
+                    for (int i = 0; i < repeat; i++) putchar('8');
+                }
+            }
+            break;
+            case 0x39:
+                *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+                if (echo) {
+                    if (buf.Event.KeyEvent.dwControlKeyState&SHIFT_PRESSED) {
+                        for (int i = 0; i < repeat; i++) putchar('(');
+                    }
+                    else {
+                        for (int i = 0; i < repeat; i++) putchar('9');
+                    }
+                }
+                break;
+            //letters A-Z
+            case 0x41:
+            case 0x42:
+            case 0x43:
+            case 0x44:
+            case 0x45:
+            case 0x46:
+            case 0x47:
+            case 0x48:
+            case 0x49:
+            case 0x4A:
+            case 0x4B:
+            case 0x4C:
+            case 0x4D:
+            case 0x4E:
+            case 0x4F:
+            case 0x50:
+            case 0x51:
+            case 0x52:
+            case 0x53:
+            case 0x54:
+            case 0x55:
+            case 0x56:
+            case 0x57:
+            case 0x58:
+            case 0x59:
+            case 0x5A:
+                *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+                if (echo) {
+                    if (((buf.Event.KeyEvent.dwControlKeyState&CAPSLOCK_ON)>>3) ^
+                         (buf.Event.KeyEvent.dwControlKeyState&SHIFT_PRESSED))
+                    {
+                        for (int i = 0; i < repeat; i++)
+                            putchar(buf.Event.KeyEvent.wVirtualKeyCode);
+                    }
+                    else {
+                        for (int i = 0; i < repeat; i++)
+                            putchar(tolower(buf.Event.KeyEvent.wVirtualKeyCode));
+                    }
+                }
+                break;
+            case 0x25:
+                *input = KEY_ARROW_LEFT;
+                break;
+            case 0x26:
+                *input = KEY_ARROW_UP;
+                break;
+            case 0x27:
+                *input = KEY_ARROW_RIGHT;
+                break;
+            case 0x28:
+                *input = KEY_ARROW_DOWN;
+                break;
+            case 0x0D:
+                *input = KEY_ENTER;
+                break;
+            case 0xA0:
+            case 0xA1:
+            case 0x10:
+                *input = KEY_SHIFT;
+                break;
+            case 0x11:
+            case 0xA2:
+            case 0xA3:
+                *input = KEY_CTRL;
+                 break;
+            case 0x12:
+            case 0xA4:
+            case 0xA5:
+                *input = KEY_ALT;
+                break;
+            case 0x20:
+                *input = KEY_SPACE;
+                break;
+            case 0x08:
+                *input = KEY_BACKSPACE;
+                break;
+            case 0x09:
+            *input = KEY_TAB;
+            default:
+            break;
+        }
+    }
+    return repeat;
+}
+#endif

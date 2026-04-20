@@ -23,6 +23,12 @@ SOFTWARE.
 #ifndef INDIGO_CLI_H
 #define INDIGO_CLI_H
 #include "indigo_types.h"
+#include "Queue.h"
+#include "binary_tree.h"
+
+#ifdef _WIN32
+typedef BOOL (*WIN_CONSOLE_INPUT)(HANDLE, PINPUT_RECORD, DWORD, LPDWORD, USHORT);
+#endif
 
 typedef struct progress_bar_t progress_bar_t;
 
@@ -46,5 +52,10 @@ int isspecialchar(char ch);
 int password_is_valid(char psw[MAX_PSW_LEN + 1]);
 int create_new_password();
 int login(void **master_key);
-int init_indigo(void **master_key);
+int create_main_loop(tree_t *device_tree, QUEUE *ui_queue);
+int is_special_key(char key);
+#ifdef _WIN32
+int get_next_input(char *input, char echo, WIN_CONSOLE_INPUT ReadConsoleInputExA);
+#endif
+
 #endif //INDIGO_CLI_H

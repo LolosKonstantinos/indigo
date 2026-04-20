@@ -217,4 +217,17 @@ static FORCE_INLINE int cmp_rdev(void *s1, void *s2) {
     return memcmp(((remote_device_t *)s1)->peer_pk, ((remote_device_t *)s2)->peer_pk, crypto_sign_PUBLICKEYBYTES);
 }
 
+//key (project) universal codes
+#define KEY_ARROW_UP    0x01
+#define KEY_ARROW_DOWN  0x02
+#define KEY_ARROW_LEFT  0x03
+#define KEY_ARROW_RIGHT 0x04
+#define KEY_ENTER       0x05
+#define KEY_SPACE       0x06
+#define KEY_BACKSPACE   0x07
+#define KEY_TAB         0x08
+#define KEY_CTRL        0x09
+#define KEY_ALT         0x0A
+#define KEY_SHIFT       0x0B
+
 #endif //INDIGO_TYPES_H
