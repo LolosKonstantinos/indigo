@@ -631,12 +631,15 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         //if the user agrees, we send back a response containing the preferred session serial number
                         //if it gets accepted we receive a session_t struct via queue, and store an expected file packet
 
-                        Q_FILE_SENDING_REQUEST *fsr = malloc(sizeof(Q_FILE_SENDING_REQUEST));
-                        file_sending_request_data_t *data = (file_sending_request_data_t *)packet->data;
+                        Q_FILE_SENDING_REQUEST *fsr;
+                        file_sending_request_data_t *data;
+                        if (packet->magic_number != MAGIC_NUMBER_2) break;
+                        fsr = malloc(sizeof(Q_FILE_SENDING_REQUEST));
                         if (!fsr) {
                             *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                             goto cleanup;
                         }
+                        data = (file_sending_request_data_t *)packet->data
                         memcpy(fsr->id, packet->id, crypto_sign_PUBLICKEYBYTES);
                         fsr->file_size = data->file_size;
                         memcpy(fsr->file_name, data->file_name, PATH_MAX * sizeof(wchar_t));
@@ -650,6 +653,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         break;
                 }
                 case MSG_FILE_SENDING_RESPONSE:
+                    if (packet->magic_number != MAGIC_NUMBER_2) break;
                     ret = create_client_session(packet
                                               , packet_info
                                               , args->device_tree
@@ -673,6 +677,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         size_t ret_val;
                         uint64_t chunk_number;
                         packet_t temp_packet;
+
+                        if (packet->magic_number != MAGIC_NUMBER_2) break;
 
                         memcpy(xfp.session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
                         xfp.session_id.serial = ((file_chunk_data_t *)packet->data)->serial;
@@ -784,6 +790,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         break;
                 }
                 case MSG_RESEND:{
+                        if (packet->magic_number != MAGIC_NUMBER_2) break;
                         fprintf(stderr, "DEBUG: Resend attempted\n");
                         transmission_control_data_t *control_packet = malloc(sizeof(transmission_control_data_t));
                         if (control_packet == NULL) {
@@ -804,7 +811,9 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                 case MSG_STOP_FILE_TRANSMISSION:
                 case MSG_PAUSE_FILE_TRANSMISSION:
                 case MSG_CONTINUE_FILE_TRANSMISSION:
+                    if (packet->magic_number != MAGIC_NUMBER_2) break;
                 case MSG_IP_CHANGE:
+                    if (packet->magic_number != MAGIC_NUMBER_2) break;
                     fprintf(stderr, "DEBUG: not implemented");
                     break;
                 case MSG_ERR:
