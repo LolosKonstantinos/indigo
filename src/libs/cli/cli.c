@@ -25,6 +25,7 @@ SOFTWARE.
 
 #include "indigo_types.h"
 #include "indigo_errors.h"
+#include <glib-2.0/glib.h>
 
 #ifdef _WIN32
 #include <windef.h>
@@ -40,15 +41,15 @@ SOFTWARE.
 #include <unistd.h>
 #endif
 #define FORCE_INLINE inline __attribute__((always_inline))
-
-static const int command_count = 6;
-static const char recognised_commands[6][64] = {
-    "DEV",
-    "DOC",
-    "HELP",
+static const int chc_command_count = 7;
+static const char chc_commands[7][64] = {
+    "DEVICES",
     "FILES",
-    "TRANSFER",
-    "SETTINGS"
+    "HELP",
+    "NONE",
+    "INCOMING",
+    "SETTINGS",
+    "TRUSTED DEVICES"
 };
 struct progress_bar_t {
     int x;
@@ -380,17 +381,26 @@ int create_main_loop(tree_t *device_tree, QUEUE *ui_queue) {
     char command[CHAR_MAX + 1];
     char command_len = 0;
     int command_num = 0;
+    int lines_printed = 0;
+    unsigned char **id_array = NULL;
+    char context = INDIGO_CLI_CONTEXT_NONE;
     int ret = 0;
     int termination_flag = 0;
 #ifdef _WIN32
-    WIN_CONSOLE_INPUT ReadConsoleInputExA =
+    ReadConsoleInputExA =
         (WIN_CONSOLE_INPUT)GetProcAddress(GetModuleHandle("kernel32.dll"), "ReadConsoleInputExA");
     if (ReadConsoleInputExA == NULL) {
         return INDIGO_ERROR_RESOURCE_NOT_FOUND;
     }
 #endif
 
+    //print the notification line (it exists in every context)
+    printf("\x1b[2;33m[!]There are currently no notifications\x1b[22;39m\n");
+    //print the prompt prefix (or whatever this thing is called)
+    printf("Indigo>");
+    lines_printed = 1;
 
+    //the main loop
     while (!termination_flag) {
         //get queue events
         node = queue_pop(ui_queue, QOPT_NON_BLOCK);
@@ -406,9 +416,41 @@ int create_main_loop(tree_t *device_tree, QUEUE *ui_queue) {
             node = NULL;
         }
 
+        //refresh ui
+        switch (command_num) {
+        case 0: //devises
+            delete_lines(lines_printed-1);
+            lines_printed = 1;
+            context = INDIGO_CLI_CONTEXT_DEV_LIST;
+            print_devises(device_tree, &lines_printed, &id_array);
+            printf("\nIndigo>");
+            ++lines_printed;
+            break;
+        case 1: //files
+            context = INDIGO_CLI_CONTEXT_ACTIVE_FILES;
+            break;
+        case 2: //help
+            context = INDIGO_CLI_CONTEXT_HELP;
+            break;
+        case 3: //none
+            context = INDIGO_CLI_CONTEXT_NONE;
+            break;
+        case 4: //incoming requests
+            context = INDIGO_CLI_CONTEXT_INCOMING_FILES;
+            break;
+        case 5: //settings
+            context = INDIGO_CLI_CONTEXT_SETTINGS;
+            break;
+        case 6: ///trusted devises
+            context = INDIGO_CLI_CONTEXT_TRUSTED_DEVICES;
+            break;
+        default:
+            break;
+        }
+
         //get user input
         #ifdef _WIN32
-        ret = get_next_input(&in_key, 1, ReadConsoleInputExA);
+        ret = get_next_key(&in_key);
         if (ret == -1) {
             break; //no idea what error this might be
         }
@@ -419,27 +461,76 @@ int create_main_loop(tree_t *device_tree, QUEUE *ui_queue) {
             if (in_key == KEY_ENTER) {
                 //execute the command
                 command[CHAR_MAX] = '\0';
+
                 //check if the command exists
-                for (command_num = 0; command_num < command_count; command_num++) {
-                    if (strcmp(recognised_commands[command_num], command) == 0)break;
+                for (command_num = 0; command_num < chc_command_count; command_num++) {
+                    if (strcmp(chc_commands[command_num], command) == 0) break;
                 }
-                if (command_num < command_count) {
+
+                if (command_num < chc_command_count) {
                     command_len = 0;
                     command[0] = '\0';
-                    //execute command with command number command_num
+                    //delete all content and print the notification line and the action content if needed (only if the content doesn't need to be updated)
+                    delete_lines(lines_printed);
+                    //print the notification line (it exists in every context)
+                    printf("\x1b[2;33m[!]There are currently no notifications\x1b[22;39m\n");
+                    //print the prompt prefix (or whatever this thing is called)
+                    switch (command_num) {
+                        case 0: //devises
+                            context = INDIGO_CLI_CONTEXT_DEV_LIST;
+                            print_devises(device_tree, &lines_printed, &id_array);
+                            break;
+                        case 1: //files
+                            context = INDIGO_CLI_CONTEXT_ACTIVE_FILES;
+                            break;
+                        case 2: //help
+                            context = INDIGO_CLI_CONTEXT_HELP;
+                            break;
+                        case 3: //none
+                            context = INDIGO_CLI_CONTEXT_NONE;
+                            break;
+                        case 4: //incoming requests
+                            context = INDIGO_CLI_CONTEXT_INCOMING_FILES;
+                            break;
+                        case 5: //settings
+                            context = INDIGO_CLI_CONTEXT_SETTINGS;
+                            break;
+                        case 6: ///trusted devises
+                            context = INDIGO_CLI_CONTEXT_TRUSTED_DEVICES;
+                            break;
+                    default:
+                        break;
+                    }
+                    printf("Indigo>");
+                    lines_printed = 1;
                 }
                 else {
-                    //print error message
+                    //check if it is a subcommand of the current context
+
+                    //print error messages
+                    command_len = 0;
+                    command[0] = '\0';
+                    printf("\n\x3b[31mThis is not a valid command.\x3b\n[39mIndigo>");
+                    lines_printed += 2;
                 }
 
             }
             else if (in_key == KEY_BACKSPACE) {
-
+                //delete characters form the user input
+                for (int i = 0; i < command_len || i < key_repeat_count; i++) {
+                    command[command_len] = '\0';
+                    --command_len;
+                    //delete the whole user input and print the last 64 characters of the command
+                    printf("\x1b[2KIndigo>"); //delete the line and print Indigo
+                    if (command_len <= 64) printf("%s", command);
+                    else printf("%s", command + command_len - 63);
+                }
             }
             else if (is_special_key(in_key)) {
-
+                //do nothing for now
             }
             else {
+                //it is a character, we add it to the command
                 for (int i = 0; i < key_repeat_count; i++) {
                     if (command_len < CHAR_MAX) {
                         command[command_len] = in_key;
@@ -455,7 +546,6 @@ int create_main_loop(tree_t *device_tree, QUEUE *ui_queue) {
             }
         }
 
-        //refresh ui
     }
 }
 int is_special_key(char key) {
@@ -477,14 +567,14 @@ int is_special_key(char key) {
     }
 }
 
-#ifdef _WIN32
-int get_next_input(char *input, char echo, WIN_CONSOLE_INPUT ReadConsoleInputExA) {
+//returns via pointer the key that was pressed
+int get_next_key(char *input) {
     int ret;
     INPUT_RECORD buf;
     int events_read;
     int repeat = 0;
 
-    ret = ReadConsoleInputExA(GetStdHandle(STD_INPUT_HANDLE), &buf, sizeof(INPUT_RECORD), (void *)&events_read,CONSOLE_READ_NOWAIT);
+    ret = ReadConsoleInputW(GetStdHandle(STD_INPUT_HANDLE), &buf, 1, (void *)&events_read);
     if (ret == 0) {
         return -1;
     }
@@ -691,4 +781,261 @@ int get_next_input(char *input, char echo, WIN_CONSOLE_INPUT ReadConsoleInputExA
     }
     return repeat;
 }
+//returns via pointer the character that was typed, includes control keys
+int get_next_char(uint32_t *input) {
+    int ret;
+    gchar *utf8_char = NULL;
+    gunichar unicode_char;
+#ifdef _WIN32
+    INPUT_RECORD rec[2];
+    DWORD rec_num;
+    WCHAR character[2] = {0};
+    char surrogate_num = 1;
+    int character_count = 0;
+    disable_line_input();
+
+    //get the next utf16 chunk
+    ret = ReadConsoleInputW(GetStdHandle(STD_INPUT_HANDLE), rec, 1, &rec_num);
+    if (ret == 0) return -1;
+    if (rec_num == 0) return 0;
+
+    //we want it bo be a key event (basically we want characters) and we choose to only care when the key is pressed
+    if (rec[0].EventType == KEY_EVENT && rec[0].Event.KeyEvent.bKeyDown == TRUE) {
+        //check for control key presses (ctrl, alt, del, shift, etc.)
+        *input = 0;
+        switch (rec[0].Event.KeyEvent.wVirtualKeyCode) {
+            case 0x25:
+                *input = KEY_ARROW_LEFT;
+                break;
+            case 0x26:
+                *input = KEY_ARROW_UP;
+                break;
+            case 0x27:
+                *input = KEY_ARROW_RIGHT;
+                break;
+            case 0x28:
+                *input = KEY_ARROW_DOWN;
+                break;
+            case 0x0D:
+                *input = KEY_ENTER;
+                break;
+            case 0xA0:
+            case 0xA1:
+            case 0x10:
+                *input = KEY_SHIFT;
+                break;
+            case 0x11:
+            case 0xA2:
+            case 0xA3:
+                *input = KEY_CTRL;
+                break;
+            case 0x12:
+            case 0xA4:
+            case 0xA5:
+                *input = KEY_ALT;
+                break;
+            case 0x20:
+                *input = KEY_SPACE;
+                break;
+            case 0x08:
+                *input = KEY_BACKSPACE;
+                break;
+            case 0x09:
+                *input = KEY_TAB;
+            default:
+                break;
+        }
+        //check if we actually got a control event
+        if (*input != 0) return -2;
+
+        //copy the utf16 chunk (could be the first part of a 4byte character or just a character)
+        character[0] = rec->Event.KeyEvent.uChar.UnicodeChar;
+        character_count = rec[0].Event.KeyEvent.wRepeatCount;
+        //we may get 0 if control key that we don't care about is pressed
+        if (character[0] == 0) return 0;
+        //check if we need to receive the 2nd part of the character (this is only for 4byte characters)
+        if (character[0] >= 0xd800 && character[0] <= 0xdbff) {
+            //get the next part (the next record may just be the previous but with key up)
+            //we loop until we get the next key down key event
+            while (1) {
+                ret = ReadConsoleInputW(GetStdHandle(STD_INPUT_HANDLE), rec + 1, 1, &rec_num);
+                if (ret == 0) return -1;
+                //check if it is a key event and is key pressed and then copy the character
+                if (rec[1].EventType == KEY_EVENT && rec[1].Event.KeyEvent.bKeyDown == TRUE) {
+                    //copy the second part of the character
+                    character[1] = rec[1].Event.KeyEvent.uChar.UnicodeChar;
+                    surrogate_num = 2;
+                    //if the second part is not valid per utf16 we leave with an error
+                    if (character[1] < 0xdc00 || character[1] > 0xdfff) return -1;
+                    break;
+                }
+            }
+        }
+        //convert the utf16 character to utf8
+        utf8_char = g_utf16_to_utf8(character, surrogate_num,NULL, NULL, NULL);
+        if (utf8_char == NULL) {
+            return -1;
+        }
+        //convert the utf8 character to Unicode
+        unicode_char = g_utf8_get_char_validated(utf8_char, -1);
+        if (unicode_char == (gunichar)-1) {
+            //invalid
+            return -1;
+        }
+        g_free(utf8_char);
+        //return the Unicode character we read
+        *input = unicode_char;
+    }
+    else return 0;
 #endif
+
+    return character_count;
+}
+
+int echo() {
+#ifdef _WIN32
+    DWORD mode;
+    GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode);
+    mode |= (ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
+    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), mode);
+    return 0;
+#endif
+}
+int no_echo() {
+#ifdef _WIN32
+    DWORD mode;
+    GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode);
+    mode &= ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
+    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), mode);
+    return 0;
+#endif
+}
+int enable_line_input() {
+#ifdef _WIN32
+    DWORD mode;
+    GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode);
+    mode |= ENABLE_LINE_INPUT;
+    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), mode);
+    return 0;
+#endif
+}
+int disable_line_input() {
+#ifdef _WIN32
+    DWORD mode;
+    GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode);
+    mode &= ~ENABLE_LINE_INPUT;
+    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), mode);
+    return 0;
+#endif
+}
+
+
+int print_devises(tree_t *device_tree, int *lines_printed, unsigned char ***id_array) {
+    //this function does not clear space above the cursor.
+    //if this function is used to update the tree page make sure you have cleared the previous screen first.
+    tree_iterator_t *iterator;
+    remote_device_t *remote_device;
+    unsigned char **tmp_id_array = NULL;
+    void *tmp = NULL;
+    uint64_t i = 0;
+    int ret = 0;
+
+    //check if the pointers exist
+    if (!(device_tree && lines_printed)) {
+        return -1;
+    }
+
+    //create a tree iterator
+    ret = new_tree_iterator(device_tree, &iterator);
+    if (ret) return ret;
+
+    //iterate through the tree and print devises
+    while (tree_has_next(iterator)) {
+        //allocate one more id
+        tmp = realloc(tmp_id_array, (i + 1) * sizeof(unsigned char *));
+        if (!tmp) goto cleanup;
+
+        tmp_id_array = tmp;
+        tmp_id_array[i] = NULL;
+
+        tmp = malloc(crypto_sign_PUBLICKEYBYTES);
+        if (!tmp) goto cleanup;
+
+        tmp_id_array[i] = tmp;
+
+        //get the next remote device
+        tree_next(iterator, (void **)&remote_device);
+        //add the id to the array
+        memcpy(tmp_id_array[i], remote_device->peer_pk, crypto_sign_PUBLICKEYBYTES);
+        //print the device info
+        printf("dev_%llu \t: %ls\n", i, remote_device->username);
+        //update counters
+        ++(*lines_printed);
+        ++i;
+    }
+
+    *id_array = tmp_id_array;
+    return 0;
+
+    cleanup:
+    if (tmp_id_array){
+        for (uint64_t j = 0; j < i; j++) {
+            free(tmp_id_array[j]);
+        }
+        free(tmp_id_array);
+    }
+    *id_array = NULL;
+    return -1;
+}
+
+int pathfinder(char path[PATH_MAX]) {
+    int lines_printed = 0;
+    uint32_t in_char;
+    int key_repeat_count = 0;
+    char command[sizeof(uint32_t) * PATH_MAX];
+    int command_len = 0;
+    int ret = 0;
+
+    while (1) {
+        //get user input
+        ret = get_next_char(&in_char);
+        if (ret == -1) {
+            break; //no idea what error this might be
+        }
+        key_repeat_count = ret;
+
+        if (key_repeat_count > 0) {
+            //it is a character, we add it to the command
+            for (int i = 0; i < key_repeat_count; i++) {
+                if (command_len < CHAR_MAX) {
+                    command[command_len] = in_char;
+                    ++command_len;
+                    command[command_len] = '\0';
+                }
+                else {
+                    memmove(command, command + 1, CHAR_MAX - 1);
+                    command[CHAR_MAX - 1] = in_char;
+                    command[CHAR_MAX] = '\0';
+                }
+            }
+        }
+        else if (ret == -2){
+            //it is a control key
+            if (in_char == KEY_ENTER) {
+
+            }
+            else if (in_char == KEY_BACKSPACE) {
+                //delete characters form the user input
+                for (int i = 0; i < command_len || i < key_repeat_count; i++) {
+                    command[command_len] = '\0';
+                    --command_len;
+                    //delete the whole user input and print the last 64 characters of the command
+                    printf("\x1b[2KIndigo>"); //delete the line and print Indigo
+                    if (command_len <= 64) printf("%s", command);
+                    else printf("%s", command + command_len - 63);
+                }
+            }
+        }
+    }
+    return 0;
+}

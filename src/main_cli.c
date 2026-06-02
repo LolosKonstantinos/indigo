@@ -28,7 +28,11 @@ int main(int argc, const char *argv[]) {
     for (int i = 0; i < 300; i++) {
         putchar('#');
     }
+
     putchar('\n');
-    login(&key);
+    //print the notification line (it exists in every context)
+    printf("\x1b[2;33m[!]There are currently no notifications\x1b[22;39m\n");
+    //print the prompt prefix (or whatever this thing is called)
+    printf("Indigo>");
     getchar();
 }

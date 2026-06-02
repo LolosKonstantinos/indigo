@@ -26,6 +26,14 @@ SOFTWARE.
 #include "Queue.h"
 #include "binary_tree.h"
 
+#define INDIGO_CLI_CONTEXT_NONE             0x00
+#define INDIGO_CLI_CONTEXT_DEV_LIST         0x01
+#define INDIGO_CLI_CONTEXT_ACTIVE_FILES     0x02
+#define INDIGO_CLI_CONTEXT_SETTINGS         0x03
+#define INDIGO_CLI_CONTEXT_HELP             0x04
+#define INDIGO_CLI_CONTEXT_TRUSTED_DEVICES  0x05
+#define INDIGO_CLI_CONTEXT_INCOMING_FILES   0x06
+
 #ifdef _WIN32
 typedef BOOL (*WIN_CONSOLE_INPUT)(HANDLE, PINPUT_RECORD, DWORD, LPDWORD, USHORT);
 #endif
@@ -53,9 +61,19 @@ int password_is_valid(char psw[MAX_PSW_LEN + 1]);
 int create_new_password();
 int login(void **master_key);
 int create_main_loop(tree_t *device_tree, QUEUE *ui_queue);
+
 int is_special_key(char key);
 #ifdef _WIN32
-int get_next_input(char *input, char echo, WIN_CONSOLE_INPUT ReadConsoleInputExA);
+int get_next_key(char *input); //todo change so that it is utf-8 compliant or Unicode compliant
 #endif
 
+int echo();
+int no_echo();
+int enable_line_input();
+int disable_line_input();
+
+int get_next_char(uint32_t *input); //todo to be implemented
+int print_devises(tree_t *device_tree, int *lines_printed, unsigned char ***id_array);
+
+int pathfinder(char path[PATH_MAX]);
 #endif //INDIGO_CLI_H
