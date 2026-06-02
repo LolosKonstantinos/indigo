@@ -33,7 +33,6 @@ and can send selected files to these peers, fast and securely.
 - Thread creation and management
 - Custom data structures **(AVL tree, memory pool, queue, hash tables)**
 ### In Progress:
-- Packet demultiplexing and handling
 - File transmission controls
 - User interface
 - Compatibility with more Operating systems (other than Microsoft Windows)

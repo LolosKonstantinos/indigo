@@ -1,4 +1,5 @@
-/*Copyright (c) 2026 Lolos Konstantinos
+/*
+Copyright (c) 2026 Lolos Konstantinos
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
