@@ -23,6 +23,7 @@ SOFTWARE.
 #ifndef INDIGO_LHT_H
 #define INDIGO_LHT_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 typedef struct lht_priv lht_priv;
@@ -33,16 +34,16 @@ typedef int (*lht_removeFunction)(linked_hash_table_t *, void *);
 typedef void *(*lht_searchFunction)(linked_hash_table_t *, void *);
 
 typedef struct lht_node_t {
-    struct lht_node_t *next;
-    struct lht_node_t *prev;
-    void *data;
-}lht_node_t;
+  struct lht_node_t *next;
+  struct lht_node_t *prev;
+  void *data;
+} lht_node_t;
 
 struct linked_hash_table_t {
-    lht_insertFunction insert;
-    lht_removeFunction remove;
-    lht_searchFunction search;
-    lht_priv *private;
+  lht_insertFunction insert;
+  lht_removeFunction remove;
+  lht_searchFunction search;
+  lht_priv *private;
 };
 
 lht_t *new_lht(size_t data_size, size_t key_length, size_t init_size);
@@ -52,10 +53,11 @@ int lht_insert(linked_hash_table_t *ht, void *key, void *data);
 void *lht_search(linked_hash_table_t *ht, void *key);
 int lht_delete(linked_hash_table_t *ht, void *key);
 
-int lht_bucket_insert(const lht_priv *table, unsigned char *bucket, const void *key, const void *data);
+int lht_bucket_insert(const lht_priv *table, unsigned char *bucket,
+                      const void *key, const void *data);
 
 int lht_lock(lht_t *ht);
 int lht_unlock(lht_t *ht);
 
 int lht_list(lht_t *ht, lht_node_t **list);
-#endif //INDIGO_LHT_H
+#endif // INDIGO_LHT_H

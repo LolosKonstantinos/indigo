@@ -22,6 +22,7 @@ SOFTWARE.
 #ifndef HASH_TABLE_H
 #define HASH_TABLE_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 typedef struct hash_table_priv hash_table_priv;
@@ -31,25 +32,25 @@ typedef int (*ht_insertFunction)(hash_table_t *, void *, void *);
 typedef int (*ht_removeFunction)(hash_table_t *, void *);
 typedef void *(*ht_searchFunction)(hash_table_t *, void *);
 
-
 struct hash_table_t {
-    ht_insertFunction insert;
-    ht_removeFunction remove;
-    ht_searchFunction search;
-    hash_table_priv *private;
+  ht_insertFunction insert;
+  ht_removeFunction remove;
+  ht_searchFunction search;
+  hash_table_priv *private;
 };
 
-
-
-hash_table_t *new_hash_table(size_t data_size, size_t key_length, size_t init_size);
+hash_table_t *new_hash_table(size_t data_size, size_t key_length,
+                             size_t init_size);
 void delete_hash_table(hash_table_t *ht);
 
 int hash_table_insert(hash_table_t *ht, void *key, void *data);
 void *hash_table_search(hash_table_t *ht, void *key);
 int hash_table_delete(hash_table_t *ht, void *key);
 
-//int hash_table_resize(hash_table_t *ht, size_t new_size);
+// int hash_table_resize(hash_table_t *ht, size_t new_size);
 
-int hash_table_bucket_insert(const hash_table_priv *table, unsigned char *bucket, const void *key, const void *data);
+int hash_table_bucket_insert(const hash_table_priv *table,
+                             unsigned char *bucket, const void *key,
+                             const void *data);
 
-#endif //HASH_TABLE_H
+#endif // HASH_TABLE_H

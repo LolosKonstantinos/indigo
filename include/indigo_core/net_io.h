@@ -133,6 +133,7 @@ void build_packet(
     const unsigned char id[crypto_sign_PUBLICKEYBYTES],
     const unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES],
     const void *restrict data);
+#ifdef _WIN32
 int create_handle_array_from_send_info(const SEND_INFO *info, size_t infolen,
                                        HANDLE **handles, size_t *hCount);
 void free_send_info(const SEND_INFO *info);
@@ -140,16 +141,18 @@ int allocate_recv_info(RECV_INFO **info, mempool_t *mempool);
 int allocate_recv_info_fields(RECV_INFO *info, mempool_t *mempool);
 void free_recv_info(const RECV_INFO *info, mempool_t *mempool);
 
+#endif
 /////////////////////////////////////////////////////////////////
 ///                                                           ///
 ///                  THREAD_FUNCTION_HELPERS                  ///
 ///                                                           ///
 /////////////////////////////////////////////////////////////////
-
+#ifdef _WIN32
 int create_handle_array_from_recv_info(const RECV_ARRAY *info, HANDLE **handles,
                                        size_t *hCount);
 void free_recv_array(const RECV_ARRAY *info, mempool_t *mempool);
 
+#endif
 //////////////////////////////////////////////////////////
 ///                                                    ///
 ///                  THREAD_FUNCTIONS                  ///
