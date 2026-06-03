@@ -23,69 +23,74 @@ SOFTWARE.
 #ifndef BINARY_TREE_H
 #define BINARY_TREE_H
 
+#include <stddef.h>
 #include <stdint.h>
 
-#define BINARY_TREE_FLAG_AVL            0x01
-#define BINARY_TREE_FLAG_RED_BLACK      0x02
-#define BINARY_TREE_FLAG_THREAD_UNSAFE  0x04
+#define BINARY_TREE_FLAG_AVL 0x01
+#define BINARY_TREE_FLAG_RED_BLACK 0x02
+#define BINARY_TREE_FLAG_THREAD_UNSAFE 0x04
 
-typedef int(*cmp_f)(void *, void *);
-typedef void* (*usr_free_f)(void* node);
+typedef int (*cmp_f)(void *, void *);
+typedef void *(*usr_free_f)(void *node);
 
 typedef struct tree_priv_t tree_priv_t;
 typedef struct tree_t tree_t;
 typedef struct tree_node_avl_t tree_node_t;
 typedef struct tree_iterator_t tree_iterator_t;
 
-typedef int(*tree_insert)(tree_t *, void *);
-typedef int(*tree_remove)(tree_t *, void *);
-typedef int(*tree_search)(tree_t *, void *);
-typedef int(*tree_search_pin)(tree_t *, void *, void **);
-typedef int(*tree_search_release)(tree_t *);
+typedef int (*tree_insert)(tree_t *, void *);
+typedef int (*tree_remove)(tree_t *, void *);
+typedef int (*tree_search)(tree_t *, void *);
+typedef int (*tree_search_pin)(tree_t *, void *, void **);
+typedef int (*tree_search_release)(tree_t *);
 
-struct tree_t{
-    tree_insert insert;
-    tree_remove remove;
-    tree_search search;
-    //thread unsafe search function
-    tree_search_pin search_pin;
-    tree_search_release search_release;
-    tree_priv_t *priv;
+struct tree_t {
+  tree_insert insert;
+  tree_remove remove;
+  tree_search search;
+  // thread unsafe search function
+  tree_search_pin search_pin;
+  tree_search_release search_release;
+  tree_priv_t *priv;
 };
 
-int new_tree(tree_t** t, cmp_f cmp, size_t data_size, char type);
+int new_tree(tree_t **t, cmp_f cmp, size_t data_size, char type);
 void free_tree(tree_t *t);
 tree_node_t *new_node();
 
-/*________________________________________AVL TREE FUNCTIONS________________________________________*/
-//todo keep one of the 2
-int avl_insert(tree_t* t, void* data);
-int avl_insert_copy(tree_t *t, void* data);
-int avl_insert_copy_unlocked(tree_t *t, void* data);
+/*________________________________________AVL TREE
+ * FUNCTIONS________________________________________*/
+// todo keep one of the 2
+int avl_insert(tree_t *t, void *data);
+int avl_insert_copy(tree_t *t, void *data);
+int avl_insert_copy_unlocked(tree_t *t, void *data);
 
-int avl_delete(tree_t *t, void* data);
-int avl_delete_unlocked(tree_t *t, void* data);
+int avl_delete(tree_t *t, void *data);
+int avl_delete_unlocked(tree_t *t, void *data);
 
-int avl_search(tree_t* t, void* data);
-int avl_search_unlocked(tree_t *t, void* data);
-int avl_search_pin(tree_t* t, void* data, void** ret_data);
-int avl_search_release(tree_t* t);
+int avl_search(tree_t *t, void *data);
+int avl_search_unlocked(tree_t *t, void *data);
+int avl_search_pin(tree_t *t, void *data, void **ret_data);
+int avl_search_release(tree_t *t);
 
 /*AVL HELPERS*/
-tree_node_t** avl_balance(tree_node_t** stack, tree_node_t** top, tree_priv_t* tree);
+tree_node_t **avl_balance(tree_node_t **stack, tree_node_t **top,
+                          tree_priv_t *tree);
 void tree_lock(tree_t *t);
 void tree_unlock(tree_t *t);
 
-//NOTE: the iterator functions should be used while the tree is locked if thread safety is needed.
-//      lock the tree, create the iterator, use the iterator, unlock the tree.
-//      if the tree is unlocked the iterator may not be valid and cannot be used again.
+// NOTE: the iterator functions should be used while the tree is locked if
+// thread safety is needed.
+//       lock the tree, create the iterator, use the iterator, unlock the tree.
+//       if the tree is unlocked the iterator may not be valid and cannot be
+//       used again.
 int new_tree_iterator(tree_t *t, tree_iterator_t **iterator);
 void free_tree_iterator(tree_iterator_t **iterator);
-//returns -1 on error, 0 on success and 1 when the iteration is finished
-int tree_next(tree_iterator_t *, void** data);
+// returns -1 on error, 0 on success and 1 when the iteration is finished
+int tree_next(tree_iterator_t *, void **data);
 int tree_has_next(tree_iterator_t *iterator);
 
-//debugging tools
+// debugging tools
 size_t tree_height(tree_t *tree);
 int is_bts_avl(tree_t *tree);
-#endif //BINARY_TREE_H
+#endif // BINARY_TREE_H

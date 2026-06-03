@@ -21,703 +21,747 @@ SOFTWARE.
 
 #include "crypto_utils.h"
 #include "indigo_errors.h"
+#ifdef _WIN32
 #include <math.h>
-#include <unistd.h>
+#endif
 #include <sodium.h>
+#include <unistd.h>
 
 #ifdef _WIN32
-#include <sysinfoapi.h>
 #include <profileapi.h>
+#include <sysinfoapi.h>
 #endif
 
 struct PSW_HASH_SETTINGS {
-    unsigned char mem_cost;
-    unsigned char time_cost;
+  unsigned char mem_cost;
+  unsigned char time_cost;
 };
 
-int derive_master_key(const char* psw, const uint64_t psw_len, void** master_key) {
-    uint64_t mem_cost = crypto_pwhash_MEMLIMIT_MIN;
-    unsigned char time_cost = crypto_pwhash_OPSLIMIT_MIN;
-    unsigned char *out_key = NULL ;
-    unsigned char *salt = NULL;
-    PSW_HASH_SETTINGS psw_settings;
-    int ret;
+int derive_master_key(const char *psw, const uint64_t psw_len,
+                      void **master_key) {
+  uint64_t mem_cost = crypto_pwhash_MEMLIMIT_MIN;
+  unsigned char time_cost = crypto_pwhash_OPSLIMIT_MIN;
+  unsigned char *out_key = NULL;
+  unsigned char *salt = NULL;
+  PSW_HASH_SETTINGS psw_settings;
+  int ret;
 
+  if (psw == NULL || master_key == NULL)
+    return 2;
 
-    if (psw == NULL || master_key == NULL) return 2;
-
-    ret = load_key_derivation_settings(&psw_settings);
-    if (ret != 0) {
-        *master_key = NULL;
-        return INDIGO_ERROR_INCOMPATIBLE_FILE;//possible file changed to incompatible values
-    }
-
-    mem_cost = psw_settings.mem_cost;
-    time_cost = psw_settings.time_cost;
-
-    ret = load_psw_salt(&salt);
-    if (ret == -3) {
-        *master_key = NULL;
-        return INDIGO_ERROR_INCOMPATIBLE_FILE;//possible file changed to incompatible values
-    }
-    if (ret  == INDIGO_ERROR_FILE_NOT_FOUND) {
-        *master_key = NULL;
-        return INDIGO_ERROR_FILE_NOT_FOUND;
-    }
-
-    if (psw_len <= crypto_pwhash_PASSWD_MIN || psw_len >= crypto_pwhash_PASSWD_MAX) {
-        goto cleanup;
-    }
-
-    out_key = sodium_malloc(crypto_secretbox_KEYBYTES);
-    if (!out_key) {
-        goto cleanup;
-    }
-    //printf("DEBUG: %p %lld %p %u %lld\n",psw, psw_len, salt, time_cost, mem_cost);
-    fflush(stdin);
-    ret = crypto_pwhash(out_key,
-        crypto_secretbox_KEYBYTES,
-        psw,
-        psw_len,
-        salt,
-        time_cost,
-        1<<mem_cost,
-        crypto_pwhash_ALG_ARGON2ID13);
-    if (ret == -1) {
-        goto cleanup;
-    }
-
-    //make the master key inaccessible
-    sodium_mprotect_readonly(out_key);
-
-    *master_key = out_key;
-
-    free(salt);
-    //printf("DEBUG:master key derived\n");
-    return 0;
-
-    cleanup:
-    sodium_free(out_key);
-    free(salt);
+  ret = load_key_derivation_settings(&psw_settings);
+  if (ret != 0) {
     *master_key = NULL;
-    return -1;
+    return INDIGO_ERROR_INCOMPATIBLE_FILE; // possible file changed to
+                                           // incompatible values
+  }
+
+  mem_cost = psw_settings.mem_cost;
+  time_cost = psw_settings.time_cost;
+
+  ret = load_psw_salt(&salt);
+  if (ret == -3) {
+    *master_key = NULL;
+    return INDIGO_ERROR_INCOMPATIBLE_FILE; // possible file changed to
+                                           // incompatible values
+  }
+  if (ret == INDIGO_ERROR_FILE_NOT_FOUND) {
+    *master_key = NULL;
+    return INDIGO_ERROR_FILE_NOT_FOUND;
+  }
+
+  if (psw_len <= crypto_pwhash_PASSWD_MIN ||
+      psw_len >= crypto_pwhash_PASSWD_MAX) {
+    goto cleanup;
+  }
+
+  out_key = sodium_malloc(crypto_secretbox_KEYBYTES);
+  if (!out_key) {
+    goto cleanup;
+  }
+  // printf("DEBUG: %p %lld %p %u %lld\n",psw, psw_len, salt, time_cost,
+  // mem_cost);
+  fflush(stdin);
+  ret = crypto_pwhash(out_key, crypto_secretbox_KEYBYTES, psw, psw_len, salt,
+                      time_cost, 1 << mem_cost, crypto_pwhash_ALG_ARGON2ID13);
+  if (ret == -1) {
+    goto cleanup;
+  }
+
+  // make the master key inaccessible
+  sodium_mprotect_readonly(out_key);
+
+  *master_key = out_key;
+
+  free(salt);
+  // printf("DEBUG:master key derived\n");
+  return 0;
+
+cleanup:
+  sodium_free(out_key);
+  free(salt);
+  *master_key = NULL;
+  return -1;
 }
 
 int create_psw_salt(const char overwrite) {
-    void *salt;
-    char *file_name;
-    FILE *fp_salt;
+  void *salt;
+  char *file_name;
+  FILE *fp_salt;
 
-    file_name = malloc(strlen(INDIGO_PSW_DIR) + strlen("salt.dat") + 1);
-    if (file_name == NULL) {return 1;}
-    strcpy(file_name, INDIGO_PSW_DIR);
-    strcat(file_name, "salt.dat");
+  file_name = malloc(strlen(INDIGO_PSW_DIR) + strlen("salt.dat") + 1);
+  if (file_name == NULL) {
+    return 1;
+  }
+  strcpy(file_name, INDIGO_PSW_DIR);
+  strcat(file_name, "salt.dat");
 
-    if (overwrite == 0 && access(file_name,F_OK) == 0) {
-        free(file_name);
-        return INDIGO_ERROR_FILE_NOT_FOUND;
-    }
-
-    fp_salt = fopen(file_name, "wb");
-    if (fp_salt == NULL) {
-        free(file_name);
-        return 1;
-    }
-
-    salt = malloc(crypto_pwhash_SALTBYTES);
-    if (salt == NULL) {
-        free(file_name);
-        fclose(fp_salt);
-        return 1;
-    }
-
-    randombytes_buf(salt, crypto_pwhash_SALTBYTES);
-
-    fwrite(salt, crypto_pwhash_SALTBYTES, 1, fp_salt);
-
-    fclose(fp_salt);
+  if (overwrite == 0 && access(file_name, F_OK) == 0) {
     free(file_name);
-    free(salt);
-    return 0;
+    return INDIGO_ERROR_FILE_NOT_FOUND;
+  }
+
+  fp_salt = fopen(file_name, "wb");
+  if (fp_salt == NULL) {
+    free(file_name);
+    return 1;
+  }
+
+  salt = malloc(crypto_pwhash_SALTBYTES);
+  if (salt == NULL) {
+    free(file_name);
+    fclose(fp_salt);
+    return 1;
+  }
+
+  randombytes_buf(salt, crypto_pwhash_SALTBYTES);
+
+  fwrite(salt, crypto_pwhash_SALTBYTES, 1, fp_salt);
+
+  fclose(fp_salt);
+  free(file_name);
+  free(salt);
+  return 0;
 }
 
 int load_psw_salt(unsigned char **salt) {
-    char *file_name;
-    FILE *fp_salt;
-    uint32_t salt_len;
+  char *file_name;
+  FILE *fp_salt;
+  uint32_t salt_len;
 
-    if (salt == NULL) return INDIGO_ERROR_INVALID_PARAM;
+  if (salt == NULL)
+    return INDIGO_ERROR_INVALID_PARAM;
 
-    file_name = malloc(strlen(INDIGO_PSW_DIR) + strlen("salt.dat") + 1);
-    if (file_name == NULL) {return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;}
-    strcpy(file_name, INDIGO_PSW_DIR);
-    strcat(file_name, "salt.dat");
+  file_name = malloc(strlen(INDIGO_PSW_DIR) + strlen("salt.dat") + 1);
+  if (file_name == NULL) {
+    return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+  }
+  strcpy(file_name, INDIGO_PSW_DIR);
+  strcat(file_name, "salt.dat");
 
-    if (access(file_name, F_OK) != 0) {
-        free(file_name);
-        *salt = NULL;
-        return INDIGO_ERROR_FILE_NOT_FOUND;
-    }
-
-    fp_salt = fopen(file_name, "rb");
-    if (fp_salt == NULL) {
-        free(file_name);
-        //todo check errno and return the right error
-        *salt = NULL;
-        return INDIGO_ERROR_SYS_FAIL;
-    }
-
-
-    fseek(fp_salt, 0, SEEK_END);
-    salt_len = ftell(fp_salt);
-    fseek(fp_salt, 0, SEEK_SET);
-
-
-    if (salt_len != crypto_pwhash_SALTBYTES) {
-        free(file_name);
-        fclose(fp_salt);
-        return -3;
-    }
-
-
-    *salt = malloc(salt_len);
-    if (*salt == NULL) {
-        free(file_name);
-        fclose(fp_salt);
-        return 1;
-    }
-
-    fread(*salt, salt_len, 1, fp_salt);
-
-    fclose(fp_salt);
+  if (access(file_name, F_OK) != 0) {
     free(file_name);
-    return 0;
+    *salt = NULL;
+    return INDIGO_ERROR_FILE_NOT_FOUND;
+  }
+
+  fp_salt = fopen(file_name, "rb");
+  if (fp_salt == NULL) {
+    free(file_name);
+    // todo check errno and return the right error
+    *salt = NULL;
+    return INDIGO_ERROR_SYS_FAIL;
+  }
+
+  fseek(fp_salt, 0, SEEK_END);
+  salt_len = ftell(fp_salt);
+  fseek(fp_salt, 0, SEEK_SET);
+
+  if (salt_len != crypto_pwhash_SALTBYTES) {
+    free(file_name);
+    fclose(fp_salt);
+    return -3;
+  }
+
+  *salt = malloc(salt_len);
+  if (*salt == NULL) {
+    free(file_name);
+    fclose(fp_salt);
+    return 1;
+  }
+
+  fread(*salt, salt_len, 1, fp_salt);
+
+  fclose(fp_salt);
+  free(file_name);
+  return 0;
 }
 
 int psw_salt_exists() {
-    char file_name [32] = {0};
-    strcpy(file_name, INDIGO_PSW_DIR);
-    strcat(file_name, "salt.dat");
+  char file_name[32] = {0};
+  strcpy(file_name, INDIGO_PSW_DIR);
+  strcat(file_name, "salt.dat");
 
-    if (access(file_name, F_OK) == 0) {
-        return 1;
-    }
-    return 0;
+  if (access(file_name, F_OK) == 0) {
+    return 1;
+  }
+  return 0;
 }
 
 int create_key_derivation_settings() {
-    char filename[48];
-    LARGE_INTEGER freq;
-    LARGE_INTEGER start_time;
-    LARGE_INTEGER end_time;
-    LARGE_INTEGER elapsed_time;
-    double elapsed_usec;
-    double mean_elapsed = 0;
-    int i;
-    int ret;
+#ifdef _WIN32
+  char filename[48];
+  LARGE_INTEGER freq;
+  LARGE_INTEGER start_time;
+  LARGE_INTEGER end_time;
+  LARGE_INTEGER elapsed_time;
+  double elapsed_usec;
+  double mean_elapsed = 0;
+  int i;
+  int ret;
 
-    unsigned char salt[crypto_pwhash_SALTBYTES];
-    unsigned char out_key[crypto_secretbox_KEYBYTES];
-    unsigned char psw[15];
+  unsigned char salt[crypto_pwhash_SALTBYTES];
+  unsigned char out_key[crypto_secretbox_KEYBYTES];
+  unsigned char psw[15];
 
-    uint64_t time_cost = 3;
-    uint64_t mem_cost;
-    uint8_t max_mem_cost;
+  uint64_t time_cost = 3;
+  uint64_t mem_cost;
+  uint8_t max_mem_cost;
 
-    randombytes_buf(salt, crypto_pwhash_SALTBYTES);
-    randombytes_buf(psw, 15);
+  randombytes_buf(salt, crypto_pwhash_SALTBYTES);
+  randombytes_buf(psw, 15);
 
-    MEMORYSTATUSEX ram = {0};
-    size_t total_mem;
+  MEMORYSTATUSEX ram = {0};
+  size_t total_mem;
 
-    FILE *fp;
+  FILE *fp;
 
-    PSW_HASH_SETTINGS settings;
+  PSW_HASH_SETTINGS settings;
 
-    ram.dwLength = sizeof(ram);
-    GlobalMemoryStatusEx(&ram);
-    total_mem = ram.ullTotalPhys;
-    max_mem_cost = floor(log2((double)total_mem/4));
-    if (max_mem_cost > 30) {max_mem_cost = 30;}
-    if (max_mem_cost < 13) {return -max_mem_cost;}
-    mem_cost = max_mem_cost;
+  ram.dwLength = sizeof(ram);
+  GlobalMemoryStatusEx(&ram);
+  total_mem = ram.ullTotalPhys;
+  max_mem_cost = floor(log2((double)total_mem / 4));
+  if (max_mem_cost > 30) {
+    max_mem_cost = 30;
+  }
+  if (max_mem_cost < 13) {
+    return -max_mem_cost;
+  }
+  mem_cost = max_mem_cost;
 
+  for (int j = 0; j < 5; j++) {
+    mean_elapsed = 0;
+    for (i = 0; i < 3; i++) {
+      QueryPerformanceFrequency(&freq);     // sets the tick frequency
+      QueryPerformanceCounter(&start_time); // sets the tick count at the start
 
-    for (int j = 0; j < 5; j++) {
-        mean_elapsed = 0;
-        for (i = 0; i < 3; i++) {
-            QueryPerformanceFrequency(&freq); //sets the tick frequency
-            QueryPerformanceCounter(&start_time); //sets the tick count at the start
+      ret = crypto_pwhash(out_key, crypto_secretbox_KEYBYTES, (char *)psw, 15,
+                          salt, time_cost, ((size_t)1) << mem_cost,
+                          crypto_pwhash_ALG_ARGON2ID13);
 
-            ret = crypto_pwhash(out_key,
-            crypto_secretbox_KEYBYTES,
-            (char *)psw,
-            15,
-            salt,
-            time_cost,
-            ((size_t)1)<<mem_cost,
-            crypto_pwhash_ALG_ARGON2ID13);
+      QueryPerformanceCounter(&end_time); // sets the tick count at the end
+      if (ret == -1) {
+        return -2;
+      }
 
-            QueryPerformanceCounter(&end_time); //sets the tick count at the end
-            if (ret == -1) {return -2;}
-
-            elapsed_time.QuadPart = end_time.QuadPart - start_time.QuadPart;
-            elapsed_usec = (double)elapsed_time.QuadPart * 1000000;
-            elapsed_usec /= (double)freq.QuadPart;
-            mean_elapsed += elapsed_usec;
-        }
-        mean_elapsed /= i*1000000;
-        if (mean_elapsed < INDIGO_PSW_HASH_TIMELIMIT_UPPER && mean_elapsed > INDIGO_PSW_HASH_TIMELIMIT_LOWER) {break;}
-        if (mean_elapsed < INDIGO_PSW_HASH_TIMELIMIT_LOWER) {
-            if (mem_cost < max_mem_cost) {
-                mem_cost++;
-            }
-            else {
-                time_cost++;
-            }
-        }
-        if (mean_elapsed > INDIGO_PSW_HASH_TIMELIMIT_UPPER) {
-            if (mem_cost > 13) {mem_cost--;}
-            else if (time_cost > 1) {time_cost--;}
-            else {break;}
-        }
+      elapsed_time.QuadPart = end_time.QuadPart - start_time.QuadPart;
+      elapsed_usec = (double)elapsed_time.QuadPart * 1000000;
+      elapsed_usec /= (double)freq.QuadPart;
+      mean_elapsed += elapsed_usec;
     }
-    settings.mem_cost = (char)mem_cost;
-    settings.time_cost = (char)time_cost;
+    mean_elapsed /= i * 1000000;
+    if (mean_elapsed < INDIGO_PSW_HASH_TIMELIMIT_UPPER &&
+        mean_elapsed > INDIGO_PSW_HASH_TIMELIMIT_LOWER) {
+      break;
+    }
+    if (mean_elapsed < INDIGO_PSW_HASH_TIMELIMIT_LOWER) {
+      if (mem_cost < max_mem_cost) {
+        mem_cost++;
+      } else {
+        time_cost++;
+      }
+    }
+    if (mean_elapsed > INDIGO_PSW_HASH_TIMELIMIT_UPPER) {
+      if (mem_cost > 13) {
+        mem_cost--;
+      } else if (time_cost > 1) {
+        time_cost--;
+      } else {
+        break;
+      }
+    }
+  }
+#else
+  char filename[48];
+  uint64_t time_cost = 3;
+  uint64_t mem_cost;
+  uint8_t max_mem_cost;
+  PSW_HASH_SETTINGS settings;
+  FILE *fp;
+#endif
+  settings.mem_cost = (char)mem_cost;
+  settings.time_cost = (char)time_cost;
 
-    //printf("debug: memcost-> 1<<%lld, timecost->  %lld, mean_elapsed->%lf \n",mem_cost,time_cost, mean_elapsed);
-    strcpy(filename, INDIGO_PSW_DIR);
-    strcat(filename, INDIGO_PSW_HASH_SETTINGS_FILE);
-    fp = fopen(filename, "wb");
-    if (fp == NULL) {return -5;}
-    fwrite(&settings, sizeof(PSW_HASH_SETTINGS), 1, fp);
+  // printf("debug: memcost-> 1<<%lld, timecost->  %lld, mean_elapsed->%lf
+  // \n",mem_cost,time_cost, mean_elapsed);
+  strcpy(filename, INDIGO_PSW_DIR);
+  strcat(filename, INDIGO_PSW_HASH_SETTINGS_FILE);
+  fp = fopen(filename, "wb");
+  if (fp == NULL) {
+    return -5;
+  }
+  fwrite(&settings, sizeof(PSW_HASH_SETTINGS), 1, fp);
 
-    fclose(fp);
-    return 0;
+  fclose(fp);
+  return 0;
 }
 
 int save_key_derivation_settings(uint8_t mem_cost, uint8_t time_cost) {
-    char filename[48];
-    PSW_HASH_SETTINGS settings;
-    strcpy(filename, INDIGO_PSW_DIR);
-    strcat(filename, INDIGO_PSW_HASH_SETTINGS_FILE);
-    settings.mem_cost = mem_cost;
-    settings.time_cost = time_cost;
-    FILE *fp = fopen(filename, "wb");
-    if (fp == NULL) {return 1;}
-    fwrite(&settings, sizeof(PSW_HASH_SETTINGS), 1, fp);
+  char filename[48];
+  PSW_HASH_SETTINGS settings;
+  strcpy(filename, INDIGO_PSW_DIR);
+  strcat(filename, INDIGO_PSW_HASH_SETTINGS_FILE);
+  settings.mem_cost = mem_cost;
+  settings.time_cost = time_cost;
+  FILE *fp = fopen(filename, "wb");
+  if (fp == NULL) {
+    return 1;
+  }
+  fwrite(&settings, sizeof(PSW_HASH_SETTINGS), 1, fp);
 
-    fclose(fp);
-    return 0;
+  fclose(fp);
+  return 0;
 }
 
 int load_key_derivation_settings(PSW_HASH_SETTINGS *settings) {
-    char filename[48];
-    FILE *fp;
-    size_t len;
+  char filename[48];
+  FILE *fp;
+  size_t len;
 
-    strcpy(filename, INDIGO_PSW_DIR);
-    strcat(filename, INDIGO_PSW_HASH_SETTINGS_FILE);
+  strcpy(filename, INDIGO_PSW_DIR);
+  strcat(filename, INDIGO_PSW_HASH_SETTINGS_FILE);
 
-    fp = fopen(filename, "rb");
-    if (fp == NULL) {return INDIGO_ERROR_FILE_NOT_FOUND;}//todo but check errno to be sure
+  fp = fopen(filename, "rb");
+  if (fp == NULL) {
+    return INDIGO_ERROR_FILE_NOT_FOUND;
+  } // todo but check errno to be sure
 
-    fseek(fp, 0, SEEK_END);
-    len = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-    if (len != sizeof(PSW_HASH_SETTINGS)) {
-        fclose(fp);
-        return INDIGO_ERROR_INCOMPATIBLE_FILE;
-    }
-
-    fread(settings, 1, sizeof(PSW_HASH_SETTINGS), fp);
+  fseek(fp, 0, SEEK_END);
+  len = ftell(fp);
+  fseek(fp, 0, SEEK_SET);
+  if (len != sizeof(PSW_HASH_SETTINGS)) {
     fclose(fp);
-    if (settings->mem_cost < 13) {return INDIGO_ERROR_INCOMPATIBLE_FILE;}
-    if (settings->mem_cost > 30) {return INDIGO_ERROR_INCOMPATIBLE_FILE;}
-    if (settings->time_cost < crypto_pwhash_OPSLIMIT_MIN) {return INDIGO_ERROR_INCOMPATIBLE_FILE;}
-    //if (settings->time_cost > crypto_pwhash_OPSLIMIT_MAX) {return INDIGO_ERROR_INCOMPATIBLE_FILE;}
-    return 0;
+    return INDIGO_ERROR_INCOMPATIBLE_FILE;
+  }
+
+  fread(settings, 1, sizeof(PSW_HASH_SETTINGS), fp);
+  fclose(fp);
+  if (settings->mem_cost < 13) {
+    return INDIGO_ERROR_INCOMPATIBLE_FILE;
+  }
+  if (settings->mem_cost > 30) {
+    return INDIGO_ERROR_INCOMPATIBLE_FILE;
+  }
+  if (settings->time_cost < crypto_pwhash_OPSLIMIT_MIN) {
+    return INDIGO_ERROR_INCOMPATIBLE_FILE;
+  }
+  // if (settings->time_cost > crypto_pwhash_OPSLIMIT_MAX) {return
+  // INDIGO_ERROR_INCOMPATIBLE_FILE;}
+  return 0;
 }
 
 int key_derivation_settings_exist() {
-    char file_name [48] = {0};
-    strcpy(file_name, INDIGO_PSW_DIR);
-    strcat(file_name, INDIGO_PSW_HASH_SETTINGS_FILE);
+  char file_name[48] = {0};
+  strcpy(file_name, INDIGO_PSW_DIR);
+  strcat(file_name, INDIGO_PSW_HASH_SETTINGS_FILE);
 
-    if (access(file_name, F_OK) == 0) return 1;
-    return 0;
+  if (access(file_name, F_OK) == 0)
+    return 1;
+  return 0;
 }
 
-int save_password_hash(const char* password, const uint64_t psw_len) {
-    unsigned char mem_cost;
-    unsigned char time_cost;
-    PSW_HASH_SETTINGS psw_settings;
-    FILE *fp = NULL;
-    char *psw_hash = NULL;
-    char *file_name = NULL;
-    int ret;
+int save_password_hash(const char *password, const uint64_t psw_len) {
+  unsigned char mem_cost;
+  unsigned char time_cost;
+  PSW_HASH_SETTINGS psw_settings;
+  FILE *fp = NULL;
+  char *psw_hash = NULL;
+  char *file_name = NULL;
+  int ret;
 
+  if (password == NULL || psw_len == 0) {
+    return INDIGO_ERROR_INVALID_PARAM;
+  }
 
-    if (password == NULL || psw_len == 0) {return INDIGO_ERROR_INVALID_PARAM;}
+  psw_hash = (char *)malloc(crypto_pwhash_STRBYTES + 1);
+  if (psw_hash == NULL) {
+    return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+  }
 
-    psw_hash = (char *)malloc(crypto_pwhash_STRBYTES +1);
-    if (psw_hash == NULL) {return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;}
-
-    ret = load_key_derivation_settings(&psw_settings);
-    if (ret != INDIGO_SUCCESS) {
-        free(psw_hash);
-        return INDIGO_ERROR_INCOMPATIBLE_FILE;//possible file changed to incompatible values
-    }
-
-    mem_cost = psw_settings.mem_cost;
-    time_cost = psw_settings.time_cost;
-
-
-    if (psw_len <= crypto_pwhash_PASSWD_MIN || psw_len >= crypto_pwhash_PASSWD_MAX) {
-        free(psw_hash);
-        return INDIGO_ERROR_INVALID_PARAM;
-    }
-
-
-    ret = crypto_pwhash_str(psw_hash,
-        password,
-        psw_len,
-        time_cost,
-        1<<mem_cost);
-
-    if (ret == -1) {
-        free(psw_hash);
-        return INDIGO_ERROR_SODIUM_ERROR;
-    }
-
-    file_name = malloc(strlen(INDIGO_PSW_DIR) + strlen(INDIGO_PSW_HASH_FILE_NAME) + 1);
-    if (file_name == NULL) {
-        free(psw_hash);
-        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-    }
-    strcpy(file_name, INDIGO_PSW_DIR);
-    strcat(file_name, INDIGO_PSW_HASH_FILE_NAME);
-
-    fp = fopen(file_name, "w");
-    if (fp == NULL) {
-        free(psw_hash);
-        free(file_name);
-        return INDIGO_ERROR_FILE_NOT_FOUND;//todo check errno
-    }
-
-    fprintf(fp, "%s", psw_hash);
-
-    free(file_name);
-    fclose(fp);
+  ret = load_key_derivation_settings(&psw_settings);
+  if (ret != INDIGO_SUCCESS) {
     free(psw_hash);
-    return INDIGO_SUCCESS;
+    return INDIGO_ERROR_INCOMPATIBLE_FILE; // possible file changed to
+                                           // incompatible values
+  }
+
+  mem_cost = psw_settings.mem_cost;
+  time_cost = psw_settings.time_cost;
+
+  if (psw_len <= crypto_pwhash_PASSWD_MIN ||
+      psw_len >= crypto_pwhash_PASSWD_MAX) {
+    free(psw_hash);
+    return INDIGO_ERROR_INVALID_PARAM;
+  }
+
+  ret =
+      crypto_pwhash_str(psw_hash, password, psw_len, time_cost, 1 << mem_cost);
+
+  if (ret == -1) {
+    free(psw_hash);
+    return INDIGO_ERROR_SODIUM_ERROR;
+  }
+
+  file_name =
+      malloc(strlen(INDIGO_PSW_DIR) + strlen(INDIGO_PSW_HASH_FILE_NAME) + 1);
+  if (file_name == NULL) {
+    free(psw_hash);
+    return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+  }
+  strcpy(file_name, INDIGO_PSW_DIR);
+  strcat(file_name, INDIGO_PSW_HASH_FILE_NAME);
+
+  fp = fopen(file_name, "w");
+  if (fp == NULL) {
+    free(psw_hash);
+    free(file_name);
+    return INDIGO_ERROR_FILE_NOT_FOUND; // todo check errno
+  }
+
+  fprintf(fp, "%s", psw_hash);
+
+  free(file_name);
+  fclose(fp);
+  free(psw_hash);
+  return INDIGO_SUCCESS;
 }
 
-int load_password_hash(char** hash) {
-    char *file_name = NULL;
-    char *psw_hash = NULL;
-    int hash_len = 0;
-    FILE *fp = NULL;
+int load_password_hash(char **hash) {
+  char *file_name = NULL;
+  char *psw_hash = NULL;
+  int hash_len = 0;
+  FILE *fp = NULL;
 
+  file_name =
+      malloc(strlen(INDIGO_PSW_DIR) + strlen(INDIGO_PSW_HASH_FILE_NAME) + 1);
+  if (file_name == NULL) {
+    *hash = NULL;
+    return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+  }
+  strcpy(file_name, INDIGO_PSW_DIR);
+  strcat(file_name, INDIGO_PSW_HASH_FILE_NAME);
 
-    file_name = malloc(strlen(INDIGO_PSW_DIR) + strlen(INDIGO_PSW_HASH_FILE_NAME) + 1);
-    if (file_name == NULL) {
-        *hash = NULL;
-        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-    }
-    strcpy(file_name, INDIGO_PSW_DIR);
-    strcat(file_name, INDIGO_PSW_HASH_FILE_NAME);
+  fp = fopen(file_name, "r");
+  if (fp == NULL) {
+    free(file_name);
+    *hash = NULL;
+    return INDIGO_ERROR_FILE_NOT_FOUND; // todo check errno
+  }
 
-    fp = fopen(file_name, "r");
-    if (fp == NULL) {
-        free(file_name);
-        *hash = NULL;
-        return INDIGO_ERROR_FILE_NOT_FOUND;//todo check errno
-    }
+  fseek(fp, 0, SEEK_END);
+  hash_len = ftell(fp);
+  fseek(fp, 0, SEEK_SET);
 
-    fseek(fp, 0, SEEK_END);
-    hash_len = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-
-
-    if (hash_len >= crypto_pwhash_STRBYTES +1) {
-        printf("psw_hash incompatible lenght");
-        fflush(stdout);
-        free(psw_hash);
-        free(file_name);
-        fclose(fp);
-        *hash = NULL;
-        return INDIGO_ERROR_INCOMPATIBLE_FILE;
-    }
-
-    psw_hash = (char *)malloc(crypto_pwhash_STRBYTES + 1);
-    if (psw_hash == NULL) {
-        free(psw_hash);
-        fclose(fp);
-        free(file_name);
-        *hash = NULL;
-        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-    }
-
-    fread(psw_hash, 1, crypto_pwhash_STRBYTES, fp);
-    *hash = psw_hash;
-
+  if (hash_len >= crypto_pwhash_STRBYTES + 1) {
+    printf("psw_hash incompatible lenght");
+    fflush(stdout);
+    free(psw_hash);
     free(file_name);
     fclose(fp);
-    return INDIGO_SUCCESS;
+    *hash = NULL;
+    return INDIGO_ERROR_INCOMPATIBLE_FILE;
+  }
+
+  psw_hash = (char *)malloc(crypto_pwhash_STRBYTES + 1);
+  if (psw_hash == NULL) {
+    free(psw_hash);
+    fclose(fp);
+    free(file_name);
+    *hash = NULL;
+    return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+  }
+
+  fread(psw_hash, 1, crypto_pwhash_STRBYTES, fp);
+  *hash = psw_hash;
+
+  free(file_name);
+  fclose(fp);
+  return INDIGO_SUCCESS;
 }
 
-//this function returns 0 on success, 1 on invalid signature and -1 on invalid input
-int cmp_password_hash(const char* psw, const uint64_t psw_len) {
-    char *stored_hash = NULL;
-    int ret = 0;
+// this function returns 0 on success, 1 on invalid signature and -1 on invalid
+// input
+int cmp_password_hash(const char *psw, const uint64_t psw_len) {
+  char *stored_hash = NULL;
+  int ret = 0;
 
-    if (psw == NULL || psw_len == 0) {return -1;}
+  if (psw == NULL || psw_len == 0) {
+    return -1;
+  }
 
-    ret = load_password_hash(&stored_hash);
-    if (ret != 0) {
-        return -1;
-    }
+  ret = load_password_hash(&stored_hash);
+  if (ret != 0) {
+    return -1;
+  }
 
-    ret = crypto_pwhash_str_verify(stored_hash, psw, psw_len);
+  ret = crypto_pwhash_str_verify(stored_hash, psw, psw_len);
 
-    if (ret != 0) {
-        free(stored_hash);
-        return 1;
-    }
-
+  if (ret != 0) {
     free(stored_hash);
-    return 0;
+    return 1;
+  }
+
+  free(stored_hash);
+  return 0;
 }
 
 int password_hash_exists() {
-    char file_name [32] = {0};
-    strcpy(file_name, INDIGO_PSW_DIR);
-    strcat(file_name, INDIGO_PSW_HASH_FILE_NAME);
-    //returns 0 on success
-    if (access(file_name, F_OK) == 0) return 1;
-    return 0;
+  char file_name[32] = {0};
+  strcpy(file_name, INDIGO_PSW_DIR);
+  strcat(file_name, INDIGO_PSW_HASH_FILE_NAME);
+  // returns 0 on success
+  if (access(file_name, F_OK) == 0)
+    return 1;
+  return 0;
 }
 
-int create_signing_key_pair(void* master_key) {
-    signing_key_pair_t key_pair;
-    unsigned char *cipher;
-    unsigned char *nonce;
-    char *file_name;
-    FILE *fp;
-    int ret;
+int create_signing_key_pair(void *master_key) {
+  signing_key_pair_t key_pair;
+  unsigned char *cipher;
+  unsigned char *nonce;
+  char *file_name;
+  FILE *fp;
+  int ret;
 
-    if (master_key == NULL) return 575;
+  if (master_key == NULL)
+    return 575;
 
-    cipher = (unsigned char *)malloc(crypto_secretbox_MACBYTES + sizeof(signing_key_pair_t));
-    if (cipher == NULL) return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+  cipher = (unsigned char *)malloc(crypto_secretbox_MACBYTES +
+                                   sizeof(signing_key_pair_t));
+  if (cipher == NULL)
+    return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
 
-    nonce = (unsigned char *)malloc(crypto_secretbox_NONCEBYTES);
-    if (!nonce) {
-        free(cipher);
-        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-    }
-    randombytes_buf(nonce, crypto_secretbox_NONCEBYTES);
+  nonce = (unsigned char *)malloc(crypto_secretbox_NONCEBYTES);
+  if (!nonce) {
+    free(cipher);
+    return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+  }
+  randombytes_buf(nonce, crypto_secretbox_NONCEBYTES);
 
-    if (crypto_sign_keypair(key_pair.public, key_pair.secret) != 0) {
-        free(nonce);
-        free(cipher);
-        return INDIGO_ERROR_SODIUM_ERROR;
-    }
+  if (crypto_sign_keypair(key_pair.public, key_pair.secret) != 0) {
+    free(nonce);
+    free(cipher);
+    return INDIGO_ERROR_SODIUM_ERROR;
+  }
 
-    ret = crypto_secretbox_easy(cipher, (unsigned char *)(&key_pair),sizeof(signing_key_pair_t),nonce,master_key);
+  ret = crypto_secretbox_easy(cipher, (unsigned char *)(&key_pair),
+                              sizeof(signing_key_pair_t), nonce, master_key);
 
-    if (ret != 0) {
-        free(cipher);
-        free(nonce);
-        return INDIGO_ERROR_SODIUM_ERROR;
-    }
+  if (ret != 0) {
+    free(cipher);
+    free(nonce);
+    return INDIGO_ERROR_SODIUM_ERROR;
+  }
 
-    file_name = malloc(strlen(INDIGO_KEY_DIR) + strlen(INDIGO_SIGN_KEY_FILE_NAME) + 1);
-    if (file_name == NULL) {
-        free(cipher);
-        free(nonce);
-        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-    }
-    strcpy(file_name, INDIGO_KEY_DIR);
-    strcat(file_name, INDIGO_SIGN_KEY_FILE_NAME);
+  file_name =
+      malloc(strlen(INDIGO_KEY_DIR) + strlen(INDIGO_SIGN_KEY_FILE_NAME) + 1);
+  if (file_name == NULL) {
+    free(cipher);
+    free(nonce);
+    return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+  }
+  strcpy(file_name, INDIGO_KEY_DIR);
+  strcat(file_name, INDIGO_SIGN_KEY_FILE_NAME);
 
-    fp = fopen(file_name, "wb");
-    if (fp == NULL) {
-        free(file_name);
-        free(cipher);
-        free(nonce);
-        return INDIGO_ERROR_FILE_NOT_FOUND;
-    }
-
-    fwrite(nonce, 1, crypto_secretbox_NONCEBYTES, fp);
-    fwrite(cipher, 1, crypto_secretbox_MACBYTES + sizeof(signing_key_pair_t), fp);
-
-    fclose(fp);
+  fp = fopen(file_name, "wb");
+  if (fp == NULL) {
     free(file_name);
     free(cipher);
     free(nonce);
-    return INDIGO_SUCCESS;
+    return INDIGO_ERROR_FILE_NOT_FOUND;
+  }
+
+  fwrite(nonce, 1, crypto_secretbox_NONCEBYTES, fp);
+  fwrite(cipher, 1, crypto_secretbox_MACBYTES + sizeof(signing_key_pair_t), fp);
+
+  fclose(fp);
+  free(file_name);
+  free(cipher);
+  free(nonce);
+  return INDIGO_SUCCESS;
 }
 
-int load_signing_key_pair(signing_key_pair_t *key_pair,const unsigned char* master_key) {
-    FILE *fp;
-    char *file_name = NULL;
-    uint32_t file_len = 0;
-    unsigned char *cipher = NULL;
-    unsigned char *nonce = NULL;
-    int ret = 0;
+int load_signing_key_pair(signing_key_pair_t *key_pair,
+                          const unsigned char *master_key) {
+  FILE *fp;
+  char *file_name = NULL;
+  uint32_t file_len = 0;
+  unsigned char *cipher = NULL;
+  unsigned char *nonce = NULL;
+  int ret = 0;
 
-    file_name = malloc(strlen(INDIGO_KEY_DIR) + strlen(INDIGO_SIGN_KEY_FILE_NAME) + 1);
-    if (file_name == NULL) {return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;}
-    strcpy(file_name, INDIGO_PSW_DIR);
-    strcat(file_name, INDIGO_SIGN_KEY_FILE_NAME);
+  file_name =
+      malloc(strlen(INDIGO_KEY_DIR) + strlen(INDIGO_SIGN_KEY_FILE_NAME) + 1);
+  if (file_name == NULL) {
+    return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+  }
+  strcpy(file_name, INDIGO_PSW_DIR);
+  strcat(file_name, INDIGO_SIGN_KEY_FILE_NAME);
 
-    fp = fopen(file_name, "rb");
-    if (fp == NULL) {
-        free(file_name);
-        return INDIGO_ERROR_FILE_NOT_FOUND;
-    }
+  fp = fopen(file_name, "rb");
+  if (fp == NULL) {
     free(file_name);
+    return INDIGO_ERROR_FILE_NOT_FOUND;
+  }
+  free(file_name);
 
-    fseek(fp, 0, SEEK_END);
-    file_len = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
+  fseek(fp, 0, SEEK_END);
+  file_len = ftell(fp);
+  fseek(fp, 0, SEEK_SET);
 
-    if (file_len != crypto_secretbox_KEYBYTES + sizeof(signing_key_pair_t) + crypto_secretbox_NONCEBYTES) {
-        fclose(fp);
-        return INDIGO_ERROR_INCOMPATIBLE_FILE;
-    }
-
-    cipher = (unsigned char *)malloc(crypto_secretbox_KEYBYTES + sizeof(signing_key_pair_t));
-    if (cipher == NULL) {
-        fclose(fp);
-        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-    }
-    nonce = (unsigned char *)malloc(crypto_secretbox_NONCEBYTES);
-    if (nonce == NULL) {
-        fclose(fp);
-        free(cipher);
-        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-    }
-
-    fread(nonce, 1, crypto_secretbox_NONCEBYTES, fp);
-    fread(cipher, 1, crypto_secretbox_KEYBYTES + sizeof(signing_key_pair_t), fp);
-
-    ret =  crypto_secretbox_open_easy((unsigned char *)key_pair,
-        cipher,
-        crypto_secretbox_KEYBYTES + sizeof(signing_key_pair_t) ,
-        nonce,
-        master_key);
-
-    if (ret != 0) {
-        fclose(fp);
-        free(nonce);
-        free(cipher);
-        return INDIGO_ERROR_FALSE_KEY;
-    }
-
-    free(cipher);
-    free(nonce);
+  if (file_len != crypto_secretbox_KEYBYTES + sizeof(signing_key_pair_t) +
+                      crypto_secretbox_NONCEBYTES) {
     fclose(fp);
-    return INDIGO_SUCCESS;
+    return INDIGO_ERROR_INCOMPATIBLE_FILE;
+  }
+
+  cipher = (unsigned char *)malloc(crypto_secretbox_KEYBYTES +
+                                   sizeof(signing_key_pair_t));
+  if (cipher == NULL) {
+    fclose(fp);
+    return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+  }
+  nonce = (unsigned char *)malloc(crypto_secretbox_NONCEBYTES);
+  if (nonce == NULL) {
+    fclose(fp);
+    free(cipher);
+    return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+  }
+
+  fread(nonce, 1, crypto_secretbox_NONCEBYTES, fp);
+  fread(cipher, 1, crypto_secretbox_KEYBYTES + sizeof(signing_key_pair_t), fp);
+
+  ret = crypto_secretbox_open_easy((unsigned char *)key_pair, cipher,
+                                   crypto_secretbox_KEYBYTES +
+                                       sizeof(signing_key_pair_t),
+                                   nonce, master_key);
+
+  if (ret != 0) {
+    fclose(fp);
+    free(nonce);
+    free(cipher);
+    return INDIGO_ERROR_FALSE_KEY;
+  }
+
+  free(cipher);
+  free(nonce);
+  fclose(fp);
+  return INDIGO_SUCCESS;
 }
 
-int sign_buffer(const signing_key_pair_t *key_pair, const unsigned char* buffer, uint64_t buffer_len,
-                                                  unsigned char *signed_buffer, uint64_t *signed_len) {
-    return crypto_sign(signed_buffer, signed_len,buffer, buffer_len, key_pair->secret);
+int sign_buffer(const signing_key_pair_t *key_pair, const unsigned char *buffer,
+                uint64_t buffer_len, unsigned char *signed_buffer,
+                uint64_t *signed_len) {
+  return crypto_sign(signed_buffer, (unsigned long long *)signed_len, buffer,
+                     buffer_len, key_pair->secret);
 }
 
 int signing_key_pair_exists() {
-    char filename[32];
-    strcpy(filename, INDIGO_KEY_DIR);
-    strcat(filename, INDIGO_SIGN_KEY_FILE_NAME);
+  char filename[32];
+  strcpy(filename, INDIGO_KEY_DIR);
+  strcat(filename, INDIGO_SIGN_KEY_FILE_NAME);
 
-    if (access(filename, F_OK)) {
-        return 0;
-    }
-    return 1;
+  if (access(filename, F_OK)) {
+    return 0;
+  }
+  return 1;
 }
 
+int encrypt_packet(
+    packet_t *packet, unsigned char tk[crypto_kx_SESSIONKEYBYTES],
+    const unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES]) {
 
-int encrypt_packet(packet_t *packet
-    , unsigned char tk[crypto_kx_SESSIONKEYBYTES]
-    , const unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES]) {
+  int ret;
+  unsigned char ciphertext[PAC_ENCRYPT_BYTES +
+                           crypto_aead_xchacha20poly1305_ietf_ABYTES] = {0};
 
-    int ret;
-    unsigned char ciphertext[PAC_ENCRYPT_BYTES + crypto_aead_xchacha20poly1305_ietf_ABYTES] = {0};
+  if (!packet || !tk) {
+    return INDIGO_ERROR_INVALID_PARAM;
+  }
 
-    if (!packet || !tk) {
-        return INDIGO_ERROR_INVALID_PARAM;
-    }
+  if (!nonce) {
+    randombytes_buf(packet->nonce,
+                    crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
+  } else {
+    memcpy(packet->nonce, nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
+  }
 
-    if (!nonce) {
-        randombytes_buf(packet->nonce,crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
-    }
-    else{
-        memcpy(packet->nonce, nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
-    }
+  packet->zero = 0;
 
-    packet->zero = 0;
+  ret = crypto_aead_xchacha20poly1305_ietf_encrypt(
+      ciphertext, NULL, (unsigned char *)&(packet->zero), PAC_ENCRYPT_BYTES,
+      (unsigned char *)packet, PAC_ENCRYPT_OFFSET, NULL, packet->nonce, tk);
+  if (ret != 0) {
+    return INDIGO_ERROR_INVALID_PARAM;
+  }
+  sodium_memzero(&(packet->zero), PAC_ENCRYPT_BYTES);
+  memcpy(&(packet->zero), ciphertext,
+         PAC_ENCRYPT_BYTES + crypto_aead_xchacha20poly1305_ietf_ABYTES);
 
-    ret = crypto_aead_xchacha20poly1305_ietf_encrypt(ciphertext
-                                                     ,NULL
-                                                     ,(unsigned char *)&(packet->zero)
-                                                     ,PAC_ENCRYPT_BYTES
-                                                     ,(unsigned char *)packet
-                                                     ,PAC_ENCRYPT_OFFSET
-                                                     ,NULL
-                                                     ,packet->nonce
-                                                     ,tk
-                                                     );
-    if (ret != 0) {
-        return INDIGO_ERROR_INVALID_PARAM;
-    }
-    sodium_memzero(&(packet->zero), PAC_ENCRYPT_BYTES);
-    memcpy(&(packet->zero), ciphertext, PAC_ENCRYPT_BYTES+crypto_aead_xchacha20poly1305_ietf_ABYTES);
+  return INDIGO_SUCCESS;
+}
 
+int decrypt_packet(packet_t *packet,
+                   unsigned char rk[crypto_kx_SESSIONKEYBYTES]) {
+  int ret;
+  unsigned long long decrypted_len;
+  if (!packet || !rk)
+    return INDIGO_ERROR_INVALID_PARAM;
+
+  ret = crypto_aead_xchacha20poly1305_ietf_decrypt(
+      (unsigned char *)&(packet->zero), &decrypted_len, NULL,
+      (unsigned char *)&(packet->zero),
+      PAC_ENCRYPT_BYTES + crypto_aead_xchacha20poly1305_ietf_ABYTES,
+      (unsigned char *)packet, PAC_ENCRYPT_OFFSET, packet->nonce, rk);
+
+  if (ret == 0) {
+    // zero out the parts of the packet that is not data
+    sodium_memzero(((unsigned char *)&(packet->zero)) + decrypted_len,
+                   PAC_ENCRYPT_BYTES +
+                       crypto_aead_xchacha20poly1305_ietf_ABYTES -
+                       decrypted_len);
     return INDIGO_SUCCESS;
+  }
+  if (ret == -1)
+    return INDIGO_ERROR_INVALID_PACKET;
+  return INDIGO_ERROR;
 }
 
-int decrypt_packet(packet_t *packet,unsigned char rk[crypto_kx_SESSIONKEYBYTES]) {
-    int ret;
-    unsigned long long decrypted_len;
-    if (!packet || !rk) return INDIGO_ERROR_INVALID_PARAM;
+int nonce_increment(unsigned char *nonce, size_t nonce_len,
+                    uint64_t increment) {
+  unsigned char *incr_bytes;
 
-    ret = crypto_aead_xchacha20poly1305_ietf_decrypt((unsigned char *)&(packet->zero)
-                                                    ,&decrypted_len
-                                                    ,NULL
-                                                    ,(unsigned char *)&(packet->zero)
-                                                    ,PAC_ENCRYPT_BYTES + crypto_aead_xchacha20poly1305_ietf_ABYTES
-                                                    ,(unsigned char *)packet
-                                                    ,PAC_ENCRYPT_OFFSET
-                                                    ,packet->nonce
-                                                    ,rk
-                                                     );
+  incr_bytes = calloc(1, nonce_len);
+  if (!incr_bytes) {
+    return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+  }
 
-    if (ret == 0) {
-        //zero out the parts of the packet that is not data
-        sodium_memzero(((unsigned char *)&(packet->zero)) + decrypted_len
-            , PAC_ENCRYPT_BYTES + crypto_aead_xchacha20poly1305_ietf_ABYTES - decrypted_len);
-        return INDIGO_SUCCESS;
-    }
-    if (ret == -1) return INDIGO_ERROR_INVALID_PACKET;
-    return INDIGO_ERROR;
-}
+  for (int i = 0; i < 8; i++) {
+    incr_bytes[i] = (increment >> (i << 3)) & 0xFF;
+  }
 
-int nonce_increment(unsigned char *nonce, size_t nonce_len, uint64_t increment) {
-    unsigned char *incr_bytes;
-
-    incr_bytes = calloc(1,nonce_len);
-    if (!incr_bytes) {
-        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-    }
-
-    for (int i = 0; i < 8; i++) {
-        incr_bytes[i] = (increment >> (i<<3)) & 0xFF;
-    }
-
-    sodium_add(nonce, incr_bytes, nonce_len);
-    free(incr_bytes);
-    return INDIGO_SUCCESS;
+  sodium_add(nonce, incr_bytes, nonce_len);
+  free(incr_bytes);
+  return INDIGO_SUCCESS;
 }

@@ -24,6 +24,10 @@ SOFTWARE.
 
 #ifdef _WIN32
 #include <winsock2.h>
+#else
+#include <netinet/ip.h>
+#include <string.h>
+#include <sys/socket.h>
 #endif
 #include <sodium/crypto_aead_xchacha20poly1305.h>
 #include <sodium/crypto_kx.h>
@@ -114,7 +118,11 @@ typedef struct PACKED udp_packet_header {
 // for device discovery system and queue
 typedef struct packet_info_t {
   struct sockaddr_in address;
+#ifdef _WIN32
   SOCKET socket;
+#else
+  int socket;
+#endif
 } packet_info_t;
 
 // the discovery packet format
@@ -171,8 +179,8 @@ typedef struct PACKED transmission_control_data_t {
   uint64_t serial;
   uint64_t first_packet_number; // used only for resend, otherwise should be 0
                                 // and ignored
-  uint64_t last_packet_number; // the end of the range, if we need a range of
-                               // packets to be resent
+  uint64_t last_packet_number;  // the end of the range, if we need a range of
+                                // packets to be resent
 } transmission_control_data_t;
 #define PAC_TRANSMISSION_CONTROL_SIZE                                          \
   (sizeof(udp_packet_header) + sizeof(transmission_control_data_t))
