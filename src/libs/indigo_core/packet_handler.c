@@ -639,7 +639,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                             *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                             goto cleanup;
                         }
-                        data = (file_sending_request_data_t *)packet->data
+                        data = (file_sending_request_data_t *)packet->data;
                         memcpy(fsr->id, packet->id, crypto_sign_PUBLICKEYBYTES);
                         fsr->file_size = data->file_size;
                         memcpy(fsr->file_name, data->file_name, PATH_MAX * sizeof(wchar_t));

@@ -395,13 +395,6 @@ int create_main_loop(tree_t *device_tree, QUEUE *ui_queue) {
   char context = INDIGO_CLI_CONTEXT_NONE;
   int ret = 0;
   int termination_flag = 0;
-#ifdef _WIN32
-  ReadConsoleInputExA = (WIN_CONSOLE_INPUT)GetProcAddress(
-      GetModuleHandle("kernel32.dll"), "ReadConsoleInputExA");
-  if (ReadConsoleInputExA == NULL) {
-    return INDIGO_ERROR_RESOURCE_NOT_FOUND;
-  }
-#endif
 
   // print the notification line (it exists in every context)
   printf("\x1b[2;33m[!]There are currently no notifications\x1b[22;39m\n");
