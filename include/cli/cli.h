@@ -63,16 +63,13 @@ int login(void **master_key);
 int create_main_loop(tree_t *device_tree, QUEUE *ui_queue);
 
 int is_special_key(char key);
-#ifdef _WIN32
-int get_next_key(char *input); //todo change so that it is utf-8 compliant or Unicode compliant
-#endif
 
 int echo();
 int no_echo();
 int enable_line_input();
 int disable_line_input();
 
-int get_next_char(uint32_t *input); //todo to be implemented
+int get_next_char(uint64_t* input);
 int print_devises(tree_t *device_tree, int *lines_printed, unsigned char ***id_array);
 
 int pathfinder(char path[PATH_MAX]);

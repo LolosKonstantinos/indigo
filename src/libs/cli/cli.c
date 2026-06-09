@@ -26,6 +26,7 @@ SOFTWARE.
 #include "indigo_errors.h"
 #include "indigo_types.h"
 #include <glib-2.0/glib.h>
+#include <uchar.h>
 
 #ifdef _WIN32
 #include <WinCon.h>
@@ -40,7 +41,10 @@ SOFTWARE.
 #include <sys/ioctl.h>
 #include <unistd.h>
 #endif
+
 #define FORCE_INLINE inline __attribute__((always_inline))
+typedef uint64_t utf8_char_t;
+
 static const int chc_command_count = 7;
 static const char chc_commands[7][64] = {
     "DEVICES",  "FILES",    "HELP",           "NONE",
@@ -792,163 +796,181 @@ int get_next_key(char *input) {
   return repeat;
 }
 #endif
+
 // returns via pointer the character that was typed, includes control keys
-int get_next_char(uint32_t *input) {
-  int ret;
-  gchar *utf8_char = NULL;
-  gunichar unicode_char;
+int get_next_char(utf8_char_t *input) {
+    int ret;
+    size_t lret;
+    mbstate_t mb_state = {0};
 #ifdef _WIN32
-  INPUT_RECORD rec[2];
-  DWORD rec_num;
-  WCHAR character[2] = {0};
-  char surrogate_num = 1;
-  int character_count = 0;
-  disable_line_input();
+    HANDLE console;
+    INPUT_RECORD rec;
+    DWORD rec_num;
+    DWORD dret;
+    WCHAR character = 0;
+    int character_count = 0;
+    disable_line_input();
 
-  // get the next utf16 chunk
-  ret = ReadConsoleInputW(GetStdHandle(STD_INPUT_HANDLE), rec, 1, &rec_num);
-  if (ret == 0)
-    return -1;
-  if (rec_num == 0)
-    return 0;
+    console = GetStdHandle(STD_INPUT_HANDLE);
 
-  // we want it bo be a key event (basically we want characters) and we choose
-  // to only care when the key is pressed
-  if (rec[0].EventType == KEY_EVENT && rec[0].Event.KeyEvent.bKeyDown == TRUE) {
-    // check for control key presses (ctrl, alt, del, shift, etc.)
-    *input = 0;
-    switch (rec[0].Event.KeyEvent.wVirtualKeyCode) {
-    case 0x25:
-      *input = KEY_ARROW_LEFT;
-      break;
-    case 0x26:
-      *input = KEY_ARROW_UP;
-      break;
-    case 0x27:
-      *input = KEY_ARROW_RIGHT;
-      break;
-    case 0x28:
-      *input = KEY_ARROW_DOWN;
-      break;
-    case 0x0D:
-      *input = KEY_ENTER;
-      break;
-    case 0xA0:
-    case 0xA1:
-    case 0x10:
-      *input = KEY_SHIFT;
-      break;
-    case 0x11:
-    case 0xA2:
-    case 0xA3:
-      *input = KEY_CTRL;
-      break;
-    case 0x12:
-    case 0xA4:
-    case 0xA5:
-      *input = KEY_ALT;
-      break;
-    case 0x20:
-      *input = KEY_SPACE;
-      break;
-    case 0x08:
-      *input = KEY_BACKSPACE;
-      break;
-    case 0x09:
-      *input = KEY_TAB;
-    default:
-      break;
-    }
-    // check if we actually got a control event
-    if (*input != 0)
-      return -2;
+    *input = 0; //make sure that we write to a clean buffer
 
-    // copy the utf16 chunk (could be the first part of a 4byte character or
-    // just a character)
-    character[0] = rec->Event.KeyEvent.uChar.UnicodeChar;
-    character_count = rec[0].Event.KeyEvent.wRepeatCount;
-    // we may get 0 if control key that we don't care about is pressed
-    if (character[0] == 0)
-      return 0;
-    // check if we need to receive the 2nd part of the character (this is only
-    // for 4byte characters)
-    if (character[0] >= 0xd800 && character[0] <= 0xdbff) {
-      // get the next part (the next record may just be the previous but with
-      // key up) we loop until we get the next key down key event
-      while (1) {
-        ret = ReadConsoleInputW(GetStdHandle(STD_INPUT_HANDLE), rec + 1, 1,
-                                &rec_num);
-        if (ret == 0)
-          return -1;
-        // check if it is a key event and is key pressed and then copy the
-        // character
-        if (rec[1].EventType == KEY_EVENT &&
-            rec[1].Event.KeyEvent.bKeyDown == TRUE) {
-          // copy the second part of the character
-          character[1] = rec[1].Event.KeyEvent.uChar.UnicodeChar;
-          surrogate_num = 2;
-          // if the second part is not valid per utf16 we leave with an error
-          if (character[1] < 0xdc00 || character[1] > 0xdfff)
-            return -1;
-          break;
+    // get the next utf16 chunk
+    ret = ReadConsoleInputW(console, &rec, 1, &rec_num);
+    if (ret == 0)
+        return -1;
+    if (rec_num == 0)
+        return 0;
+
+    // we want it to be a key event (basically we want characters) and we choose
+    // to only care when the key is pressed
+    if (rec.EventType == KEY_EVENT && rec.Event.KeyEvent.bKeyDown == TRUE) {
+        // check for control key presses (ctrl, alt, del, shift, etc.)
+        *input = 0;
+        switch (rec.Event.KeyEvent.wVirtualKeyCode) {
+        case 0x25:
+            *input = KEY_ARROW_LEFT;
+            break;
+        case 0x26:
+            *input = KEY_ARROW_UP;
+            break;
+        case 0x27:
+            *input = KEY_ARROW_RIGHT;
+            break;
+        case 0x28:
+            *input = KEY_ARROW_DOWN;
+            break;
+        case 0x0D:
+            *input = KEY_ENTER;
+            break;
+        case 0xA0:
+        case 0xA1:
+        case 0x10:
+            *input = KEY_SHIFT;
+            break;
+        case 0x11:
+        case 0xA2:
+        case 0xA3:
+            *input = KEY_CTRL;
+            break;
+        case 0x12:
+        case 0xA4:
+        case 0xA5:
+            *input = KEY_ALT;
+            break;
+        case 0x20:
+            *input = KEY_SPACE;
+            break;
+        case 0x08:
+            *input = KEY_BACKSPACE;
+        break;
+        case 0x09:
+            *input = KEY_TAB;
+            break;
+        default:
+        break;
         }
-      }
-    }
-    // convert the utf16 character to utf8
-    utf8_char = g_utf16_to_utf8(character, surrogate_num, NULL, NULL, NULL);
-    if (utf8_char == NULL) {
-      return -1;
-    }
-    // convert the utf8 character to Unicode
-    unicode_char = g_utf8_get_char_validated(utf8_char, -1);
-    if (unicode_char == (gunichar)-1) {
-      // invalid
-      return -1;
-    }
-    g_free(utf8_char);
-    // return the Unicode character we read
-    *input = unicode_char;
-  } else
-    return 0;
 
-  return character_count;
+        // check if we actually got a control event
+        //returns <-1. the caller knows that it's a control char and how many times it was pressed if needed
+        if (*input != 0) return (-1)-(rec.Event.KeyEvent.wRepeatCount);
+
+        // copy the utf16 chunk (could be the first part of a 4byte character or
+        // just a character)
+        character = rec.Event.KeyEvent.uChar.UnicodeChar;
+        character_count = rec.Event.KeyEvent.wRepeatCount;
+        // we may get 0 if some control key that we don't care about is pressed
+        if (character == 0)
+            return 0;
+
+        // convert the utf16 character to utf8 (
+        lret = c16rtomb((char *)input, character, &mb_state );
+        switch (lret) {
+        case (size_t)-1:
+            return -1;
+        case 0:
+            //we need the next surrogate pair
+            // get the next part (the next record may just be the previous but with
+            // key up) we loop until we get the next key down key event
+            while (1) {
+                //wait until there is a record to read
+                dret = WaitForSingleObject(console, 69);
+                if (dret != WAIT_OBJECT_0) return -1;
+
+                ret = PeekConsoleInputW(console, &rec, 1, &rec_num);
+                if (ret == 0)
+                    return -1;
+                // check if it is a key event and is key pressed and then copy the character
+                if (rec.EventType == KEY_EVENT &&
+                    rec.Event.KeyEvent.bKeyDown == TRUE) {
+                    // copy the second part of the character
+                    character = rec.Event.KeyEvent.uChar.UnicodeChar;
+                    // if the second part is not valid per utf16 we leave with an error
+                    if (character < 0xdc00 || character > 0xdfff) return -1;
+                    //remove the event since we can use it
+                    ReadConsoleInputW(console, &rec, 1, &rec_num);
+                    lret = c16rtomb((char *)input, character, &mb_state );
+                    if (lret == (size_t)-1) return -1;
+
+                    break;
+                }
+
+                //it was an event we don't care about so we remove it
+                ReadConsoleInputW(console, &rec, 1, &rec_num);
+
+            }
+            break;
+        default:
+            if (lret > 4) {
+                *input = 0;
+                return -1;
+            }
+            break;
+        }
+    }
+    else return 0;
+
+    return character_count;
+#else
+//assume linux
+//to be implemented
 #endif
 }
 
 int echo() {
 #ifdef _WIN32
-  DWORD mode;
-  GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode);
-  mode |= (ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
-  SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), mode);
-  return 0;
+    DWORD mode;
+    GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode);
+    mode |= (ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
+    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), mode);
+    return 0;
 #endif
 }
 int no_echo() {
 #ifdef _WIN32
-  DWORD mode;
-  GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode);
-  mode &= ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
-  SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), mode);
-  return 0;
+    DWORD mode;
+    GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode);
+    mode &= ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
+    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), mode);
+    return 0;
 #endif
 }
 int enable_line_input() {
 #ifdef _WIN32
-  DWORD mode;
-  GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode);
-  mode |= ENABLE_LINE_INPUT;
-  SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), mode);
-  return 0;
+    DWORD mode;
+    GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode);
+    mode |= ENABLE_LINE_INPUT;
+    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), mode);
+    return 0;
 #endif
 }
 int disable_line_input() {
 #ifdef _WIN32
-  DWORD mode;
-  GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode);
-  mode &= ~ENABLE_LINE_INPUT;
-  SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), mode);
-  return 0;
+    DWORD mode;
+    GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode);
+    mode &= ~ENABLE_LINE_INPUT;
+    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), mode);
+    return 0;
 #endif
 }
 
