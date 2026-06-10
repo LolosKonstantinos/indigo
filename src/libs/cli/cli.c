@@ -20,15 +20,18 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 #include "cli.h"
-#include <crypto_utils.h>
-#include <stdio.h>
-
 #include "indigo_errors.h"
 #include "indigo_types.h"
+#include <crypto_utils.h>
+#include <ctype.h>
+#include <dirent.h>
 #include <glib-2.0/glib.h>
 #include <glib-2.0/glib/gprintf.h>
+#include <glib-2.0/glib/gstdio.h>
+#include <linux/limits.h>
+#include <stdio.h>
+#include <time.h>
 #include <uchar.h>
-#include <dirent.h>
 
 #ifdef _WIN32
 #include <WinCon.h>
@@ -48,9 +51,7 @@ SOFTWARE.
 typedef uint64_t utf8_char_t;
 
 static const int chc_command_count = 7;
-static const char chc_commands[7][64] = {
-    "DEVICES", "FILES", "HELP", "NONE",
-    "INCOMING", "SETTINGS", "TRUSTED DEVICES"};
+static const char chc_commands[7][64] = {"DEVICES", "FILES", "HELP", "NONE", "INCOMING", "SETTINGS", "TRUSTED DEVICES"};
 struct progress_bar_t {
     int x;
     int y;
@@ -66,16 +67,20 @@ int get_src_size(int *rows, int *cols) {
     if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info) == 0)
         return -1;
 
-    if (rows) *rows = info.dwSize.Y;
-    if (cols) *cols = info.dwSize.X;
+    if (rows)
+        *rows = info.dwSize.Y;
+    if (cols)
+        *cols = info.dwSize.X;
 #else
     struct winsize w;
     ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
 
-    if (rows) *rows = w.ws_row;
-    if (cols) *cols = w.ws_col;
+    if (rows)
+        *rows = w.ws_row;
+    if (cols)
+        *cols = w.ws_col;
 #endif
-  return 0;
+    return 0;
 }
 
 FORCE_INLINE void clear_screen() { printf("\x1B[2J\x1B[H"); }
@@ -86,8 +91,7 @@ FORCE_INLINE void delete_lines(const int count) {
 }
 
 int new_progress_bar(progress_bar_t **progress_bar) {
-    progress_bar_t *new_progress_bar;
-    new_progress_bar = malloc(sizeof(progress_bar_t));
+    progress_bar_t *new_progress_bar = malloc(sizeof(progress_bar_t));
     if (new_progress_bar == NULL) {
         *progress_bar = NULL;
         return -1;
@@ -107,12 +111,14 @@ int delete_progress_bar(progress_bar_t **progress_bar) {
     return 0;
 }
 int update_progress_bar(progress_bar_t *progress_bar, char progress) {
-    if (!progress_bar) return -1;
+    if (!progress_bar)
+        return -1;
     progress_bar->percentage = progress;
     return 0;
 }
 int move_progress_bar(progress_bar_t *progress_bar, int x, int y) {
-    if (!progress_bar) return -1;
+    if (!progress_bar)
+        return -1;
     progress_bar->x = x;
     progress_bar->y = y;
     return 0;
@@ -135,7 +141,7 @@ int refresh_progress_bar(progress_bar_t *progress_bar) {
     printf("\277");
     // move to the progress bar
     move[31] = '\0'; // for safety, I don't think anything could happen
-    printf(move);
+    printf("%s", move);
 
     putchar('[');
 
@@ -152,9 +158,7 @@ int refresh_progress_bar(progress_bar_t *progress_bar) {
 }
 
 // login utils
-void bypass_login(void **master_key) {
-    derive_master_key("test", 4, master_key);
-}
+void bypass_login(void **master_key) { derive_master_key("test", 4, master_key); }
 
 FORCE_INLINE int isspecialchar(const char ch) {
     switch (ch) {
@@ -225,7 +229,7 @@ int create_new_password() {
 #endif
 
     printf("Your password is not set.\nLet's create a new one!\nPlease enter "
-         "your new password bellow:\n");
+           "your new password bellow:\n");
     fflush(stdout);
     lines_printed = 3;
     do {
@@ -260,10 +264,10 @@ int create_new_password() {
             printf("\x1b[33mPasswords did not match!\nPlease try again:\n\x1b[39m");
             lines_printed = 2;
         } else
-        psw_yes = 1;
+            psw_yes = 1;
     } while (!psw_yes);
 
-  // enable echo again
+    // enable echo again
 #ifdef _WIN32
     console_mode |= ENABLE_ECHO_INPUT;
     SetConsoleMode(stdin_handle, console_mode);
@@ -318,10 +322,10 @@ int login(void **master_key) {
 #endif
             delete_lines(4);
         }
-    create_new_password();
+        create_new_password();
     }
 
-  // ask for user password and start the app
+    // ask for user password and start the app
     psw = (char *)malloc(MAX_PSW_LEN + 1);
     if (psw == NULL) {
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
@@ -354,7 +358,7 @@ int login(void **master_key) {
 #endif
         ret = cmp_password_hash(psw, len - 2);
     }
-  // enable echo again
+    // enable echo again
 #ifdef _WIN32
     console_mode |= ENABLE_ECHO_INPUT;
     SetConsoleMode(stdin_handle, console_mode);
@@ -379,416 +383,414 @@ int login(void **master_key) {
         }
     }
 
-  return 0;
+    return 0;
 }
 
 int create_main_loop(tree_t *device_tree, QUEUE *ui_queue) {
-  QNODE *node = NULL;
-  uint64_t in_key;
-  int key_repeat_count = 0;
-  char command[CHAR_MAX + 1];
-  char command_len = 0;
-  int command_num = 0;
-  int lines_printed = 0;
-  unsigned char **id_array = NULL;
-  char context = INDIGO_CLI_CONTEXT_NONE;
-  int ret = 0;
-  int termination_flag = 0;
+    QNODE *node = NULL;
+    uint64_t in_key;
+    int key_repeat_count = 0;
+    char command[CHAR_MAX + 1];
+    char command_len = 0;
+    int command_num = 0;
+    int lines_printed = 0;
+    unsigned char **id_array = NULL;
+    char context = INDIGO_CLI_CONTEXT_NONE;
+    int ret = 0;
+    int termination_flag = 0;
 
-  // print the notification line (it exists in every context)
-  printf("\x1b[2;33m[!]There are currently no notifications\x1b[22;39m\n");
-  // print the prompt prefix (or whatever this thing is called)
-  printf("Indigo>");
-  lines_printed = 1;
+    // print the notification line (it exists in every context)
+    printf("\x1b[2;33m[!]There are currently no notifications\x1b[22;39m\n");
+    // print the prompt prefix (or whatever this thing is called)
+    printf("Indigo>");
+    lines_printed = 1;
 
-  // the main loop
-  while (!termination_flag) {
-    // get queue events
-    node = queue_pop(ui_queue, QOPT_NON_BLOCK);
-    if (node) {
-      switch (node->type) {
-      case QET_TERMINATION:
-        termination_flag = 1;
-        break;
-      default:
-        break;
-      }
-      destroy_qnode(node);
-      node = NULL;
-    }
+    // the main loop
+    while (!termination_flag) {
+        // get queue events
+        node = queue_pop(ui_queue, QOPT_NON_BLOCK);
+        if (node) {
+            switch (node->type) {
+                case QET_TERMINATION:
+                    termination_flag = 1;
+                    break;
+                default:
+                    break;
+            }
+            destroy_qnode(node);
+            node = NULL;
+        }
 
-    // refresh ui
-    switch (command_num) {
-    case 0: // devises
-      delete_lines(lines_printed - 1);
-      lines_printed = 1;
-      context = INDIGO_CLI_CONTEXT_DEV_LIST;
-      print_devises(device_tree, &lines_printed, &id_array);
-      printf("\nIndigo>");
-      ++lines_printed;
-      break;
-    case 1: // files
-      context = INDIGO_CLI_CONTEXT_ACTIVE_FILES;
-      break;
-    case 2: // help
-      context = INDIGO_CLI_CONTEXT_HELP;
-      break;
-    case 3: // none
-      context = INDIGO_CLI_CONTEXT_NONE;
-      break;
-    case 4: // incoming requests
-      context = INDIGO_CLI_CONTEXT_INCOMING_FILES;
-      break;
-    case 5: // settings
-      context = INDIGO_CLI_CONTEXT_SETTINGS;
-      break;
-    case 6: /// trusted devises
-      context = INDIGO_CLI_CONTEXT_TRUSTED_DEVICES;
-      break;
-    default:
-      break;
-    }
+        // refresh ui
+        switch (command_num) {
+            case 0: // devises
+                delete_lines(lines_printed - 1);
+                lines_printed = 1;
+                context = INDIGO_CLI_CONTEXT_DEV_LIST;
+                print_devises(device_tree, &lines_printed, &id_array);
+                printf("\nIndigo>");
+                ++lines_printed;
+                break;
+            case 1: // files
+                context = INDIGO_CLI_CONTEXT_ACTIVE_FILES;
+                break;
+            case 2: // help
+                context = INDIGO_CLI_CONTEXT_HELP;
+                break;
+            case 3: // none
+                context = INDIGO_CLI_CONTEXT_NONE;
+                break;
+            case 4: // incoming requests
+                context = INDIGO_CLI_CONTEXT_INCOMING_FILES;
+                break;
+            case 5: // settings
+                context = INDIGO_CLI_CONTEXT_SETTINGS;
+                break;
+            case 6: /// trusted devises
+                context = INDIGO_CLI_CONTEXT_TRUSTED_DEVICES;
+                break;
+            default:
+                break;
+        }
 
 // get user input
 #ifdef _WIN32
-    ret = get_next_char(&in_key);
-    if (ret == -1) {
-      break; // no idea what error this might be
-    }
-    key_repeat_count = ret;
+        ret = get_next_char(&in_key);
+        if (ret == -1) {
+            break; // no idea what error this might be
+        }
+        key_repeat_count = ret;
 #else
 #endif
-    if (key_repeat_count > 0) {
-      if (in_key == KEY_ENTER) {
-        // execute the command
-        command[CHAR_MAX] = '\0';
+        if (key_repeat_count > 0) {
+            if (in_key == KEY_ENTER) {
+                // execute the command
+                command[CHAR_MAX] = '\0';
 
-        // check if the command exists
-        for (command_num = 0; command_num < chc_command_count; command_num++) {
-          if (strcmp(chc_commands[command_num], command) == 0)
-            break;
-        }
+                // check if the command exists
+                for (command_num = 0; command_num < chc_command_count; command_num++) {
+                    if (strcmp(chc_commands[command_num], command) == 0)
+                        break;
+                }
 
-        if (command_num < chc_command_count) {
-          command_len = 0;
-          command[0] = '\0';
-          // delete all content and print the notification line and the action
-          // content if needed (only if the content doesn't need to be updated)
-          delete_lines(lines_printed);
-          // print the notification line (it exists in every context)
-          printf(
-              "\x1b[2;33m[!]There are currently no notifications\x1b[22;39m\n");
-          // print the prompt prefix (or whatever this thing is called)
-          switch (command_num) {
-          case 0: // devises
-            context = INDIGO_CLI_CONTEXT_DEV_LIST;
-            print_devises(device_tree, &lines_printed, &id_array);
-            break;
-          case 1: // files
-            context = INDIGO_CLI_CONTEXT_ACTIVE_FILES;
-            break;
-          case 2: // help
-            context = INDIGO_CLI_CONTEXT_HELP;
-            break;
-          case 3: // none
-            context = INDIGO_CLI_CONTEXT_NONE;
-            break;
-          case 4: // incoming requests
-            context = INDIGO_CLI_CONTEXT_INCOMING_FILES;
-            break;
-          case 5: // settings
-            context = INDIGO_CLI_CONTEXT_SETTINGS;
-            break;
-          case 6: /// trusted devises
-            context = INDIGO_CLI_CONTEXT_TRUSTED_DEVICES;
-            break;
-          default:
-            break;
-          }
-          printf("Indigo>");
-          lines_printed = 1;
-        } else {
-          // check if it is a subcommand of the current context
+                if (command_num < chc_command_count) {
+                    command_len = 0;
+                    command[0] = '\0';
+                    // delete all content and print the notification line and the action
+                    // content if needed (only if the content doesn't need to be updated)
+                    delete_lines(lines_printed);
+                    // print the notification line (it exists in every context)
+                    printf("\x1b[2;33m[!]There are currently no notifications\x1b[22;39m\n");
+                    // print the prompt prefix (or whatever this thing is called)
+                    switch (command_num) {
+                        case 0: // devises
+                            context = INDIGO_CLI_CONTEXT_DEV_LIST;
+                            print_devises(device_tree, &lines_printed, &id_array);
+                            break;
+                        case 1: // files
+                            context = INDIGO_CLI_CONTEXT_ACTIVE_FILES;
+                            break;
+                        case 2: // help
+                            context = INDIGO_CLI_CONTEXT_HELP;
+                            break;
+                        case 3: // none
+                            context = INDIGO_CLI_CONTEXT_NONE;
+                            break;
+                        case 4: // incoming requests
+                            context = INDIGO_CLI_CONTEXT_INCOMING_FILES;
+                            break;
+                        case 5: // settings
+                            context = INDIGO_CLI_CONTEXT_SETTINGS;
+                            break;
+                        case 6: /// trusted devises
+                            context = INDIGO_CLI_CONTEXT_TRUSTED_DEVICES;
+                            break;
+                        default:
+                            break;
+                    }
+                    printf("Indigo>");
+                    lines_printed = 1;
+                } else {
+                    // check if it is a subcommand of the current context
 
-          // print error messages
-          command_len = 0;
-          command[0] = '\0';
-          printf("\n\x3b[31mThis is not a valid command.\x3b\n[39mIndigo>");
-          lines_printed += 2;
-        }
+                    // print error messages
+                    command_len = 0;
+                    command[0] = '\0';
+                    printf("\n\x1b[31mThis is not a valid command.\x1b\n\x1b[39mIndigo>");
+                    lines_printed += 2;
+                }
 
-      } else if (in_key == KEY_BACKSPACE) {
-        // delete characters form the user input
-        for (int i = 0; i < command_len || i < key_repeat_count; i++) {
-          command[command_len] = '\0';
-          --command_len;
-          // delete the whole user input and print the last 64 characters of the
-          // command
-          printf("\x1b[2KIndigo>"); // delete the line and print Indigo
-          if (command_len <= 64)
-            printf("%s", command);
-          else
-            printf("%s", command + command_len - 63);
+            } else if (in_key == KEY_BACKSPACE) {
+                // delete characters form the user input
+                for (int i = 0; i < command_len || i < key_repeat_count; i++) {
+                    command[command_len] = '\0';
+                    --command_len;
+                    // delete the whole user input and print the last 64 characters of the
+                    // command
+                    printf("\x1b[2KIndigo>"); // delete the line and print Indigo
+                    if (command_len <= 64)
+                        printf("%s", command);
+                    else
+                        printf("%s", command + command_len - 63);
+                }
+            } else if (is_special_key(in_key)) {
+                // do nothing for now
+            } else {
+                // it is a character, we add it to the command
+                for (int i = 0; i < key_repeat_count; i++) {
+                    if (command_len < CHAR_MAX) {
+                        command[command_len] = in_key;
+                        ++command_len;
+                        command[command_len] = '\0';
+                    } else {
+                        memmove(command, command + 1, CHAR_MAX - 1);
+                        command[CHAR_MAX - 1] = in_key;
+                        command[CHAR_MAX] = '\0';
+                    }
+                }
+            }
         }
-      } else if (is_special_key(in_key)) {
-        // do nothing for now
-      } else {
-        // it is a character, we add it to the command
-        for (int i = 0; i < key_repeat_count; i++) {
-          if (command_len < CHAR_MAX) {
-            command[command_len] = in_key;
-            ++command_len;
-            command[command_len] = '\0';
-          } else {
-            memmove(command, command + 1, CHAR_MAX - 1);
-            command[CHAR_MAX - 1] = in_key;
-            command[CHAR_MAX] = '\0';
-          }
-        }
-      }
     }
-  }
 }
 int is_special_key(char key) {
-  switch (key) {
-  case KEY_ARROW_UP:
-  case KEY_ARROW_DOWN:
-  case KEY_ARROW_LEFT:
-  case KEY_ARROW_RIGHT:
-  case KEY_ENTER:
-  case KEY_SPACE:
-  case KEY_BACKSPACE:
-  case KEY_TAB:
-  case KEY_CTRL:
-  case KEY_ALT:
-  case KEY_SHIFT:
-    return 1;
-  default:
-    return 0;
-  }
+    switch (key) {
+        case KEY_ARROW_UP:
+        case KEY_ARROW_DOWN:
+        case KEY_ARROW_LEFT:
+        case KEY_ARROW_RIGHT:
+        case KEY_ENTER:
+        case KEY_SPACE:
+        case KEY_BACKSPACE:
+        case KEY_TAB:
+        case KEY_CTRL:
+        case KEY_ALT:
+        case KEY_SHIFT:
+            return 1;
+        default:
+            return 0;
+    }
 }
 #ifdef _WIN32
 // returns via pointer the key that was pressed
 int get_next_key(char *input) {
-  int ret;
-  INPUT_RECORD buf;
-  int events_read;
-  int repeat = 0;
+    int ret;
+    INPUT_RECORD buf;
+    int events_read;
+    int repeat = 0;
 
-  ret = ReadConsoleInputW(GetStdHandle(STD_INPUT_HANDLE), &buf, 1,
-                          (void *)&events_read);
-  if (ret == 0) {
-    return -1;
-  }
-  if (events_read == 0) {
-    return 0;
-  }
-  if (buf.EventType == KEY_EVENT && buf.Event.KeyEvent.bKeyDown) {
-    repeat = buf.Event.KeyEvent.wRepeatCount;
-    switch (buf.Event.KeyEvent.wVirtualKeyCode) {
-    // numbers 0-9
-    case 0x30:
-      *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
-      if (echo) {
-        if (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) {
-          for (int i = 0; i < repeat; i++)
-            putchar(')');
-        } else {
-          for (int i = 0; i < repeat; i++)
-            putchar('0');
-        }
-      }
-      break;
-    case 0x31:
-      *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
-      if (echo) {
-        if (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) {
-          for (int i = 0; i < repeat; i++)
-            putchar('!');
-        } else {
-          for (int i = 0; i < repeat; i++)
-            putchar('1');
-        }
-      }
-      break;
-    case 0x32:
-      *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
-      if (echo) {
-        if (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) {
-          for (int i = 0; i < repeat; i++)
-            putchar('@');
-        } else {
-          for (int i = 0; i < repeat; i++)
-            putchar('2');
-        }
-      }
-      break;
-    case 0x33:
-      *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
-      if (echo) {
-        if (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) {
-          for (int i = 0; i < repeat; i++)
-            putchar('#');
-        } else {
-          for (int i = 0; i < repeat; i++)
-            putchar('3');
-        }
-      }
-      break;
-    case 0x34:
-      *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
-      if (echo) {
-        if (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) {
-          for (int i = 0; i < repeat; i++)
-            putchar('$');
-        } else {
-          for (int i = 0; i < repeat; i++)
-            putchar('4');
-        }
-      }
-      break;
-    case 0x35:
-      *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
-      if (echo) {
-        if (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) {
-          for (int i = 0; i < repeat; i++)
-            putchar('%');
-        } else {
-          for (int i = 0; i < repeat; i++)
-            putchar('5');
-        }
-      }
-      break;
-    case 0x36:
-      *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
-      if (echo) {
-        if (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) {
-          for (int i = 0; i < repeat; i++)
-            putchar('^');
-        } else {
-          for (int i = 0; i < repeat; i++)
-            putchar('6');
-        }
-      }
-      break;
-    case 0x37:
-      *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
-      if (echo) {
-        if (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) {
-          for (int i = 0; i < repeat; i++)
-            putchar('&');
-        } else {
-          for (int i = 0; i < repeat; i++)
-            putchar('7');
-        }
-      }
-      break;
-    case 0x38:
-      *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
-      if (echo) {
-        if (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) {
-          for (int i = 0; i < repeat; i++)
-            putchar('*');
-        } else {
-          for (int i = 0; i < repeat; i++)
-            putchar('8');
-        }
-      }
-      break;
-    case 0x39:
-      *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
-      if (echo) {
-        if (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) {
-          for (int i = 0; i < repeat; i++)
-            putchar('(');
-        } else {
-          for (int i = 0; i < repeat; i++)
-            putchar('9');
-        }
-      }
-      break;
-    // letters A-Z
-    case 0x41:
-    case 0x42:
-    case 0x43:
-    case 0x44:
-    case 0x45:
-    case 0x46:
-    case 0x47:
-    case 0x48:
-    case 0x49:
-    case 0x4A:
-    case 0x4B:
-    case 0x4C:
-    case 0x4D:
-    case 0x4E:
-    case 0x4F:
-    case 0x50:
-    case 0x51:
-    case 0x52:
-    case 0x53:
-    case 0x54:
-    case 0x55:
-    case 0x56:
-    case 0x57:
-    case 0x58:
-    case 0x59:
-    case 0x5A:
-      *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
-      if (echo) {
-        if (((buf.Event.KeyEvent.dwControlKeyState & CAPSLOCK_ON) >> 3) ^
-            (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED)) {
-          for (int i = 0; i < repeat; i++)
-            putchar(buf.Event.KeyEvent.wVirtualKeyCode);
-        } else {
-          for (int i = 0; i < repeat; i++)
-            putchar(tolower(buf.Event.KeyEvent.wVirtualKeyCode));
-        }
-      }
-      break;
-    case 0x25:
-      *input = KEY_ARROW_LEFT;
-      break;
-    case 0x26:
-      *input = KEY_ARROW_UP;
-      break;
-    case 0x27:
-      *input = KEY_ARROW_RIGHT;
-      break;
-    case 0x28:
-      *input = KEY_ARROW_DOWN;
-      break;
-    case 0x0D:
-      *input = KEY_ENTER;
-      break;
-    case 0xA0:
-    case 0xA1:
-    case 0x10:
-      *input = KEY_SHIFT;
-      break;
-    case 0x11:
-    case 0xA2:
-    case 0xA3:
-      *input = KEY_CTRL;
-      break;
-    case 0x12:
-    case 0xA4:
-    case 0xA5:
-      *input = KEY_ALT;
-      break;
-    case 0x20:
-      *input = KEY_SPACE;
-      break;
-    case 0x08:
-      *input = KEY_BACKSPACE;
-      break;
-    case 0x09:
-      *input = KEY_TAB;
-    default:
-      break;
+    ret = ReadConsoleInputW(GetStdHandle(STD_INPUT_HANDLE), &buf, 1, (void *)&events_read);
+    if (ret == 0) {
+        return -1;
     }
-  }
-  return repeat;
+    if (events_read == 0) {
+        return 0;
+    }
+    if (buf.EventType == KEY_EVENT && buf.Event.KeyEvent.bKeyDown) {
+        repeat = buf.Event.KeyEvent.wRepeatCount;
+        switch (buf.Event.KeyEvent.wVirtualKeyCode) {
+            // numbers 0-9
+            case 0x30:
+                *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+                if (echo) {
+                    if (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) {
+                        for (int i = 0; i < repeat; i++)
+                            putchar(')');
+                    } else {
+                        for (int i = 0; i < repeat; i++)
+                            putchar('0');
+                    }
+                }
+                break;
+            case 0x31:
+                *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+                if (echo) {
+                    if (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) {
+                        for (int i = 0; i < repeat; i++)
+                            putchar('!');
+                    } else {
+                        for (int i = 0; i < repeat; i++)
+                            putchar('1');
+                    }
+                }
+                break;
+            case 0x32:
+                *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+                if (echo) {
+                    if (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) {
+                        for (int i = 0; i < repeat; i++)
+                            putchar('@');
+                    } else {
+                        for (int i = 0; i < repeat; i++)
+                            putchar('2');
+                    }
+                }
+                break;
+            case 0x33:
+                *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+                if (echo) {
+                    if (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) {
+                        for (int i = 0; i < repeat; i++)
+                            putchar('#');
+                    } else {
+                        for (int i = 0; i < repeat; i++)
+                            putchar('3');
+                    }
+                }
+                break;
+            case 0x34:
+                *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+                if (echo) {
+                    if (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) {
+                        for (int i = 0; i < repeat; i++)
+                            putchar('$');
+                    } else {
+                        for (int i = 0; i < repeat; i++)
+                            putchar('4');
+                    }
+                }
+                break;
+            case 0x35:
+                *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+                if (echo) {
+                    if (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) {
+                        for (int i = 0; i < repeat; i++)
+                            putchar('%');
+                    } else {
+                        for (int i = 0; i < repeat; i++)
+                            putchar('5');
+                    }
+                }
+                break;
+            case 0x36:
+                *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+                if (echo) {
+                    if (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) {
+                        for (int i = 0; i < repeat; i++)
+                            putchar('^');
+                    } else {
+                        for (int i = 0; i < repeat; i++)
+                            putchar('6');
+                    }
+                }
+                break;
+            case 0x37:
+                *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+                if (echo) {
+                    if (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) {
+                        for (int i = 0; i < repeat; i++)
+                            putchar('&');
+                    } else {
+                        for (int i = 0; i < repeat; i++)
+                            putchar('7');
+                    }
+                }
+                break;
+            case 0x38:
+                *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+                if (echo) {
+                    if (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) {
+                        for (int i = 0; i < repeat; i++)
+                            putchar('*');
+                    } else {
+                        for (int i = 0; i < repeat; i++)
+                            putchar('8');
+                    }
+                }
+                break;
+            case 0x39:
+                *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+                if (echo) {
+                    if (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED) {
+                        for (int i = 0; i < repeat; i++)
+                            putchar('(');
+                    } else {
+                        for (int i = 0; i < repeat; i++)
+                            putchar('9');
+                    }
+                }
+                break;
+            // letters A-Z
+            case 0x41:
+            case 0x42:
+            case 0x43:
+            case 0x44:
+            case 0x45:
+            case 0x46:
+            case 0x47:
+            case 0x48:
+            case 0x49:
+            case 0x4A:
+            case 0x4B:
+            case 0x4C:
+            case 0x4D:
+            case 0x4E:
+            case 0x4F:
+            case 0x50:
+            case 0x51:
+            case 0x52:
+            case 0x53:
+            case 0x54:
+            case 0x55:
+            case 0x56:
+            case 0x57:
+            case 0x58:
+            case 0x59:
+            case 0x5A:
+                *input = (char)buf.Event.KeyEvent.wVirtualKeyCode;
+                if (echo) {
+                    if (((buf.Event.KeyEvent.dwControlKeyState & CAPSLOCK_ON) >> 3) ^
+                        (buf.Event.KeyEvent.dwControlKeyState & SHIFT_PRESSED)) {
+                        for (int i = 0; i < repeat; i++)
+                            putchar(buf.Event.KeyEvent.wVirtualKeyCode);
+                    } else {
+                        for (int i = 0; i < repeat; i++)
+                            putchar(tolower(buf.Event.KeyEvent.wVirtualKeyCode));
+                    }
+                }
+                break;
+            case 0x25:
+                *input = KEY_ARROW_LEFT;
+                break;
+            case 0x26:
+                *input = KEY_ARROW_UP;
+                break;
+            case 0x27:
+                *input = KEY_ARROW_RIGHT;
+                break;
+            case 0x28:
+                *input = KEY_ARROW_DOWN;
+                break;
+            case 0x0D:
+                *input = KEY_ENTER;
+                break;
+            case 0xA0:
+            case 0xA1:
+            case 0x10:
+                *input = KEY_SHIFT;
+                break;
+            case 0x11:
+            case 0xA2:
+            case 0xA3:
+                *input = KEY_CTRL;
+                break;
+            case 0x12:
+            case 0xA4:
+            case 0xA5:
+                *input = KEY_ALT;
+                break;
+            case 0x20:
+                *input = KEY_SPACE;
+                break;
+            case 0x08:
+                *input = KEY_BACKSPACE;
+                break;
+            case 0x09:
+                *input = KEY_TAB;
+            default:
+                break;
+        }
+    }
+    return repeat;
 }
 #endif
 
@@ -808,7 +810,7 @@ int get_next_char(utf8_char_t *input) {
 
     console = GetStdHandle(STD_INPUT_HANDLE);
 
-    *input = 0; //make sure that we write to a clean buffer
+    *input = 0; // make sure that we write to a clean buffer
 
     // get the next utf16 chunk
     ret = ReadConsoleInputW(console, &rec, 1, &rec_num);
@@ -823,52 +825,54 @@ int get_next_char(utf8_char_t *input) {
         // check for control key presses (ctrl, alt, del, shift, etc.)
         *input = 0;
         switch (rec.Event.KeyEvent.wVirtualKeyCode) {
-        case 0x25:
-            *input = KEY_ARROW_LEFT;
-            break;
-        case 0x26:
-            *input = KEY_ARROW_UP;
-            break;
-        case 0x27:
-            *input = KEY_ARROW_RIGHT;
-            break;
-        case 0x28:
-            *input = KEY_ARROW_DOWN;
-            break;
-        case 0x0D:
-            *input = KEY_ENTER;
-            break;
-        case 0xA0:
-        case 0xA1:
-        case 0x10:
-            *input = KEY_SHIFT;
-            break;
-        case 0x11:
-        case 0xA2:
-        case 0xA3:
-            *input = KEY_CTRL;
-            break;
-        case 0x12:
-        case 0xA4:
-        case 0xA5:
-            *input = KEY_ALT;
-            break;
-        case 0x20:
-            *input = KEY_SPACE;
-            break;
-        case 0x08:
-            *input = KEY_BACKSPACE;
-        break;
-        case 0x09:
-            *input = KEY_TAB;
-            break;
-        default:
-        break;
+            case 0x25:
+                *input = KEY_ARROW_LEFT;
+                break;
+            case 0x26:
+                *input = KEY_ARROW_UP;
+                break;
+            case 0x27:
+                *input = KEY_ARROW_RIGHT;
+                break;
+            case 0x28:
+                *input = KEY_ARROW_DOWN;
+                break;
+            case 0x0D:
+                *input = KEY_ENTER;
+                break;
+            case 0xA0:
+            case 0xA1:
+            case 0x10:
+                *input = KEY_SHIFT;
+                break;
+            case 0x11:
+            case 0xA2:
+            case 0xA3:
+                *input = KEY_CTRL;
+                break;
+            case 0x12:
+            case 0xA4:
+            case 0xA5:
+                *input = KEY_ALT;
+                break;
+            case 0x20:
+                *input = KEY_SPACE;
+                break;
+            case 0x08:
+                *input = KEY_BACKSPACE;
+                break;
+            case 0x09:
+                *input = KEY_TAB;
+                break;
+            default:
+                break;
         }
 
         // check if we actually got a control event
-        //returns <-1. the caller knows that it's a control char and how many times it was pressed if needed
-        if (*input != 0) return (-1)-(rec.Event.KeyEvent.wRepeatCount);
+        // returns <-1. the caller knows that it's a control char and how many times
+        // it was pressed if needed
+        if (*input != 0)
+            return (-1) - (rec.Event.KeyEvent.wRepeatCount);
 
         // copy the utf16 chunk (could be the first part of a 4byte character or
         // just a character)
@@ -879,56 +883,59 @@ int get_next_char(utf8_char_t *input) {
             return 0;
 
         // convert the utf16 character to utf8 (
-        lret = c16rtomb((char *)input, character, &mb_state );
+        lret = c16rtomb((char *)input, character, &mb_state);
         switch (lret) {
-        case (size_t)-1:
-            return -1;
-        case 0:
-            //we need the next surrogate pair
-            // get the next part (the next record may just be the previous but with
-            // key up) we loop until we get the next key down key event
-            while (1) {
-                //wait until there is a record to read
-                dret = WaitForSingleObject(console, 69);
-                if (dret != WAIT_OBJECT_0) return -1;
-
-                ret = PeekConsoleInputW(console, &rec, 1, &rec_num);
-                if (ret == 0)
-                    return -1;
-                // check if it is a key event and is key pressed and then copy the character
-                if (rec.EventType == KEY_EVENT &&
-                    rec.Event.KeyEvent.bKeyDown == TRUE) {
-                    // copy the second part of the character
-                    character = rec.Event.KeyEvent.uChar.UnicodeChar;
-                    // if the second part is not valid per utf16 we leave with an error
-                    if (character < 0xdc00 || character > 0xdfff) return -1;
-                    //remove the event since we can use it
-                    ReadConsoleInputW(console, &rec, 1, &rec_num);
-                    lret = c16rtomb((char *)input, character, &mb_state );
-                    if (lret == (size_t)-1) return -1;
-
-                    break;
-                }
-
-                //it was an event we don't care about so we remove it
-                ReadConsoleInputW(console, &rec, 1, &rec_num);
-
-            }
-            break;
-        default:
-            if (lret > 4) {
-                *input = 0;
+            case (size_t)-1:
                 return -1;
-            }
-            break;
+            case 0:
+                // we need the next surrogate pair
+                //  get the next part (the next record may just be the previous but with
+                //  key up) we loop until we get the next key down key event
+                while (1) {
+                    // wait until there is a record to read
+                    dret = WaitForSingleObject(console, 69);
+                    if (dret != WAIT_OBJECT_0)
+                        return -1;
+
+                    ret = PeekConsoleInputW(console, &rec, 1, &rec_num);
+                    if (ret == 0)
+                        return -1;
+                    // check if it is a key event and is key pressed and then copy the
+                    // character
+                    if (rec.EventType == KEY_EVENT && rec.Event.KeyEvent.bKeyDown == TRUE) {
+                        // copy the second part of the character
+                        character = rec.Event.KeyEvent.uChar.UnicodeChar;
+                        // if the second part is not valid per utf16 we leave with an error
+                        if (character < 0xdc00 || character > 0xdfff)
+                            return -1;
+                        // remove the event since we can use it
+                        ReadConsoleInputW(console, &rec, 1, &rec_num);
+                        lret = c16rtomb((char *)input, character, &mb_state);
+                        if (lret == (size_t)-1)
+                            return -1;
+
+                        break;
+                    }
+
+                    // it was an event we don't care about so we remove it
+                    ReadConsoleInputW(console, &rec, 1, &rec_num);
+                }
+                break;
+            default:
+                if (lret > 4) {
+                    *input = 0;
+                    return -1;
+                }
+                break;
         }
-    }
-    else return 0;
+    } else
+        return 0;
 
     return character_count;
 #else
-//assume linux
-//to be implemented
+    // assume linux
+    // to be implemented
+    return 0;
 #endif
 }
 
@@ -940,6 +947,7 @@ int echo() {
     SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), mode);
     return 0;
 #endif
+    return 0;
 }
 int no_echo() {
 #ifdef _WIN32
@@ -949,6 +957,7 @@ int no_echo() {
     SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), mode);
     return 0;
 #endif
+    return 0;
 }
 int enable_line_input() {
 #ifdef _WIN32
@@ -958,6 +967,7 @@ int enable_line_input() {
     SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), mode);
     return 0;
 #endif
+    return 0;
 }
 int disable_line_input() {
 #ifdef _WIN32
@@ -967,9 +977,10 @@ int disable_line_input() {
     SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), mode);
     return 0;
 #endif
+    return 0;
 }
 
-int print_devises(tree_t *device_tree, int *lines_printed,unsigned char ***id_array) {
+int print_devises(tree_t *device_tree, int *lines_printed, unsigned char ***id_array) {
     // this function does not clear space above the cursor.
     // if this function is used to update the tree page make sure you have cleared
     // the previous screen first.
@@ -985,18 +996,21 @@ int print_devises(tree_t *device_tree, int *lines_printed,unsigned char ***id_ar
     }
     // create a tree iterator
     ret = new_tree_iterator(device_tree, &iterator);
-    if (ret) return ret;
+    if (ret)
+        return ret;
     // iterate through the tree and print devises
     while (tree_has_next(iterator)) {
         // allocate one more id
         tmp = realloc(tmp_id_array, (i + 1) * sizeof(unsigned char *));
-        if (!tmp) goto cleanup;
+        if (!tmp)
+            goto cleanup;
 
         tmp_id_array = tmp;
         tmp_id_array[i] = NULL;
 
         tmp = malloc(crypto_sign_PUBLICKEYBYTES);
-        if (!tmp) goto cleanup;
+        if (!tmp)
+            goto cleanup;
 
         tmp_id_array[i] = tmp;
 
@@ -1005,33 +1019,39 @@ int print_devises(tree_t *device_tree, int *lines_printed,unsigned char ***id_ar
         // add the id to the array
         memcpy(tmp_id_array[i], remote_device->peer_pk, crypto_sign_PUBLICKEYBYTES);
         // print the device info
-        printf("dev_%llu \t: %ls\n", i, remote_device->username);
+        printf("dev_%llu \t: %ls\n", (unsigned long long)i, remote_device->username);
         // update counters
         ++(*lines_printed);
         ++i;
     }
     *id_array = tmp_id_array;
     return 0;
-    cleanup:
-        if (tmp_id_array) {
-            for (uint64_t j = 0; j < i; j++) {
-                free(tmp_id_array[j]);
-            }
-            free(tmp_id_array);
+cleanup:
+    if (tmp_id_array) {
+        for (uint64_t j = 0; j < i; j++) {
+            free(tmp_id_array[j]);
         }
-        *id_array = NULL;
-        return -1;
+        free(tmp_id_array);
+    }
+    *id_array = NULL;
+    return -1;
 }
 
-//select a path
+// select a path
 int pathfinder(char path[PATH_MAX]) {
     int lines_printed = 0;
     utf8_char_t in_char;
     int key_repeat_count = 0;
     uint64_t character_len = 0;
-    char command[sizeof(uint32_t) * PATH_MAX];
-    int command_len = 0;
+    char in_path[sizeof(uint32_t) * PATH_MAX];
+    int in_path_len = 0;
     int ret = 0;
+    GDir *curr_dir = NULL;
+    GError *err = NULL;
+    GStatBuf stat_buf;
+    const char *dir_entry = NULL;
+    char *cpath = NULL;
+    char *cwd = NULL;
 
     while (1) {
         // get user input
@@ -1045,38 +1065,127 @@ int pathfinder(char path[PATH_MAX]) {
         if (key_repeat_count > 0) {
             // it is a character, we add it to the command
             for (int i = 0; i < key_repeat_count; i++) {
-                if (command_len < PATH_MAX) {
-                    strcat(command, (char *)&in_char);
-                    ++command_len;
+                if (in_path_len < PATH_MAX) {
+                    strcat(in_path, (char *)&in_char);
+                    ++in_path_len;
                 }
             }
             printf("\x1b[2KIndigo>"); // delete the line and print Indigo
-            if (command_len <= 64) g_printf("%s", command);
-            else g_printf("%s", command + command_len - 63);
-        }
-        else if (ret < -1) {
+            if (in_path_len <= 64)
+                g_printf("%s", in_path);
+            else
+                g_printf("%s", in_path + in_path_len - 63);
+        } else if (ret < -1) {
             // it is a control key
             if (in_char == KEY_ENTER) {
-                //we support full paths
-                //we support relative paths
-                //enter goes to the path
-                //if the path is "." we select the current path
-                //todo: use tab to autocomplete
-            }
-            else if (in_char == KEY_BACKSPACE) {
+                // we support full paths
+                // we support relative paths
+                // enter goes to the path
+                // if the path is "." we select the current path
+                // todo: use tab to autocomplete
+                cpath = g_canonicalize_filename(in_path, NULL);
+                if (!cpath) {
+                    return -1;
+                }
+
+                // check if the user entered the current path to select it
+                cwd = g_get_current_dir();
+                if (strcmp(cwd, cpath) == 0) {
+                    g_utf8_strncpy(path, cpath, PATH_MAX);
+                    g_free(cwd);
+                    g_free(cpath);
+                    return 0;
+                }
+                g_free(cwd);
+
+                // check if the file exists
+                if (g_file_test(cpath, G_FILE_TEST_EXISTS)) {
+                    // either path is a file, or path is invalid.
+                    //  the path is not valid or cannot be g_access
+                    //  print error and Re-enter
+                    printf("\x1b[2K\x1b[31mEntered path is not valid! Try again!\x1b[39\nIndigo>");
+                    ++lines_printed;
+                    in_path_len = 0;
+                    memset(in_path, 0, sizeof(uint32_t) * PATH_MAX);
+                    g_free(cpath);
+                    cpath = NULL;
+                    continue;
+                }
+
+                if (g_file_test(cpath, G_FILE_TEST_IS_REGULAR)) {
+                    // we just select the file
+                    g_utf8_strncpy(path, cpath, PATH_MAX - 1);
+                    return 0;
+                }
+                if (g_chdir(cpath)) {
+                    // either path is a file, or path is invalid.
+                    //  the path is not valid or cannot be g_access
+                    //  print error and Re-enter
+                    printf("\x1b[2K\x1b[31mEntered path is not valid! Try again!\x1b[39\nIndigo>");
+                    ++lines_printed;
+                    in_path_len = 0;
+                    memset(in_path, 0, sizeof(uint32_t) * PATH_MAX);
+                    g_free(cpath);
+                    cpath = NULL;
+                    continue;
+                }
+
+                g_free(cpath);
+                cpath = NULL;
+
+                curr_dir = g_dir_open(".", 0, &err);
+                if (err) {
+                    // TODO: check error codes, we don't want to print plain errors. error handle bbetter
+                    g_printerr("%s", err->message);
+                    g_clear_error(&err);
+                }
+                // print the current directory
+                delete_lines(lines_printed);
+                lines_printed = 0;
+
+                dir_entry = g_dir_read_name(curr_dir);
+                while (dir_entry) {
+                    cpath = g_canonicalize_filename(dir_entry, NULL);
+                    if (!cpath) {
+                        g_dir_close(curr_dir);
+                        return -1;
+                    }
+                    ret = g_file_test(cpath, G_FILE_TEST_EXISTS);
+                    if (ret == 0)
+                        continue;
+                    ret = g_file_test(cpath, G_FILE_TEST_IS_DIR);
+                    if (ret) {
+                        // if it is a directory print it in blue
+                        g_printf("\x1b[34;1m%s\x1b[39;22m\n", dir_entry);
+                    } else {
+                        // if it is a file or symlink print it in green
+                        g_printf("\x1b[34;1m%s\x1b[39;22m\n", dir_entry);
+                    }
+                    g_free(cpath);
+                    cpath = NULL;
+                    ++lines_printed;
+                }
+                g_dir_close(curr_dir);
+                printf("Indigo>");
+
+            } else if (in_char == KEY_BACKSPACE) {
                 // delete characters form the user input
-                for (int i = 0; i < command_len || i < key_repeat_count; i++) {
-                    //delete the last character
-                    *((char *)(g_utf8_offset_to_pointer(command, -1))) = '\0';
-                    --command_len;
+                for (int i = 0; i < in_path_len || i < key_repeat_count; i++) {
+                    // delete the last character
+                    *((char *)(g_utf8_offset_to_pointer(in_path, -1))) = '\0';
+                    --in_path_len;
                     // delete the whole user input and print the last 64 characters of the
                     // command
                     printf("\x1b[2KIndigo>"); // delete the line and print Indigo
-                    if (command_len <= 64) g_printf("%s", command);
-                    else g_printf("%s", command + command_len - 63);
+                    if (in_path_len <= 64)
+                        g_printf("%s", in_path);
+                    else
+                        g_printf("%s", in_path + in_path_len - 63);
                 }
             }
         }
     }
     return 0;
 }
+
+int list_current_directory() {}

@@ -22,17 +22,17 @@ SOFTWARE.
 
 #ifndef INDIGO_CLI_H
 #define INDIGO_CLI_H
-#include "indigo_types.h"
 #include "Queue.h"
 #include "binary_tree.h"
+#include "indigo_types.h"
 
-#define INDIGO_CLI_CONTEXT_NONE             0x00
-#define INDIGO_CLI_CONTEXT_DEV_LIST         0x01
-#define INDIGO_CLI_CONTEXT_ACTIVE_FILES     0x02
-#define INDIGO_CLI_CONTEXT_SETTINGS         0x03
-#define INDIGO_CLI_CONTEXT_HELP             0x04
-#define INDIGO_CLI_CONTEXT_TRUSTED_DEVICES  0x05
-#define INDIGO_CLI_CONTEXT_INCOMING_FILES   0x06
+#define INDIGO_CLI_CONTEXT_NONE 0x00
+#define INDIGO_CLI_CONTEXT_DEV_LIST 0x01
+#define INDIGO_CLI_CONTEXT_ACTIVE_FILES 0x02
+#define INDIGO_CLI_CONTEXT_SETTINGS 0x03
+#define INDIGO_CLI_CONTEXT_HELP 0x04
+#define INDIGO_CLI_CONTEXT_TRUSTED_DEVICES 0x05
+#define INDIGO_CLI_CONTEXT_INCOMING_FILES 0x06
 
 #ifdef _WIN32
 typedef BOOL (*WIN_CONSOLE_INPUT)(HANDLE, PINPUT_RECORD, DWORD, LPDWORD, USHORT);
@@ -45,7 +45,7 @@ int get_src_size(int *rows, int *cols);
 void clear_screen();
 void delete_lines(int count);
 
-//progress bar utilities
+// progress bar utilities
 
 int new_progress_bar(progress_bar_t **progress_bar);
 int delete_progress_bar(progress_bar_t **progress_bar);
@@ -53,8 +53,8 @@ int update_progress_bar(progress_bar_t *progress_bar, char progress);
 int move_progress_bar(progress_bar_t *progress_bar, int x, int y);
 int refresh_progress_bar(progress_bar_t *progress_bar);
 
-//login utilities
-//this function is only for testing environments with password set to "test" and needs all parameters set
+// login utilities
+// this function is only for testing environments with password set to "test" and needs all parameters set
 void bypass_login(void **master_key);
 int isspecialchar(char ch);
 int password_is_valid(char psw[MAX_PSW_LEN + 1]);
@@ -69,8 +69,9 @@ int no_echo();
 int enable_line_input();
 int disable_line_input();
 
-int get_next_char(uint64_t* input);
+int get_next_char(uint64_t *input);
 int print_devises(tree_t *device_tree, int *lines_printed, unsigned char ***id_array);
 
 int pathfinder(char path[PATH_MAX]);
-#endif //INDIGO_CLI_H
+int list_current_directory();
+#endif // INDIGO_CLI_H

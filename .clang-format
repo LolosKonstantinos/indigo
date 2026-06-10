@@ -1,0 +1,6 @@
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+ColumnLimit: 120
+IndentCaseBlocks: true
+IndentCaseLabels: true
