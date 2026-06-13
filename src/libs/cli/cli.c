@@ -19,19 +19,21 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
-#include "cli.h"
 #include "indigo_errors.h"
 #include "indigo_types.h"
+#include <cli.h>
 #include <crypto_utils.h>
 #include <ctype.h>
 #include <dirent.h>
 #include <glib-2.0/glib.h>
 #include <glib-2.0/glib/gprintf.h>
 #include <glib-2.0/glib/gstdio.h>
+#include <limits.h>
 #include <linux/limits.h>
 #include <stdio.h>
 #include <time.h>
 #include <uchar.h>
+#include <wctype.h>
 
 #ifdef _WIN32
 #include <WinCon.h>
@@ -44,11 +46,12 @@ SOFTWARE.
 #else
 /*assume Linux*/
 #include <sys/ioctl.h>
+#include <termios.h>
 #include <unistd.h>
+#include <wchar.h>
 #endif
 
 #define FORCE_INLINE inline __attribute__((always_inline))
-typedef uint64_t utf8_char_t;
 
 static const int chc_command_count = 7;
 static const char chc_commands[7][64] = {"DEVICES", "FILES", "HELP", "NONE", "INCOMING", "SETTINGS", "TRUSTED DEVICES"};
@@ -390,7 +393,7 @@ int create_main_loop(tree_t *device_tree, QUEUE *ui_queue) {
     QNODE *node = NULL;
     uint64_t in_key;
     int key_repeat_count = 0;
-    char command[CHAR_MAX + 1];
+    char command[sizeof(uint32_t) * (CHAR_MAX + 1)];
     char command_len = 0;
     int command_num = 0;
     int lines_printed = 0;
@@ -453,22 +456,21 @@ int create_main_loop(tree_t *device_tree, QUEUE *ui_queue) {
                 break;
         }
 
-// get user input
-#ifdef _WIN32
+        // get user input
         ret = get_next_char(&in_key);
         if (ret == -1) {
             break; // no idea what error this might be
         }
         key_repeat_count = ret;
-#else
-#endif
+
         if (key_repeat_count > 0) {
             if (in_key == KEY_ENTER) {
                 // execute the command
-                command[CHAR_MAX] = '\0';
+                command[sizeof(uint32_t) * (CHAR_MAX + 1) - 1] = '\0';
 
                 // check if the command exists
                 for (command_num = 0; command_num < chc_command_count; command_num++) {
+                    // TODO: we use utf8, this will now work
                     if (strcmp(chc_commands[command_num], command) == 0)
                         break;
                 }
@@ -482,6 +484,7 @@ int create_main_loop(tree_t *device_tree, QUEUE *ui_queue) {
                     // print the notification line (it exists in every context)
                     printf("\x1b[2;33m[!]There are currently no notifications\x1b[22;39m\n");
                     // print the prompt prefix (or whatever this thing is called)
+                    // TODO: print the content for each context
                     switch (command_num) {
                         case 0: // devises
                             context = INDIGO_CLI_CONTEXT_DEV_LIST;
@@ -523,15 +526,15 @@ int create_main_loop(tree_t *device_tree, QUEUE *ui_queue) {
             } else if (in_key == KEY_BACKSPACE) {
                 // delete characters form the user input
                 for (int i = 0; i < command_len || i < key_repeat_count; i++) {
-                    command[command_len] = '\0';
+                    *((char *)(g_utf8_offset_to_pointer(command, -1))) = '\0';
                     --command_len;
                     // delete the whole user input and print the last 64 characters of the
                     // command
                     printf("\x1b[2KIndigo>"); // delete the line and print Indigo
                     if (command_len <= 64)
-                        printf("%s", command);
+                        g_printf("%s", command);
                     else
-                        printf("%s", command + command_len - 63);
+                        g_printf("%s", g_utf8_offset_to_pointer(command, command_len - 63));
                 }
             } else if (is_special_key(in_key)) {
                 // do nothing for now
@@ -539,18 +542,14 @@ int create_main_loop(tree_t *device_tree, QUEUE *ui_queue) {
                 // it is a character, we add it to the command
                 for (int i = 0; i < key_repeat_count; i++) {
                     if (command_len < CHAR_MAX) {
-                        command[command_len] = in_key;
+                        strcat(command, (char *)&in_key);
                         ++command_len;
-                        command[command_len] = '\0';
-                    } else {
-                        memmove(command, command + 1, CHAR_MAX - 1);
-                        command[CHAR_MAX - 1] = in_key;
-                        command[CHAR_MAX] = '\0';
                     }
                 }
             }
         }
     }
+    return 0;
 }
 int is_special_key(char key) {
     switch (key) {
@@ -864,6 +863,12 @@ int get_next_char(utf8_char_t *input) {
             case 0x09:
                 *input = KEY_TAB;
                 break;
+            case 0x2E:
+                *input = KEY_DELETE;
+                break;
+            case 0x1B:
+                *input = KEY_ESC;
+                break;
             default:
                 break;
         }
@@ -934,8 +939,46 @@ int get_next_char(utf8_char_t *input) {
     return character_count;
 #else
     // assume linux
-    // to be implemented
-    return 0;
+    struct termios termios;
+    struct termios term_initial;
+    wint_t c = 0;
+
+    *input = 0;
+    ret = tcgetattr(STDIN_FILENO, &term_initial);
+    termios = term_initial;
+    cfmakeraw(&termios);
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &termios);
+    setvbuf(stdin, NULL, _IONBF, 0);
+
+    c = fgetwc(stdin);
+    if (c == WEOF) {
+        // this is either an error or no 0 characters
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &term_initial);
+        return 0;
+    }
+    switch (c) {
+        case L'\x1b':
+            *input = KEY_ESC;
+            break;
+        case L'\n':
+        case L'\r':
+            *input = KEY_ENTER;
+            break;
+        case L'\b':
+        case L'\x7f':
+            *input = KEY_BACKSPACE;
+            break;
+        default:
+            break;
+    }
+    if (*input != 0) {
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &term_initial);
+        return -2;
+    }
+
+    wcrtomb((char *)input, c, &mb_state);
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &term_initial);
+    return 1;
 #endif
 }
 
@@ -1038,7 +1081,8 @@ cleanup:
 }
 
 // select a path
-int pathfinder(char path[PATH_MAX]) {
+// TODO: print the cwd path so the user knows where they are
+int pathfinder(char path[PATH_MAX * sizeof(utf8_char_t)]) {
     int lines_printed = 0;
     utf8_char_t in_char;
     int key_repeat_count = 0;
@@ -1052,6 +1096,43 @@ int pathfinder(char path[PATH_MAX]) {
     const char *dir_entry = NULL;
     char *cpath = NULL;
     char *cwd = NULL;
+
+    // print the cwd and print help on top
+    printf(
+        "\n\x1b[2mEnter . to select the cwd, or a filename to select the respective file. Use ESC to quit.\x1b[22m\n");
+    lines_printed = 2;
+    curr_dir = g_dir_open(".", 0, &err);
+    if (err) {
+        // TODO: check error codes, we don't want to print plain errors. error handle bbetter
+        g_printerr("%s", err->message);
+        g_clear_error(&err);
+    }
+    // print the current directory
+
+    dir_entry = g_dir_read_name(curr_dir);
+    while (dir_entry) {
+        cpath = g_canonicalize_filename(dir_entry, NULL);
+        if (!cpath) {
+            g_dir_close(curr_dir);
+            return -1;
+        }
+        ret = g_file_test(cpath, G_FILE_TEST_EXISTS);
+        if (ret == 0)
+            continue;
+        ret = g_file_test(cpath, G_FILE_TEST_IS_DIR);
+        if (ret) {
+            // if it is a directory print it in blue
+            g_printf("\x1b[34;1m%s\x1b[39;22m\n", dir_entry);
+        } else {
+            // if it is a file or symlink print it in green
+            g_printf("\x1b[34;1m%s\x1b[39;22m\n", dir_entry);
+        }
+        g_free(cpath);
+        cpath = NULL;
+        ++lines_printed;
+    }
+    g_dir_close(curr_dir);
+    printf("Indigo>");
 
     while (1) {
         // get user input
@@ -1077,6 +1158,11 @@ int pathfinder(char path[PATH_MAX]) {
                 g_printf("%s", in_path + in_path_len - 63);
         } else if (ret < -1) {
             // it is a control key
+            if (in_char == KEY_ESC) {
+                // free resources and exit with
+                memset(path, 0, PATH_MAX * sizeof(utf8_char_t));
+                return 1;
+            }
             if (in_char == KEY_ENTER) {
                 // we support full paths
                 // we support relative paths
@@ -1141,7 +1227,9 @@ int pathfinder(char path[PATH_MAX]) {
                 }
                 // print the current directory
                 delete_lines(lines_printed);
-                lines_printed = 0;
+                printf("\n\x1b[2mEnter . to select the cwd, or a filename to select the respective file. Use ESC to "
+                       "quit.\x1b[22m\n");
+                lines_printed = 2;
 
                 dir_entry = g_dir_read_name(curr_dir);
                 while (dir_entry) {
@@ -1187,5 +1275,3 @@ int pathfinder(char path[PATH_MAX]) {
     }
     return 0;
 }
-
-int list_current_directory() {}

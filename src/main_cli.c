@@ -20,8 +20,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#include <stdio.h>
 #include <cli.h>
+#include <locale.h>
+#include <stdio.h>
 
 int main(int argc, const char *argv[]) {
     void *key;
@@ -29,10 +30,11 @@ int main(int argc, const char *argv[]) {
         putchar('#');
     }
 
+    setlocale(LC_ALL, "");
     putchar('\n');
-    //print the notification line (it exists in every context)
+    // print the notification line (it exists in every context)
     printf("\x1b[2;33m[!]There are currently no notifications\x1b[22;39m\n");
-    //print the prompt prefix (or whatever this thing is called)
+    // print the prompt prefix (or whatever this thing is called)
     printf("Indigo>");
     getchar();
 }

@@ -38,6 +38,7 @@ SOFTWARE.
 typedef BOOL (*WIN_CONSOLE_INPUT)(HANDLE, PINPUT_RECORD, DWORD, LPDWORD, USHORT);
 #endif
 
+typedef uint64_t utf8_char_t;
 typedef struct progress_bar_t progress_bar_t;
 
 int get_src_size(int *rows, int *cols);
@@ -72,6 +73,5 @@ int disable_line_input();
 int get_next_char(uint64_t *input);
 int print_devises(tree_t *device_tree, int *lines_printed, unsigned char ***id_array);
 
-int pathfinder(char path[PATH_MAX]);
-int list_current_directory();
+int pathfinder(char path[PATH_MAX * sizeof(utf8_char_t)]);
 #endif // INDIGO_CLI_H

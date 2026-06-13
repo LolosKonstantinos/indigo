@@ -51,8 +51,7 @@ SOFTWARE.
 #define INDIGO_SIGN_KEY_FILE_NAME "sign.dat"
 #define INDIGO_PSW_HASH_FILE_NAME "psw-hash.txt"
 #define INDIGO_PSW_HASH_SETTINGS_FILE "psw-hash-settings.dat"
-#define INDIGO_KNOWN_KEYS_FILE_NAME                                            \
-  "known-keys.dat" // todo use database (sqlite3)
+#define INDIGO_KNOWN_KEYS_FILE_NAME "known-keys.dat" // todo use database (sqlite3)
 #define INDIGO_PROGRAM_DATA_DIR "data"
 #define INDIGO_USER_DIR "config/user/"
 #define INDIGO_USERNAME_FILE_NAME "username.txt"
@@ -67,11 +66,8 @@ SOFTWARE.
 #define DISCOVERY_SEND_PERIOD_SEC (10)
 
 #define PAC_DATA_PAYLOAD_BYTES (1 << 10)
-#define PAC_DATA_BYTES_USABLE                                                  \
-  (PAC_DATA_PAYLOAD_BYTES +                                                    \
-   (sizeof(uint64_t) << 1)) // 1KiB payload + 2 64bit ints
-#define PAC_DATA_BYTES                                                         \
-  (PAC_DATA_BYTES_USABLE + crypto_aead_xchacha20poly1305_ietf_ABYTES)
+#define PAC_DATA_BYTES_USABLE (PAC_DATA_PAYLOAD_BYTES + (sizeof(uint64_t) << 1)) // 1KiB payload + 2 64bit ints
+#define PAC_DATA_BYTES (PAC_DATA_BYTES_USABLE + crypto_aead_xchacha20poly1305_ietf_ABYTES)
 #define PAC_MIN_BYTES (sizeof(udp_packet_header_t))
 #define PAC_ENCRYPT_OFFSET (offsetof(packet_t, zero))
 #define PAC_ENCRYPT_BYTES (PAC_DATA_BYTES_USABLE + 4)
@@ -96,142 +92,135 @@ SOFTWARE.
 // handshakes, file chunks, etc. it's a little big but since the buffer is at
 // the end there is no need to send the whole thing
 typedef struct PACKED udp_packet_t {
-  uint32_t magic_number;
-  unsigned char id[crypto_sign_PUBLICKEYBYTES];
-  unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
-  int16_t zero;
-  unsigned char pac_type;
-  unsigned char pac_version;
-  unsigned char data[PAC_DATA_BYTES];
+    uint32_t magic_number;
+    unsigned char id[crypto_sign_PUBLICKEYBYTES];
+    unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
+    int16_t zero;
+    unsigned char pac_type;
+    unsigned char pac_version;
+    unsigned char data[PAC_DATA_BYTES];
 } packet_t;
 _Static_assert(sizeof(packet_t) == 1120, "unexpected padding in packet_t");
 
 typedef struct PACKED udp_packet_header {
-  uint32_t magic_number;
-  unsigned char id[crypto_sign_PUBLICKEYBYTES];
-  unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
-  int16_t zero;
-  unsigned char pac_type;
-  unsigned char pac_version;
+    uint32_t magic_number;
+    unsigned char id[crypto_sign_PUBLICKEYBYTES];
+    unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
+    int16_t zero;
+    unsigned char pac_type;
+    unsigned char pac_version;
 } udp_packet_header_t;
 
 // for device discovery system and queue
 typedef struct packet_info_t {
-  struct sockaddr_in address;
+    struct sockaddr_in address;
 #ifdef _WIN32
-  SOCKET socket;
+    SOCKET socket;
 #else
-  int socket;
+    int socket;
 #endif
 } packet_info_t;
 
 // the discovery packet format
 
 typedef struct PACKED init_packet_data_t {
-  time_t timestamp;
-  wchar_t username[MAX_USERNAME_LEN];
-  unsigned char signature[crypto_sign_BYTES];
+    time_t timestamp;
+    wchar_t username[MAX_USERNAME_LEN];
+    unsigned char signature[crypto_sign_BYTES];
 } init_packet_data_t;
 #define PAC_INIT_SIZE (sizeof(udp_packet_header) + sizeof(init_packet_data_t))
 
 typedef struct PACKED signing_request_data_t {
-  time_t timestamp;
-  unsigned char nonce[INDIGO_NONCE_SIZE];
-  unsigned char signature[crypto_sign_BYTES];
+    time_t timestamp;
+    unsigned char nonce[INDIGO_NONCE_SIZE];
+    unsigned char signature[crypto_sign_BYTES];
 } signing_request_data_t;
-#define PAC_SIGNING_REQUEST_SIZE                                               \
-  (sizeof(udp_packet_header) + sizeof(signing_request_data_t))
+#define PAC_SIGNING_REQUEST_SIZE (sizeof(udp_packet_header) + sizeof(signing_request_data_t))
 
 typedef struct PACKED signing_response_data_t {
-  unsigned char signed_nonce[INDIGO_NONCE_SIZE + crypto_sign_BYTES];
-  unsigned char pkx[crypto_kx_PUBLICKEYBYTES];
-  unsigned char sig_request;
-  unsigned char zero; // odd bytes eww
-  unsigned char nonce[INDIGO_NONCE_SIZE];
-  unsigned char signature[crypto_sign_BYTES];
+    unsigned char signed_nonce[INDIGO_NONCE_SIZE + crypto_sign_BYTES];
+    unsigned char pkx[crypto_kx_PUBLICKEYBYTES];
+    unsigned char sig_request;
+    unsigned char zero; // odd bytes eww
+    unsigned char nonce[INDIGO_NONCE_SIZE];
+    unsigned char signature[crypto_sign_BYTES];
 } signing_response_data_t;
-#define PAC_SIGNING_RESPONSE                                                   \
-  (sizeof(udp_packet_header) + sizeof(signing_response_data_t))
+#define PAC_SIGNING_RESPONSE (sizeof(udp_packet_header) + sizeof(signing_response_data_t))
 
 typedef struct PACKED file_sending_request_data_t {
-  uint64_t serial;
-  size_t file_size;
-  wchar_t file_name[PATH_MAX];
+    uint64_t serial;
+    size_t file_size;
+    wchar_t file_name[PATH_MAX];
 } file_sending_request_data_t;
-#define PAC_FILE_SENDING_REQUEST_SIZE                                          \
-  (sizeof(udp_packet_header) + sizeof(file_sending_request_data_t))
+#define PAC_FILE_SENDING_REQUEST_SIZE (sizeof(udp_packet_header) + sizeof(file_sending_request_data_t))
 
 typedef struct PACKED file_sending_response_data_t {
-  uint64_t serial;
+    uint64_t serial;
 } file_sending_response_data_t;
-#define FILE_SENDING_RESPONSE_SIZE                                             \
-  (sizeof(udp_packet_header) + sizeof(file_sending_response_data_t))
+#define FILE_SENDING_RESPONSE_SIZE (sizeof(udp_packet_header) + sizeof(file_sending_response_data_t))
 
 typedef struct PACKED file_chunk_data_t {
-  uint64_t serial;
-  uint64_t chunk_number;
-  unsigned char data[PAC_DATA_PAYLOAD_BYTES];
+    uint64_t serial;
+    uint64_t chunk_number;
+    unsigned char data[PAC_DATA_PAYLOAD_BYTES];
 } file_chunk_data_t;
-#define PAC_FILE_CHUNK_SIZE                                                    \
-  (sizeof(udp_packet_header) + sizeof(file_chunk_data_t))
+#define PAC_FILE_CHUNK_SIZE (sizeof(udp_packet_header) + sizeof(file_chunk_data_t))
 
 typedef struct PACKED transmission_control_data_t {
-  uint64_t serial;
-  uint64_t first_packet_number; // used only for resend, otherwise should be 0
-                                // and ignored
-  uint64_t last_packet_number;  // the end of the range, if we need a range of
-                                // packets to be resent
+    uint64_t serial;
+    uint64_t first_packet_number; // used only for resend, otherwise should be 0
+                                  // and ignored
+    uint64_t last_packet_number;  // the end of the range, if we need a range of
+                                  // packets to be resent
 } transmission_control_data_t;
-#define PAC_TRANSMISSION_CONTROL_SIZE                                          \
-  (sizeof(udp_packet_header) + sizeof(transmission_control_data_t))
+#define PAC_TRANSMISSION_CONTROL_SIZE (sizeof(udp_packet_header) + sizeof(transmission_control_data_t))
 
 typedef struct remote_device_t {
-  time_t expiration_time; // the time until which we consider the device active,
-                          // updated with any packet
-  uint64_t last_fid;
-  int port;
-  uint32_t ip;
-  unsigned char peer_pk[crypto_sign_PUBLICKEYBYTES];
+    time_t expiration_time; // the time until which we consider the device active,
+                            // updated with any packet
+    uint64_t last_fid;
+    int port;
+    uint32_t ip;
+    unsigned char peer_pk[crypto_sign_PUBLICKEYBYTES];
 
-  unsigned char *client_rk;
-  unsigned char *client_tk;
-  unsigned char *server_rk;
-  unsigned char *server_tk;
+    unsigned char *client_rk;
+    unsigned char *client_tk;
+    unsigned char *server_rk;
+    unsigned char *server_tk;
 
-  wchar_t username[MAX_USERNAME_LEN];
-  uint64_t dev_state_flag;
+    wchar_t username[MAX_USERNAME_LEN];
+    uint64_t dev_state_flag;
 } remote_device_t;
 
 typedef struct session_id_t {
-  uint64_t serial;
-  unsigned char pk[crypto_sign_PUBLICKEYBYTES];
+    uint64_t serial;
+    unsigned char pk[crypto_sign_PUBLICKEYBYTES];
 } session_id_t;
 
 typedef struct session_t {
-  session_id_t session_id;
-  int port;
-  uint32_t ip;
-  time_t start_time;
-  time_t end_time;
-  size_t bytes_moved;
-  uint16_t status_flags;
+    session_id_t session_id;
+    int port;
+    uint32_t ip;
+    time_t start_time;
+    time_t end_time;
+    size_t bytes_moved;
+    uint16_t status_flags;
 } session_t;
 
 typedef struct active_file_t {
-  struct active_file_t *next;
-  FILE *fd;
-  uint64_t counter;
-  session_id_t session_id;
-  unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
-  unsigned char *tk;
-  int port;
-  uint32_t ip;
+    struct active_file_t *next;
+    FILE *fd;
+    uint64_t counter;
+    session_id_t session_id;
+    unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
+    unsigned char *tk;
+    int port;
+    uint32_t ip;
 } active_file_t;
 
 /*inline function definitions*/
 static FORCE_INLINE int cmp_rdev(void *s1, void *s2) {
-  return memcmp(((remote_device_t *)s1)->peer_pk,
-                ((remote_device_t *)s2)->peer_pk, crypto_sign_PUBLICKEYBYTES);
+    return memcmp(((remote_device_t *)s1)->peer_pk, ((remote_device_t *)s2)->peer_pk, crypto_sign_PUBLICKEYBYTES);
 }
 
 // key (project) universal codes
@@ -246,5 +235,7 @@ static FORCE_INLINE int cmp_rdev(void *s1, void *s2) {
 #define KEY_CTRL 0x09
 #define KEY_ALT 0x0A
 #define KEY_SHIFT 0x0B
+#define KEY_ESC 0x0C
+#define KEY_DELETE 0x0D
 
 #endif // INDIGO_TYPES_H
