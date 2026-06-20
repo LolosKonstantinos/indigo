@@ -1,1 +1,0 @@
-/usr/lib64/ccache/cc -fPIC -g -shared -Wl,--dependency-file=CMakeFiles/tui.dir/link.d -Wl,-soname,libtui.so -o libtui.so CMakeFiles/tui.dir/tui.c.o  -Wl,-rpath,/home/constantin/Projects/indigo/out/Debug/src/libs/utilities/crypto ../utilities/crypto/libcrypto_utils.so -llibncursesw

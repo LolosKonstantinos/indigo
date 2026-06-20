@@ -1,1 +1,0 @@
-/usr/lib64/ccache/cc -fPIC -g -shared -Wl,--dependency-file=CMakeFiles/dpht.dir/link.d -Wl,-soname,libdpht.so -o libdpht.so CMakeFiles/dpht.dir/dpht.c.o CMakeFiles/dpht.dir/hash_functions.c.o

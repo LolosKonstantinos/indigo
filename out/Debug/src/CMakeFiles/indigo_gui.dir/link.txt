@@ -1,1 +1,0 @@
-/usr/lib64/ccache/cc -g -Wl,--dependency-file=CMakeFiles/indigo_gui.dir/link.d CMakeFiles/indigo_gui.dir/main_gui.c.o -o ../bin/indigo_gui

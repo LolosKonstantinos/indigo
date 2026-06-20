@@ -1,1 +1,0 @@
-/usr/lib64/ccache/cc -fPIC -g -shared -Wl,--dependency-file=CMakeFiles/crypto_utils.dir/link.d -Wl,-soname,libcrypto_utils.so -o libcrypto_utils.so CMakeFiles/crypto_utils.dir/crypto_utils.c.o  -lKernel32 -lsodium -lws2_32
