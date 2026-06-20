@@ -1,0 +1,1 @@
+/usr/lib64/ccache/cc -fPIC -g -shared -Wl,--dependency-file=CMakeFiles/event_flags.dir/link.d -Wl,-soname,libevent_flags.so -o libevent_flags.so CMakeFiles/event_flags.dir/event_flags.c.o

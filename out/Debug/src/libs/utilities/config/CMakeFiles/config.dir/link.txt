@@ -1,0 +1,1 @@
+/usr/lib64/ccache/cc -fPIC -g -shared -Wl,--dependency-file=CMakeFiles/config.dir/link.d -Wl,-soname,libconfig.so -o libconfig.so CMakeFiles/config.dir/config.c.o

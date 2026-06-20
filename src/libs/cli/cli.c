@@ -54,7 +54,13 @@ SOFTWARE.
 #define FORCE_INLINE inline __attribute__((always_inline))
 
 static const int chc_command_count = 7;
-static const char chc_commands[7][64] = {"DEVICES", "FILES", "HELP", "NONE", "INCOMING", "SETTINGS", "TRUSTED DEVICES"};
+static const char chc_commands[8][64] = {"DEVICES",  "FILES",           "HELP",   "NONE", "INCOMING",
+                                         "SETTINGS", "TRUSTED DEVICES", "REFRESH"};
+static const char devices_commands[1][64] = {"SEND"};
+static const char files_commands[4][64] = {"STOP", "CONTINUE", "RESUME", "CANCEL"};
+static const char incomming_commands[4][64] = {"YES", "ACCEPT", "NO", "DENY"};
+static const char trusted_devices_commands[4][64] = {"TRUST", "IS SUS", "UNTRUST", "UTRUST"};
+
 struct progress_bar_t {
     int x;
     int y;
@@ -467,6 +473,9 @@ int create_main_loop(tree_t *device_tree, QUEUE *ui_queue) {
             if (in_key == KEY_ENTER) {
                 // execute the command
                 command[sizeof(uint32_t) * (CHAR_MAX + 1) - 1] = '\0';
+                // TODO: remove extra spaces
+                // TODO: tokenize and capitalize the first token
+                // the only time we dont want to capitalize everything is when we have a path
 
                 // check if the command exists
                 for (command_num = 0; command_num < chc_command_count; command_num++) {
@@ -515,7 +524,6 @@ int create_main_loop(tree_t *device_tree, QUEUE *ui_queue) {
                     lines_printed = 1;
                 } else {
                     // check if it is a subcommand of the current context
-
                     // print error messages
                     command_len = 0;
                     command[0] = '\0';
@@ -1063,8 +1071,13 @@ int print_devises(tree_t *device_tree, int *lines_printed, unsigned char ***id_a
         memcpy(tmp_id_array[i], remote_device->peer_pk, crypto_sign_PUBLICKEYBYTES);
         // print the device info
         printf("dev_%llu \t: %ls\n", (unsigned long long)i, remote_device->username);
+        // print the hex id of the devise
+        for (int i = 0; i < 32; i++) {
+            printf("%02x", (remote_device->peer_pk)[i]);
+        }
+        putchar('\n');
         // update counters
-        ++(*lines_printed);
+        (*lines_printed) += 2;
         ++i;
     }
     *id_array = tmp_id_array;

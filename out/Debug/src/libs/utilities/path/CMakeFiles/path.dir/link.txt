@@ -1,0 +1,1 @@
+/usr/lib64/ccache/cc -fPIC -g -shared -Wl,--dependency-file=CMakeFiles/path.dir/link.d -Wl,-soname,libpath.so -o libpath.so CMakeFiles/path.dir/path.c.o

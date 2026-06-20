@@ -1,0 +1,1 @@
+/usr/lib64/ccache/c++ -fPIC -g -shared -Wl,--dependency-file=CMakeFiles/gui.dir/link.d -Wl,-soname,libgui.so -o libgui.so CMakeFiles/gui.dir/gui.cpp.o

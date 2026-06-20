@@ -1,7 +1,8 @@
-# Add the library target compiled from the source files in the 'lib' subdirectory.
-add_library(indigo_core SHARED manager.c net_io.c packet_handler.c net_monitor.c)
+add_library(indigo_core SHARED  manager.c
+                                net_io.c
+                                packet_handler.c
+                                net_monitor.c)
 
-# Link the library target with the interface target so that it knows where to find headers.
 target_link_libraries(indigo_core PUBLIC indigo_core_includes)
 target_link_libraries(indigo_core PRIVATE
         indigo_core_includes
@@ -14,4 +15,5 @@ target_link_libraries(indigo_core PRIVATE
         crypto_utils
         lht
         binary_tree
-        config)
+        config
+        PkgConfig::GLIB)

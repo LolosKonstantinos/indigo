@@ -1,0 +1,1 @@
+/usr/lib64/ccache/cc -fPIC -g -shared -Wl,--dependency-file=CMakeFiles/simple_buffer.dir/link.d -Wl,-soname,libsimple_buffer.so -o libsimple_buffer.so CMakeFiles/simple_buffer.dir/buffer.c.o
