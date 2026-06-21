@@ -22,6 +22,9 @@ SOFTWARE.
 #include <indigo_core/net_monitor.h>
 #include <indigo_errors.h>
 #include <stdio.h>
+#ifndef _WIN32
+#define INVALID_SOCKET
+#endif
 ///////////////////////////////////
 //                               //
 //     GET_DISCOVERY_SOCKETS     //
@@ -33,6 +36,7 @@ SOFTWARE.
  *Priority is given to IPs of ethernet adapters over Wi-Fi adapters
  *returns a pointer to the first node else returns NULL
  */
+#ifdef _WIN32
 socket_node *get_discovery_sockets(const int port, const uint32_t multicast_addr) {
     socket_node *new_sock = NULL;
     socket_node *first_sock = NULL;
@@ -314,7 +318,15 @@ socket_node *create_discv_sock_node() {
 
     return node;
 }
-
+#else
+socket_node *get_discovery_sockets(int port, uint32_t multicast_addr) { return NULL; }
+void free_discv_sock_ll(socket_node *firstnode) {
+    if (!firstnode)
+        return;
+}
+int get_compatible_interfaces(ip_subnet_t **ip_subnet, size_t *count) { return 0; }
+socket_node *create_discv_sock_node() { return NULL; }
+#endif
 //____IP AND SUBNET HELPERS____//
 
 uint32_t sub_mask_8to32b(const uint8_t mask_8b) {
@@ -343,6 +355,7 @@ uint8_t ip_in_any_subnet(const ip_subnet_t addr, const ip_subnet_t *p_addrs, con
     return 0;
 }
 
+#ifdef _WIN32
 SOCKET ip_to_socket(const uint32_t ip, const socket_ll *const sockets) {
     ip_subnet_t sub;
     if (sockets == NULL)
@@ -356,6 +369,9 @@ SOCKET ip_to_socket(const uint32_t ip, const socket_ll *const sockets) {
     }
     return INVALID_SOCKET;
 }
+#else
+int ip_to_socket(const uint32_t ip, const socket_ll *const sockets) { return 0; }
+#endif
 
 //////////////////////////////////////////////////////////
 ///                                                    ///
@@ -363,6 +379,7 @@ SOCKET ip_to_socket(const uint32_t ip, const socket_ll *const sockets) {
 ///                                                    ///
 //////////////////////////////////////////////////////////
 
+#ifdef _WIN32
 int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args) {
     HANDLE notification_handle = NULL;
     HANDLE handles[2];
@@ -526,3 +543,6 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args) {
     CancelIPChangeNotify(&overlapped);
     return process_return;
 }
+#else
+int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args) { return NULL; }
+#endif

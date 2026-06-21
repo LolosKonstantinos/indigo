@@ -29,7 +29,6 @@ SOFTWARE.
 #include <glib-2.0/glib/gprintf.h>
 #include <glib-2.0/glib/gstdio.h>
 #include <limits.h>
-#include <linux/limits.h>
 #include <stdio.h>
 #include <time.h>
 #include <uchar.h>

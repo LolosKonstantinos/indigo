@@ -5,9 +5,6 @@ add_library(indigo_core SHARED  manager.c
 
 target_link_libraries(indigo_core PUBLIC indigo_core_includes)
 target_link_libraries(indigo_core PRIVATE
-        indigo_core_includes
-        ws2_32
-        IPHLPAPI
         event_flags
         queue
         sodium
@@ -17,3 +14,10 @@ target_link_libraries(indigo_core PRIVATE
         binary_tree
         config
         PkgConfig::GLIB)
+if(WIN32)
+  target_link_libraries(indigo_core PRIVATE ws2_32 IPHLPAPI)
+elseif(LINUX)
+
+elseif(APPLE)
+
+endif()

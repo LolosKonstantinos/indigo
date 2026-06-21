@@ -39,43 +39,43 @@ SOFTWARE.
  */
 
 typedef struct ip_subnet_t {
-  uint32_t ip;
-  uint32_t mask;
+    uint32_t ip;
+    uint32_t mask;
 #ifdef _WIN32
-  IFTYPE interface_type;
+    IFTYPE interface_type;
 #else
-  int interface_type;
+    int interface_type;
 #endif
 } ip_subnet_t;
 
 // for get_discovery_sockets()
 typedef struct socket_ll_node {
-  struct socket_ll_node *next;
+    struct socket_ll_node *next;
 #ifdef _WIN32
-  SOCKET sock;
+    SOCKET sock;
 #else
-  int sock;
+    int sock;
 #endif
-  ip_subnet_t ip_subnet;
-  uint32_t zero;
+    ip_subnet_t ip_subnet;
+    uint32_t zero;
 } socket_node;
 
 typedef struct socket_ll {
-  socket_node *head;
-  pthread_mutex_t mutex;
-  pthread_cond_t cond;
+    socket_node *head;
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
 } socket_ll;
 
 typedef struct INTERFACE_UPDATE_ARGS {
-  EFLAG *flag;
-  EFLAG *override_flags[3];
-  EFLAG *wake;
+    EFLAG *flag;
+    EFLAG *override_flags[3];
+    EFLAG *wake;
 #ifdef _WIN32
-  HANDLE termination_handle;
+    HANDLE termination_handle;
 #endif
-  socket_ll *sockets;
-  int port;
-  uint32_t multicast_addr;
+    socket_ll *sockets;
+    int port;
+    uint32_t multicast_addr;
 } INTERFACE_UPDATE_ARGS;
 
 ///////////////////////////////////
@@ -103,8 +103,7 @@ socket_node *create_discv_sock_node();
 // ip and subnet helpers
 uint32_t sub_mask_8to32b(uint8_t mask_8b);
 uint8_t ips_share_subnet(ip_subnet_t addr1, ip_subnet_t addr2);
-uint8_t ip_in_any_subnet(ip_subnet_t addr, const ip_subnet_t *p_addrs,
-                         size_t num_addrs);
+uint8_t ip_in_any_subnet(ip_subnet_t addr, const ip_subnet_t *p_addrs, size_t num_addrs);
 
 #ifdef _WIN32
 SOCKET ip_to_socket(uint32_t ip, const socket_ll *sockets);

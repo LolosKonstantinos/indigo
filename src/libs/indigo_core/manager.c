@@ -19,8 +19,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#include <indigo_core/manager.h>
 #include <crypto_utils.h>
+#include <indigo_core/manager.h>
 #include <indigo_errors.h>
 
 //////////////////////////////////////////////////////////
@@ -30,7 +30,7 @@ SOFTWARE.
 //////////////////////////////////////////////////////////
 ///
 int *thread_manager_thread(MANAGER_ARGS *args) {
-    //for the thread creation
+    // for the thread creation
     pthread_t tid_send = pthread_self();
     pthread_t tid_receive = pthread_self();
     pthread_t tid_update = pthread_self();
@@ -46,38 +46,39 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     QUEUE *packet_queue = NULL;
     QUEUE *send_queue = NULL;
 
-    //the pool used for receiving
+    // the pool used for receiving
     mempool_t *mempool = NULL;
     mempool_attr pool_attr;
 
-    //the active session tree
-    tree_t session_tree; //todo: write cmp_session function and create the tree
+    // the active session tree
+    tree_t session_tree; // todo: write cmp_session function and create the tree
 
-    //the thread args
+    // the thread args
     SEND_ARGS *send_args = NULL;
     RECV_ARGS *recv_args = NULL;
     INTERFACE_UPDATE_ARGS *update_args = NULL;
     PACKET_HANDLER_ARGS *handler_args = NULL;
 
-    //for the event handling
+    // for the event handling
     QNODE *qnode_pop = NULL;
 
-    //the discovery sockets list
+    // the discovery sockets list
     socket_ll *sockets = NULL;
 
-    //the key pair
+    // the key pair
     signing_key_pair_t *signing_key_pair = NULL;
     unsigned char signing_pk[crypto_sign_PUBLICKEYBYTES];
-    //flags
+    // flags
     uint32_t flag_val;
 
     void *temp = NULL;
 
     int *process_return = NULL;
-    int ret_val = 0; //general purpose return value variable
+    int ret_val = 0; // general purpose return value variable
 
-/*_________________________________________HERE STARTS THE FUNCTIONS LOGIC____________________________________________*/
-    //allocate memory for the return value
+    /*_________________________________________HERE STARTS THE FUNCTIONS
+     * LOGIC____________________________________________*/
+    // allocate memory for the return value
     process_return = malloc(sizeof(int));
     if (process_return == NULL) {
         set_event_flag(args->flag, EF_TERMINATION);
@@ -86,9 +87,9 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     }
     *process_return = 0;
 
-    //prepare to create the threads
+    // prepare to create the threads
 
-    //create the sockets
+    // create the sockets
     sockets = malloc(sizeof(socket_ll));
     if (sockets == NULL) {
         fprintf(stderr, "malloc() failed in discovery_manager_thread\n");
@@ -106,7 +107,7 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     }
     sockets->head = temp;
 
-    //create the packet queue
+    // create the packet queue
     packet_queue = (QUEUE *)malloc(sizeof(QUEUE));
     if (packet_queue == NULL) {
         fprintf(stderr, "Failed to allocate memory for packet_queue\n");
@@ -118,7 +119,7 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
         *process_return = INDIGO_ERROR_SYS_FAIL;
         goto cleanup;
     }
-    //create the send queue
+    // create the send queue
     send_queue = (QUEUE *)malloc(sizeof(QUEUE));
     if (send_queue == NULL) {
         fprintf(stderr, "Failed to allocate memory for send_queue\n");
@@ -130,18 +131,18 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
         *process_return = INDIGO_ERROR_SYS_FAIL;
         goto cleanup;
     }
-    //create the memory pool
+    // create the memory pool
     pool_attr.dynamic_pool = 1;
     pool_attr.growth_factor = 1;
-    //the initial mempool is about 1MiB, it may be extended automatically if needed
-    mempool = new_mempool(1<<10, sizeof(packet_t) + sizeof(packet_info_t), &pool_attr);
+    // the initial mempool is about 1MiB, it may be extended automatically if needed
+    mempool = new_mempool(1 << 10, sizeof(packet_t) + sizeof(packet_info_t), &pool_attr);
     if (!mempool) {
         fprintf(stderr, "Failed to create mempool\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
 
-    //load the signing keys
+    // load the signing keys
     signing_key_pair = sodium_malloc(sizeof(signing_key_pair_t));
     if (signing_key_pair == NULL) {
         fprintf(stderr, "Failed to load signing key pair\n");
@@ -157,11 +158,11 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     }
     sodium_mprotect_readonly(signing_key_pair);
 
-    //the public key is our identifier and is used far more commonly than the private key
-    //the less the time the private key is accessible the better
+    // the public key is our identifier and is used far more commonly than the private key
+    // the less the time the private key is accessible the better
     memcpy(signing_pk, signing_key_pair->public, crypto_sign_PUBLICKEYBYTES);
 
-    //create threads
+    // create threads
     if (create_sending_thread(&send_args, args->port, args->multicast_addr, sockets, args->flag, send_queue,
                               args->master_key, &tid_send)) {
         fprintf(stderr, "create_sending_thread failed\n");
@@ -169,8 +170,9 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
         goto cleanup;
     }
 
-    if (create_packet_handler_thread(&handler_args, args->flag, packet_queue, args->ui_queue, send_queue
-                                     , send_args->flag,mempool, args->device_tree, args->master_key, sockets, &tid_handler)) {
+    if (create_packet_handler_thread(&handler_args, args->flag, packet_queue, args->ui_queue, send_queue,
+                                     send_args->flag, mempool, args->device_tree, args->master_key, sockets,
+                                     &tid_handler)) {
         fprintf(stderr, "create_packet_handler_thread failed\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
@@ -182,20 +184,18 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
         goto cleanup;
     }
 
-
     override_flags[0] = handler_args->flag;
     override_flags[1] = recv_args->flag;
     override_flags[2] = send_args->flag;
 
-    if (create_interface_updater_thread(&update_args,args->port, args->multicast_addr, args->flag, override_flags,
-        sockets, &tid_update)) {
+    if (create_interface_updater_thread(&update_args, args->port, args->multicast_addr, args->flag, override_flags,
+                                        sockets, &tid_update)) {
         fprintf(stderr, "create_interface_updater_thread failed\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
 
-
-    //the main loop
+    // the main loop
     while (!termination_is_on(args->flag)) {
         pthread_mutex_lock(&args->flag->mutex);
         pthread_cond_wait(&args->flag->cond, &args->flag->mutex);
@@ -207,36 +207,37 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
             break;
         }
 
-        if (!(flag_val & EF_WAKE_MANAGER)) continue;
+        if (!(flag_val & EF_WAKE_MANAGER))
+            continue;
         reset_single_event(send_args->flag, EF_WAKE_MANAGER);
-        //check the thread flags
+        // check the thread flags
 
-        //check the interface updater thread
+        // check the interface updater thread
         flag_val = get_event_flag(update_args->flag);
         if (flag_val & EF_TERMINATION) {
-            //for now, we terminate the whole operation, later we may pause or continue as we are
+            // for now, we terminate the whole operation, later we may pause or continue as we are
             goto cleanup;
         }
 
-        //check the sending thread
+        // check the sending thread
         flag_val = get_event_flag(send_args->flag);
         if (flag_val & EF_TERMINATION) {
-            //for now, we terminate the whole operation, later we may pause or continue as we are
+            // for now, we terminate the whole operation, later we may pause or continue as we are
             goto cleanup;
         }
 
-        //check the receiving thread
+        // check the receiving thread
         flag_val = get_event_flag(recv_args->flag);
         if (flag_val & EF_TERMINATION) {
-            //for now, we terminate the whole operation, later we may pause or continue as we are
+            // for now, we terminate the whole operation, later we may pause or continue as we are
             goto cleanup;
         }
-        //todo remove since the packet handler communicates directly with the receiver
-        //in this case we just forward to the packet handler
+        // todo remove since the packet handler communicates directly with the receiver
+        // in this case we just forward to the packet handler
         if (flag_val & EF_NEW_PACKET) {
             qnode_pop = queue_pop(packet_queue, QOPT_NON_BLOCK);
             if (qnode_pop != NULL) {
-                if (queue_push(packet_queue,qnode_pop->data,qnode_pop->type)) {
+                if (queue_push(packet_queue, qnode_pop->data, qnode_pop->type)) {
                     destroy_qnode(qnode_pop);
                     goto cleanup;
                 }
@@ -245,50 +246,57 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
             }
         }
 
-
-        //check the packet handler thread
+        // check the packet handler thread
         flag_val = get_event_flag(handler_args->flag);
         if (flag_val & EF_TERMINATION) {
-            //for now, we terminate the whole operation, later we may pause or continue as we are
+            // for now, we terminate the whole operation, later we may pause or continue as we are
             goto cleanup;
         }
     }
 
+#ifdef _WIN32
     WSASetEvent(recv_args->termination_handle);
     WSASetEvent(update_args->termination_handle);
-
+#endif
     set_event_flag(send_args->flag, EF_TERMINATION);
     set_event_flag(recv_args->flag, EF_TERMINATION);
     set_event_flag(handler_args->flag, EF_TERMINATION);
     set_event_flag(update_args->flag, EF_TERMINATION);
 
-    if (pthread_equal(tid_send, pthread_self()) == 0) pthread_join(tid_send, (void **)&send_ret);
-    if (pthread_equal(tid_receive, pthread_self()) == 0) pthread_join(tid_receive, (void **)&receive_ret);
-    if (pthread_equal(tid_handler, pthread_self()) == 0) pthread_join(tid_handler, (void **)&handler_ret);
-    if (pthread_equal(tid_update, pthread_self()) == 0) pthread_join(tid_update, (void **)&update_ret);
+    if (pthread_equal(tid_send, pthread_self()) == 0)
+        pthread_join(tid_send, (void **)&send_ret);
+    if (pthread_equal(tid_receive, pthread_self()) == 0)
+        pthread_join(tid_receive, (void **)&receive_ret);
+    if (pthread_equal(tid_handler, pthread_self()) == 0)
+        pthread_join(tid_handler, (void **)&handler_ret);
+    if (pthread_equal(tid_update, pthread_self()) == 0)
+        pthread_join(tid_update, (void **)&update_ret);
 
     free(send_ret);
     free(receive_ret);
     free(update_ret);
     free(handler_ret);
 
-
-    //send args
+    // send args
     free_event_flag(send_args->flag);
     free(send_args);
 
-    //receive args
+    // receive args
+#ifdef _WIN32
     WSACloseEvent(recv_args->termination_handle);
     WSACloseEvent(recv_args->wake_handle);
+#endif
     free_event_flag(recv_args->flag);
     free(recv_args);
 
-    //update args
+    // update args
+#ifdef _WIN32
     WSACloseEvent(update_args->termination_handle);
+#endif
     free_event_flag(update_args->flag);
     free(update_args);
 
-    //handler args
+    // handler args
     free_event_flag(handler_args->flag);
     free(handler_args);
 
@@ -304,72 +312,86 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
 
     free_mempool(mempool);
 
-
     free_event_flag(args->flag);
     free(args);
 
+#ifdef _WIN32
     WSACleanup();
-
+#endif
     printf("DEBUG: manager thread exit\n");
     fflush(stdout);
 
     return process_return;
 
-    /////////////////////////////////////////////////////
-    ///                                               ///
-    ///                  __CLEANUP__                  ///
-    ///                                               ///
-    /////////////////////////////////////////////////////
-    cleanup:
-    //signal termination to all threads
+/////////////////////////////////////////////////////
+///                                               ///
+///                  __CLEANUP__                  ///
+///                                               ///
+/////////////////////////////////////////////////////
+cleanup:
+    // signal termination to all threads
+#ifdef _WIN32
     if (recv_args != NULL) {
         WSASetEvent(recv_args->termination_handle);
     }
     if (update_args != NULL) {
         WSASetEvent(update_args->termination_handle);
     }
+#endif
 
-    if (send_args != NULL) set_event_flag(send_args->flag, EF_TERMINATION);
-    if(recv_args != NULL)set_event_flag(recv_args->flag, EF_TERMINATION);
-    if (handler_args != NULL) set_event_flag(handler_args->flag, EF_TERMINATION);
-    if (update_args != NULL) set_event_flag(update_args->flag, EF_TERMINATION);
+    if (send_args != NULL)
+        set_event_flag(send_args->flag, EF_TERMINATION);
+    if (recv_args != NULL)
+        set_event_flag(recv_args->flag, EF_TERMINATION);
+    if (handler_args != NULL)
+        set_event_flag(handler_args->flag, EF_TERMINATION);
+    if (update_args != NULL)
+        set_event_flag(update_args->flag, EF_TERMINATION);
 
-    //wait for the threads to terminate before we deallocate any resources
-    if (pthread_equal(tid_send, pthread_self()) == 0) pthread_join(tid_send, (void **)&send_ret);
-    if (pthread_equal(tid_receive, pthread_self()) == 0) pthread_join(tid_receive, (void **)&receive_ret);
-    if (pthread_equal(tid_update, pthread_self()) == 0) pthread_join(tid_update, (void **)&update_ret);
-    if (pthread_equal(tid_handler, pthread_self()) == 0) pthread_join(tid_handler, (void **)&handler_ret);
+    // wait for the threads to terminate before we deallocate any resources
+    if (pthread_equal(tid_send, pthread_self()) == 0)
+        pthread_join(tid_send, (void **)&send_ret);
+    if (pthread_equal(tid_receive, pthread_self()) == 0)
+        pthread_join(tid_receive, (void **)&receive_ret);
+    if (pthread_equal(tid_update, pthread_self()) == 0)
+        pthread_join(tid_update, (void **)&update_ret);
+    if (pthread_equal(tid_handler, pthread_self()) == 0)
+        pthread_join(tid_handler, (void **)&handler_ret);
 
     free(send_ret);
     free(receive_ret);
     free(update_ret);
     free(handler_ret);
 
-    //free the args of the threads
-    //send
+    // free the args of the threads
+    // send
     if (pthread_equal(tid_send, pthread_self()) == 0) {
         if (send_args)
             free(send_args->flag);
         free(send_args);
     }
-    //receive
+    // receive
     if (pthread_equal(tid_receive, pthread_self()) == 0) {
-        if (recv_args){
+        if (recv_args) {
+#ifdef _WIN32
             WSACloseEvent(recv_args->termination_handle);
             WSACloseEvent(recv_args->wake_handle);
+#endif
             free_event_flag(recv_args->flag);
             free(recv_args);
         }
     }
-    //updater
+    // updater
     if (pthread_equal(tid_update, pthread_self()) == 0) {
         if (update_args) {
+#ifdef _WIN32
             WSACloseEvent(update_args->termination_handle);
+#endif
             free_event_flag(update_args->flag);
             free(update_args);
         }
     }
-    //packet handler
+    // packet handler
     if (pthread_equal(tid_handler, pthread_self()) == 0) {
         if (handler_args)
             free_event_flag(handler_args->flag);
@@ -393,11 +415,12 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     free_event_flag(args->flag);
     free(args);
     sodium_free(signing_key_pair);
+#ifdef _WIN32
     WSACleanup();
+#endif
     printf("DEBUG: manager thread exit\n");
     fflush(stdout);
     return process_return;
-
 }
 
 ///////////////////////////////////////////////////////////////////
@@ -406,27 +429,27 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
 ///                                                             ///
 ///////////////////////////////////////////////////////////////////
 
-
 int cancel_device_discovery(pthread_t tid, EFLAG *flag) {
     int *ret = NULL;
     int val;
 
     set_event_flag(flag, EF_TERMINATION | EF_WAKE_MANAGER);
 
-    if (pthread_equal(tid,pthread_self()) == 0) {
-        pthread_join(tid,(void **)&ret);
+    if (pthread_equal(tid, pthread_self()) == 0) {
+        pthread_join(tid, (void **)&ret);
     }
     printf("DEBUG: manager thread joined\n");
     fflush(stdout);
 
-    if (ret == NULL) return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+    if (ret == NULL)
+        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     val = *ret;
     free(ret);
     return val;
 }
 
-int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint32_t multicast_address, tree_t *dev_tree, QUEUE*
-                                 ui_queue, pthread_t *tid){
+int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint32_t multicast_address,
+                                 tree_t *dev_tree, QUEUE *ui_queue, pthread_t *tid) {
     pthread_t thread;
 
     MANAGER_ARGS *manager_args = malloc(sizeof(MANAGER_ARGS));
@@ -438,7 +461,7 @@ int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint
 
     EFLAG *flag = create_event_flag();
     if (flag == NULL) {
-        fprintf(stderr,"create_event_flag() failed in create_sending_thread\n");
+        fprintf(stderr, "create_event_flag() failed in create_sending_thread\n");
         free(manager_args);
         return 1;
     }
@@ -460,8 +483,8 @@ int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint
     return 0;
 }
 
-int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, socket_ll *sockets, EFLAG *wake_mngr, QUEUE* queue, const void*
-                          master_key, pthread_t *tid){
+int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, socket_ll *sockets, EFLAG *wake_mngr,
+                          QUEUE *queue, const void *master_key, pthread_t *tid) {
     pthread_t thread;
 
     SEND_ARGS *send_args = malloc(sizeof(SEND_ARGS));
@@ -471,10 +494,9 @@ int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address
     }
     *args = send_args;
 
-
     EFLAG *flag = create_event_flag();
     if (flag == NULL) {
-        fprintf(stderr,"create_event_flag() failed in create_sending_thread\n");
+        fprintf(stderr, "create_event_flag() failed in create_sending_thread\n");
         free(send_args);
         return 1;
     }
@@ -486,7 +508,7 @@ int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address
     }
 
     if (load_signing_key_pair(send_args->sign_keys, master_key) != INDIGO_SUCCESS) {
-        fprintf(stderr,"load_signing_key_pair() failed in create_sending_thread\n");
+        fprintf(stderr, "load_signing_key_pair() failed in create_sending_thread\n");
         free(send_args);
         return 1;
     }
@@ -497,7 +519,6 @@ int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address
     send_args->wake = wake_mngr;
     send_args->flag = flag;
     send_args->queue = queue;
-
 
     if (pthread_create(&thread, NULL, (void *)(&send_thread), send_args)) {
         free_event_flag(flag);
@@ -510,8 +531,8 @@ int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address
     return 0;
 }
 
-int create_receiving_thread(
-    RECV_ARGS **args, socket_ll *sockets, QUEUE *queue, mempool_t* mempool, EFLAG *wake_mngr, pthread_t *tid){
+int create_receiving_thread(RECV_ARGS **args, socket_ll *sockets, QUEUE *queue, mempool_t *mempool, EFLAG *wake_mngr,
+                            pthread_t *tid) {
 
     pthread_t thread;
 
@@ -522,15 +543,14 @@ int create_receiving_thread(
     }
     *args = recv_args;
 
-
     EFLAG *flag = create_event_flag();
     if (flag == NULL) {
-        fprintf(stderr,"create_event_flag() failed in create_sending_thread\n");
+        fprintf(stderr, "create_event_flag() failed in create_sending_thread\n");
         free(recv_args);
         return 1;
     }
 
-
+#ifdef _WIN32
     recv_args->wake_handle = WSACreateEvent();
     if (recv_args->wake_handle == NULL) {
         fprintf(stderr, "WSACreateEvent() failed in create_sending_thread\n");
@@ -546,7 +566,7 @@ int create_receiving_thread(
         WSACloseEvent(recv_args->wake_handle);
         free(recv_args);
     }
-
+#endif
     recv_args->queue = queue;
     recv_args->mempool = mempool;
     recv_args->sockets = sockets;
@@ -564,7 +584,8 @@ int create_receiving_thread(
     return 0;
 }
 
-int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint32_t multicast_address, EFLAG *wake_mngr, EFLAG *override_flags[3], socket_ll *sockets, pthread_t *tid){
+int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint32_t multicast_address,
+                                    EFLAG *wake_mngr, EFLAG *override_flags[3], socket_ll *sockets, pthread_t *tid) {
     pthread_t thread;
 
     INTERFACE_UPDATE_ARGS *update_args = malloc(sizeof(INTERFACE_UPDATE_ARGS));
@@ -576,11 +597,11 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
 
     EFLAG *flag = create_event_flag();
     if (flag == NULL) {
-        fprintf(stderr,"create_event_flag() failed in create_interface_updater_thread\n");
+        fprintf(stderr, "create_event_flag() failed in create_interface_updater_thread\n");
         free(update_args);
         return 1;
     }
-
+#ifdef _WIN32
     update_args->termination_handle = WSACreateEvent();
     if (update_args->termination_handle == NULL) {
         fprintf(stderr, "WSACreateEvent() failed in create_interface_updater_thread\n");
@@ -588,7 +609,7 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
         free(update_args);
         return 1;
     }
-
+#endif
     update_args->port = port;
     update_args->multicast_addr = multicast_address;
     update_args->sockets = sockets;
@@ -606,9 +627,9 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
     return 0;
 }
 
-int create_packet_handler_thread(
-    PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, QUEUE* ui_queue, QUEUE* send_queue, EFLAG* send_flag
-    , mempool_t* mempool, tree_t* device_tree, const void* const master_key, socket_ll* sockets, pthread_t *tid){
+int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, QUEUE *ui_queue,
+                                 QUEUE *send_queue, EFLAG *send_flag, mempool_t *mempool, tree_t *device_tree,
+                                 const void *const master_key, socket_ll *sockets, pthread_t *tid) {
 
     pthread_t thread;
 
@@ -621,7 +642,7 @@ int create_packet_handler_thread(
 
     EFLAG *flag = create_event_flag();
     if (flag == NULL) {
-        fprintf(stderr,"create_event_flag() failed in create_interface_updater_thread\n");
+        fprintf(stderr, "create_event_flag() failed in create_interface_updater_thread\n");
         free(handler_args);
         return 1;
     }
@@ -633,7 +654,7 @@ int create_packet_handler_thread(
     }
 
     if (load_signing_key_pair(handler_args->signing_keys, master_key) != INDIGO_SUCCESS) {
-        fprintf(stderr,"load_signing_key_pair() failed in create_interface_updater_thread\n");
+        fprintf(stderr, "load_signing_key_pair() failed in create_interface_updater_thread\n");
         free(handler_args);
         return 1;
     }

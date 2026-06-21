@@ -23,100 +23,111 @@ SOFTWARE.
 #include <stdio.h>
 #include <unistd.h>
 
+#ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#endif
 
-#include "indigo_core/net_io.h"
-#include <tui/tui.h>
+#include "Queue.h"
 #include "crypto_utils.h"
+#include "indigo_core/net_io.h"
 #include "indigo_types.h"
 #include "manager.h"
-#include "Queue.h"
+#include <tui/tui.h>
 
 int main(int argc, char *argv[]) {
+#ifdef _WIN32
     WSADATA wsaData;
+#endif
     int ret;
 
-    //network
+    // network
     int port;
     uint32_t multicast_addr;
     struct in_addr maddr;
 
-    //device table
+    // device table
     tree_t *device_tree;
 
-    //ui queue
+    // ui queue
     QUEUE *ui_queue;
 
     MANAGER_ARGS *manager_args;
     pthread_t manager_tid;
     void *master_key;
 
-    ret = WSAStartup(MAKEWORD(2,2), &wsaData);
+#ifdef _WIN32
+    ret = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (ret != 0) {
         fprintf(stderr, "WSAStartup failed\n");
         return 1;
     }
+#endif
 
-    if (sodium_init() == -1) return 1;
+    if (sodium_init() == -1)
+        return 1;
     setlocale(LC_ALL, "");
     initscr();
-    //todo learn how to use color
+    // todo learn how to use color
     init_pair(1, COLOR_RED, COLOR_BLACK);
     cbreak();
     noecho();
 
-    //verify the user, check if crypto files are ready to go, and check password
+    // verify the user, check if crypto files are ready to go, and check password
     ret = verify_user(&master_key);
     if (ret != 0) {
         endwin();
-        WSACleanup();
+        goto cleanup;
         printf("\nverify_user failed\n");
         return ret;
     }
 
-
-    //create the device tree
+    // create the device tree
 
     ret = new_tree(&device_tree, cmp_rdev, sizeof(remote_device_t), BINARY_TREE_FLAG_AVL);
     if (ret) {
         fprintf(stderr, "malloc failed\n");
         endwin();
-        WSACleanup();
+        goto cleanup;
         return ret;
     }
 
-    ui_queue = malloc (sizeof(QUEUE));
+    ui_queue = malloc(sizeof(QUEUE));
     if (ui_queue == NULL) {
         fprintf(stderr, "malloc failed\n");
         endwin();
-        WSACleanup();
+        goto cleanup;
         return 1;
     }
     ret = init_queue(ui_queue);
     if (ret) {
         fprintf(stderr, "init_queue failed\n");
         endwin();
-        WSACleanup();
+        goto cleanup;
         return 1;
     }
 
     inet_pton(AF_INET, MULTICAST_ADDR, &multicast_addr);
     port = htons(PORT);
 
-     ret = create_thread_manager_thread(&manager_args, port, multicast_addr, device_tree, ui_queue, &manager_tid);
-     if (ret != 0) {
-         fprintf(stderr, "Error creating thread_manager thread\n");
-         endwin();
-         WSACleanup();
-         return 1;
-     }
+    ret = create_thread_manager_thread(&manager_args, port, multicast_addr, device_tree, ui_queue, &manager_tid);
+    if (ret != 0) {
+        fprintf(stderr, "Error creating thread_manager thread\n");
+        endwin();
+        goto cleanup;
+        return 1;
+    }
 
-    //create the main tui interface
+    // create the main tui interface
     create_main_interface(device_tree, ui_queue);
 
     endwin();
     printf("\nmain return:%d\n", ret);
     getchar();
     return ret;
+
+cleanup:
+#ifdef _WIN32
+    WSACleanup();
+#endif
 }
