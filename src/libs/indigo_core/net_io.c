@@ -1644,6 +1644,9 @@ int *recv_thread(RECV_ARGS *args) {
                     continue;
                 }
 
+                packet_info = (void *)(recv_buffer + sizeof(packet_t));
+                memcpy(&(packet_info->address), &recv_addr, recv_addr_len);
+
                 ret = queue_push(queue, recv_buffer, QET_NEW_PACKET);
                 if (ret) {
                     // the only error is a not enough memory error, so we return an error
