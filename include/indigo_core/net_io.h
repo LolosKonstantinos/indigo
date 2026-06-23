@@ -94,7 +94,7 @@ typedef struct SEND_ARGS {
     socket_ll *sockets;
     QUEUE *queue;
     signing_key_pair_t *sign_keys;
-    // todo: add username field, must be a thread safe buffer
+    // TODO: add username field, must be a thread safe buffer
 } SEND_ARGS;
 
 typedef struct RECV_ARGS {
@@ -105,6 +105,9 @@ typedef struct RECV_ARGS {
 #ifdef _WIN32
     HANDLE termination_handle;
     HANDLE wake_handle;
+#else
+    int termination_fd;
+    int wake_fd;
 #endif
     mempool_t *mempool;
 } RECV_ARGS;
@@ -121,6 +124,9 @@ int send_discovery_packets(int port, uint32_t multicast_addr, socket_ll *sockets
 #ifdef _WIN32
 int register_single_receiver(SOCKET sock, RECV_INFO **info, mempool_t *mempool);
 int register_multiple_receivers(socket_ll *sockets, RECV_ARRAY *info, mempool_t *mempool, EFLAG *flag);
+#else
+int register_single_event(int epoll_fd, int fd, struct epoll_event event);
+int register_multiple_receivers(int epoll_fd, socket_ll *sockets, size_t *event_count);
 #endif
 int send_packet(int port, uint32_t addr, socket_ll *sockets, const packet_t *packet, EFLAG *flag);
 int send_next_file_packet(active_file_t *file, const unsigned char *pk, socket_ll *sockets, EFLAG *flag);
@@ -140,8 +146,8 @@ void free_send_info(const SEND_INFO *info);
 int allocate_recv_info(RECV_INFO **info, mempool_t *mempool);
 int allocate_recv_info_fields(RECV_INFO *info, mempool_t *mempool);
 void free_recv_info(const RECV_INFO *info, mempool_t *mempool);
-
 #endif
+
 /////////////////////////////////////////////////////////////////
 ///                                                           ///
 ///                  THREAD_FUNCTION_HELPERS                  ///

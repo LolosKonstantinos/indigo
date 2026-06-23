@@ -22,9 +22,10 @@ SOFTWARE.
 #include "crypto_utils.h"
 #include "indigo_errors.h"
 #include "indigo_types.h"
+#include <stdlib.h>
 #include <tui.h>
+#include <uchar.h>
 #include <unistd.h>
-#include <wchar.h>
 #include <wctype.h>
 #ifdef _WIN32
 #define sleep(t) (Sleep(1000 * t))
@@ -480,6 +481,56 @@ int iswspecialchar(const wint_t ch) {
     }
 }
 
+int get_user_input(WINDOW *win, utf8_char_t *input) {
+    int ret = 0;
+    wint_t c = 0;
+#ifdef _WIN32
+    mbstate_t state = {0};
+    *input = 0;
+    ret = wget_wch(win, &c);
+    if (ret == OK) {
+        ret = c16rtomb(*input, c, &state);
+        switch (ret) {
+            case ((size_t)(-1)):
+                return -1;
+            case 0:
+                ret = wget_wch(win, &c);
+                if (ret == OK) {
+                    ret = c16rtomb(*input, c, &state);
+                    if (ret == ((size_t)(-1)))
+                        return -1;
+                    else {
+                        return OK;
+                    }
+                } else if (ret == KEY_CODE_YES) {
+                    *input = c;
+                    return KEY_CODE_YES;
+                } else {
+                    return -1;
+                }
+                break;
+            default:
+                break;
+        }
+    } else if (ret == KEY_CODE_YES) {
+        *input = c;
+        return KEY_CODE_YES;
+    }
+    return -1;
+#else
+    *input = 0;
+    ret = wget_wch(win, &c);
+    if (ret == OK) {
+        wctomb((char *)input, c);
+        return OK;
+    } else if (ret == KEY_CODE_YES) {
+        *input = c;
+        return KEY_CODE_YES;
+    }
+    return -1;
+#endif
+}
+
 int create_main_interface(tree_t *dev_tree, QUEUE *ui_queue) {
     tree_iterator_t *dev_iter;
     WINDOW *dialog_win;
@@ -490,7 +541,7 @@ int create_main_interface(tree_t *dev_tree, QUEUE *ui_queue) {
     int maxx;
     int maxy;
 
-    wint_t ch;
+    utf8_char_t ch;
     char mch;
 
     int ret;
@@ -518,13 +569,13 @@ int create_main_interface(tree_t *dev_tree, QUEUE *ui_queue) {
 
     // the main loop
     while (1) {
-        ret = wget_wch(text_input_win, &ch);
+        ret = get_user_input(text_input_win, &ch);
         if (ret == KEY_CODE_YES) {
             // function keys
         } else if (ret == OK) {
             // characters
         } else {
-            printf("wget_wch() returned error %d\n", ret);
+            printf("get_user_input() returned error %d\n", ret);
             break;
         }
         break; // temporary so as not to block

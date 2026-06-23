@@ -28,15 +28,24 @@ SOFTWARE.
 #include <sodium/crypto_aead_xchacha20poly1305.h>
 #include <sodium/randombytes.h>
 #include <sodium/utils.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 
 #include "Queue.h"
 #include "crypto_utils.h"
 #include <indigo_types.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/epoll.h>
 #include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "config.h"
+#include "event_flags.h"
 #include "lht.h"
+#include "mempool.h"
 #include "net_monitor.h"
 
 //////////////////////////////////////////////////////
@@ -647,6 +656,51 @@ cleanup:
     return routine_ret;
 }
 #else
+int register_single_event(int epoll_fd, int fd, struct epoll_event event) {
+    event.data.fd = fd;
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &event) == -1) {
+        return INDIGO_ERROR;
+    }
+    return INDIGO_SUCCESS;
+}
+int register_multiple_receivers(int epoll_fd, socket_ll *sockets, size_t *event_count) {
+    struct epoll_event *recv_events;
+    size_t count;
+
+    if (!event_count || !event_count)
+        return INDIGO_ERROR_INVALID_PARAM;
+
+    pthread_mutex_lock(&(sockets->mutex));
+
+    // count how many sockets we have
+    for (socket_node *sn = sockets->head; sn != NULL; sn = sn->next)
+        ++count;
+    recv_events = calloc(count, sizeof(struct epoll_event));
+    if (!recv_events) {
+        pthread_mutex_unlock(&(sockets->mutex));
+        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+    }
+
+    *event_count = count;
+
+    // count is now a counter
+    // register the sockets one by one
+    count = 0;
+    for (socket_node *sn = sockets->head; sn != NULL; sn = sn->next) {
+        recv_events[count].events = EPOLLIN;
+        recv_events[count].data.fd = sn->sock;
+        if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, sn->sock, &(recv_events[count])) == -1) {
+            pthread_mutex_unlock(&(sockets->mutex));
+            free(recv_events);
+            return INDIGO_ERROR;
+        }
+        ++count;
+    }
+
+    pthread_mutex_unlock(&(sockets->mutex));
+    free(recv_events);
+    return INDIGO_SUCCESS;
+}
 int send_discovery_packets(const int port, const uint32_t multicast_addr, socket_ll *sockets, EFLAG *flag,
                            const uint32_t pCount, const int32_t msec, signing_key_pair_t *sign_key_pair,
                            wchar_t username[MAX_USERNAME_LEN]) {
@@ -1372,7 +1426,8 @@ int *recv_thread(RECV_ARGS *args) {
 
                 packet_info = (packet_info_t *)(recv_info->buf->buf + sizeof(packet_t));
                 packet_info->address = *(struct sockaddr_in *)(recv_info->source);
-                packet_info->socket = recv_info->socket;
+                packet_info->socket =
+                    recv_info->socket; // TODO: we may not need the socket since we have moved to a ip to socket design
 
                 if (queue_push(args->queue, recv_info->buf->buf, QET_NEW_PACKET)) {
                     set_event_flag(args->flag, EF_TERMINATION);
@@ -1416,7 +1471,195 @@ int *recv_thread(RECV_ARGS *args) {
     return process_return;
 }
 #else
-int *recv_thread(RECV_ARGS *args) { return 0; }
+int *recv_thread(RECV_ARGS *args) {
+    // todo we need a hash table to hold the expected packets
+
+    mempool_t *mempool = NULL;
+    QUEUE *queue = NULL;
+
+    udp_packet_header_t pack_h;
+    int epoll_fd = 0;
+    struct epoll_event *recv_events = NULL;
+    struct epoll_event tmp_event;
+    size_t recv_event_count;
+
+    struct sockaddr_in recv_addr = {0};
+    socklen_t recv_addr_len = 0;
+    char *recv_buffer = NULL;
+    packet_info_t *packet_info = NULL;
+
+    uint32_t event_type = (uint32_t)(-1); // initialized to invalid value
+    uint32_t flag_val;
+    int ret;
+    ssize_t lret;
+
+    int *process_return = NULL;
+
+    // allocate memory for the return value
+    process_return = malloc(sizeof(int));
+    if (process_return == NULL) {
+        set_event_flag(args->flag, EF_TERMINATION);
+        set_event_flag(args->wake, EF_WAKE_MANAGER);
+        return NULL;
+    }
+    *process_return = 0;
+
+    mempool = args->mempool;
+    queue = args->queue;
+
+    epoll_fd = epoll_create1(0);
+    if (epoll_fd == -1) {
+        *process_return = INDIGO_ERROR_SYS_FAIL;
+        return process_return;
+    }
+
+    // register all the sockets for receiving
+    ret = register_multiple_receivers(epoll_fd, args->sockets, &recv_event_count);
+    if (ret != INDIGO_SUCCESS) {
+        set_event_flag(args->flag, EF_TERMINATION);
+        set_event_flag(args->wake, EF_WAKE_MANAGER);
+        *process_return = ret;
+        return process_return;
+    }
+    // TODO: i have zero idea why we check the flag bellow, please check it and remove if necessary
+    if (ret == -1) {
+        flag_val = get_event_flag(args->flag);
+        if (flag_val & EF_TERMINATION) {
+            *process_return = 0;
+            return process_return;
+        }
+    }
+    // we will register 2 more events, the wake event and the termination event
+    recv_event_count += 2;
+    recv_events = calloc(recv_event_count, sizeof(struct epoll_event));
+    if (!recv_events) {
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        return process_return;
+    }
+    tmp_event.events = EPOLLIN;
+    tmp_event.data.fd = args->termination_fd;
+    tmp_event.data.u32 = 1;
+    register_single_event(epoll_fd, args->termination_fd, tmp_event);
+    tmp_event.data.fd = args->wake_fd;
+    tmp_event.data.u32 = 2;
+    register_single_event(epoll_fd, args->termination_fd, tmp_event);
+    memset(&tmp_event, 0, sizeof(struct epoll_event));
+
+    while (!termination_is_on(args->flag)) {
+        ///////////////////////////////////
+        ///  phase 1: check for events  ///
+        ///////////////////////////////////
+
+        flag_val = get_event_flag(args->flag);
+
+        if (flag_val & EF_OVERRIDE_IO) {
+            close(epoll_fd);
+            epoll_fd = epoll_create1(0);
+            if (epoll_fd == -1) {
+                *process_return = INDIGO_ERROR_SYS_FAIL;
+                return process_return;
+            }
+            free(recv_events);
+            recv_events = NULL;
+
+            // register all the sockets for receiving
+            ret = register_multiple_receivers(epoll_fd, args->sockets, &recv_event_count);
+            if (ret != INDIGO_SUCCESS) {
+                set_event_flag(args->flag, EF_TERMINATION);
+                set_event_flag(args->wake, EF_WAKE_MANAGER);
+                *process_return = ret;
+                return process_return;
+            }
+            reset_single_event(args->flag, EF_OVERRIDE_IO);
+            // make toom for the termination event
+            recv_event_count += 2;
+            recv_events = calloc(recv_event_count, sizeof(struct epoll_event));
+            if (!recv_events) {
+                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                return process_return;
+            }
+            tmp_event.events = EPOLLIN;
+            tmp_event.data.fd = args->termination_fd;
+            tmp_event.data.u32 = 1;
+            register_single_event(epoll_fd, args->termination_fd, tmp_event);
+            tmp_event.data.fd = args->wake_fd;
+            tmp_event.data.u32 = 2;
+            register_single_event(epoll_fd, args->termination_fd, tmp_event);
+            memset(&tmp_event, 0, sizeof(struct epoll_event));
+        } else if (flag_val & EF_TERMINATION) {
+            *process_return = 0;
+            return process_return;
+        }
+
+        ////////////////////////////////////
+        ///  phase 2: wait for a packet  ///
+        ////////////////////////////////////
+
+        ret = epoll_wait(epoll_fd, recv_events, recv_event_count, 1 << 20);
+        if (ret == 0)
+            continue;
+        else if (ret == -1) {
+            free(recv_events);
+            *process_return = INDIGO_ERROR;
+            return process_return;
+        }
+
+        /////////////////////////////////////
+        ///  phase 3: process the packet  ///
+        /////////////////////////////////////
+
+        // check the epoll events one by one
+        for (size_t i = 0; i < recv_event_count; ++i) {
+            event_type = recv_events[i].data.u32;
+            if (event_type == 1) {
+                // we need to terminate
+                free(recv_events);
+                *process_return = INDIGO_SUCCESS;
+                return process_return;
+            } else if (event_type == 2) {
+                // we got a wake event, probably the sockets got updated
+                // we break form the for loop and then the main loop starts again
+                break;
+            } else {
+                // we got a socket ready
+                recv_buffer = mempool->alloc(mempool);
+                lret = recvfrom(recv_events[i].data.fd, recv_buffer, sizeof(packet_t) + sizeof(packet_info_t), 0,
+                                (struct sockaddr *)(&recv_addr), &recv_addr_len);
+
+                if (lret == -1) {
+                    switch (errno) {
+                        default:
+                            break;
+                    }
+                    mempool->free(mempool, recv_buffer);
+                    break;
+                }
+                if (lret > sizeof(packet_t) || lret < PAC_MIN_BYTES) {
+                    mempool->free(mempool, recv_buffer);
+                    continue;
+                }
+                memcpy(&pack_h, recv_buffer, sizeof(udp_packet_header_t));
+                if (pack_h.magic_number != MAGIC_NUMBER_1 || pack_h.magic_number != MAGIC_NUMBER_2) {
+                    mempool->free(mempool, recv_buffer);
+                    continue;
+                }
+
+                ret = queue_push(queue, recv_buffer, QET_NEW_PACKET);
+                if (ret) {
+                    // the only error is a not enough memory error, so we return an error
+                    free(recv_events);
+                    mempool->free(mempool, recv_buffer);
+                    *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                    return process_return;
+                }
+                set_event_flag(args->flag, EF_NEW_PACKET);
+                set_event_flag(args->wake, EF_WAKE_MANAGER);
+            }
+        }
+    }
+    *process_return = 0;
+    return process_return;
+}
 #endif
 
 int *send_thread(SEND_ARGS *args) {

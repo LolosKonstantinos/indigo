@@ -19,23 +19,27 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+#ifndef TUI_H
+#define TUI_H
 
-
-#ifndef CLI_H
-#define CLI_H
 #define _XOPEN_SOURCE_EXTENDED
-#include <ncursesw/curses.h>
-#include <binary_tree.h>
+
 #include <Queue.h>
+#include <binary_tree.h>
+#include <ncursesw/curses.h>
+#include <stdint.h>
 
-int verify_user(void** master_key);
+typedef uint64_t utf8_char_t;
 
-//todo: make it return via pointer the master key
-int verify_password(void** master_key);
+int verify_user(void **master_key);
+
+// todo: make it return via pointer the master key
+int verify_password(void **master_key);
 
 WINDOW *create_welcome_screen();
 int create_new_password();
 int iswspecialchar(wint_t ch);
+int get_user_input(WINDOW *win, utf8_char_t *input);
 
-int create_main_interface(tree_t * dev_tree, QUEUE * ui_queue);
-#endif //CLI_H
+int create_main_interface(tree_t *dev_tree, QUEUE *ui_queue);
+#endif // TUI_H
