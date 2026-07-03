@@ -1,6 +1,5 @@
 add_subdirectory(gui)
 add_subdirectory(tui)
-add_subdirectory(cli)
 add_subdirectory(indigo_core)
 
 # Create an interface target to hold the include directories.

@@ -45,21 +45,20 @@ typedef int (*tree_search_pin)(tree_t *, void *, void **);
 typedef int (*tree_search_release)(tree_t *);
 
 struct tree_t {
-  tree_insert insert;
-  tree_remove remove;
-  tree_search search;
-  // thread unsafe search function
-  tree_search_pin search_pin;
-  tree_search_release search_release;
-  tree_priv_t *priv;
+    tree_insert insert;
+    tree_remove remove;
+    tree_search search;
+    // thread unsafe search function
+    tree_search_pin search_pin;
+    tree_search_release search_release;
+    tree_priv_t *priv;
 };
 
 int new_tree(tree_t **t, cmp_f cmp, size_t data_size, char type);
 void free_tree(tree_t *t);
 tree_node_t *new_node();
 
-/*________________________________________AVL TREE
- * FUNCTIONS________________________________________*/
+/*_____________________________AVL TREE FUNCTIONS_____________________________*/
 // todo keep one of the 2
 int avl_insert(tree_t *t, void *data);
 int avl_insert_copy(tree_t *t, void *data);
@@ -74,13 +73,12 @@ int avl_search_pin(tree_t *t, void *data, void **ret_data);
 int avl_search_release(tree_t *t);
 
 /*AVL HELPERS*/
-tree_node_t **avl_balance(tree_node_t **stack, tree_node_t **top,
-                          tree_priv_t *tree);
+tree_node_t **avl_balance(tree_node_t **stack, tree_node_t **top, tree_priv_t *tree);
 void tree_lock(tree_t *t);
 void tree_unlock(tree_t *t);
 
 // NOTE: the iterator functions should be used while the tree is locked if
-// thread safety is needed.
+//       thread safety is needed.
 //       lock the tree, create the iterator, use the iterator, unlock the tree.
 //       if the tree is unlocked the iterator may not be valid and cannot be
 //       used again.

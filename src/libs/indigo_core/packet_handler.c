@@ -19,7 +19,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+#include "binary_tree.h"
 #include "indigo_types.h"
+#include "net_io.h"
+#include <config.h>
 #include <Queue.h>
 #include <indigo_core/packet_handler.h>
 #include <indigo_errors.h>
@@ -27,6 +30,7 @@ SOFTWARE.
 #include <math.h>
 #include <sodium/crypto_kx.h>
 #include <stdio.h>
+#include <string.h>
 #include <wctype.h>
 #if _WIN32
 #else
@@ -46,7 +50,8 @@ SOFTWARE.
 // todo: check if session creation is ok
 // todo: implement control signals and ip change
 // todo: i know for sure that there is some code around here that does not work at all, we need to find it
-int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
+int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
+{
     uint32_t flag_val = 0;
     QNODE *node = NULL;
 
@@ -94,6 +99,9 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
     tree_iterator_t *session_iterator = NULL;
     tree_iterator_t *rdev_iterator = NULL;
 
+    known_key_t known_key;
+    tree_t *known_keys_tree = NULL;
+
     wchar_t tmp_username[MAX_USERNAME_LEN];
 
     int ret = 0; // general purpose return variable
@@ -108,6 +116,17 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
         return NULL;
     }
     *process_return = 0;
+
+    ret = new_tree(&known_keys_tree, key_cmp, sizeof(known_key_t), BINARY_TREE_FLAG_AVL);
+    if (ret) {
+        *process_return = ret;
+        goto cleanup;
+    }
+    ret = load_known_keys(known_keys_tree);
+    if (ret) {
+        *process_return = ret;
+        goto cleanup;
+    }
 
     signing_request_data = malloc(sizeof(signing_request_data_t));
     signing_response_data = malloc(sizeof(signing_response_data_t));
@@ -185,7 +204,9 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                      * It should be fast enough, it fails on the tag recalculation not the decryption
                      */
                     // todo: change the system so that we need to perform only one decryption
-                    /*todo: one idea is to have separate keys for each session and the peers public key
+
+                    /*
+                     * todo: one idea is to have separate keys for each session and the peers public key
                      * is the identifier in both the session tree and the packet id field
                      */
                     ret = decrypt_packet(packet, rdev.server_rk);
@@ -223,7 +244,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                                 fflush(stdout);
                                 break;
                             }
-                        } else
+                        }
+                        else
                             break;
 
                         // search in the tree
@@ -250,7 +272,17 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         rdev.client_tk = NULL;
                         rdev.server_rk = NULL;
                         rdev.server_tk = NULL;
+                        rdev.fsr_list = NULL;
+                        rdev.fsr_count = 0;
                         rdev.dev_state_flag = RDSF_UNVERIFIED; // the device is not verified
+
+                        memcpy(known_key.key, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
+                        if (known_keys_tree->search(known_keys_tree, &known_key)) {
+                            rdev.dev_state_flag |= known_key.status;
+                        }
+                        else {
+                            rdev.dev_state_flag |= KNOWN_KEY_STATUS_UNKOWN;
+                        }
 
                         ret = args->device_tree->insert(args->device_tree, &rdev);
 
@@ -322,7 +354,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                                 fflush(stdout);
                                 break;
                             }
-                        } else
+                        }
+                        else
                             break;
 
                         // sign the nonce and send the signature with the public key and a new nonce
@@ -366,13 +399,14 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                             found_rdev->expiration_time = time(NULL) + EXPIRATION_TIME;
                             found_rdev->ip = packet_info->address.sin_addr.s_addr;
 
-                            if (found_rdev->dev_state_flag == RDSF_UNVERIFIED) {
+                            if (found_rdev->dev_state_flag & RDSF_UNVERIFIED) {
                                 randombytes_buf(signing_response_data->nonce, INDIGO_NONCE_SIZE);
                                 signing_response_data->sig_request = 1;
 
                                 // insert into xsr
                                 xsr.expiration_time = time(NULL) + EXPIRATION_TIME;
                                 xsr.pkx = session_pk;
+
                                 xsr.skx = session_sk;
                                 memcpy(xsr.nonce, signing_response_data->nonce, INDIGO_NONCE_SIZE);
                                 memcpy(xsr.id, packet->id, crypto_sign_PUBLICKEYBYTES);
@@ -385,7 +419,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                                     *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                                     goto cleanup;
                                 }
-                            } else {
+                            }
+                            else {
                                 // we don't need to send a signature request, we erase the nonce and turn off the flag
                                 memset(signing_response_data->nonce, 0, INDIGO_NONCE_SIZE);
                                 signing_response_data->sig_request = 0;
@@ -399,8 +434,22 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                             // we detected the device (though it is unverified)
                             rdev.expiration_time = time(NULL) + EXPIRATION_TIME;
                             rdev.ip = packet_info->address.sin_addr.s_addr;
+                            rdev.client_rk = NULL;
+                            rdev.client_tk = NULL;
+                            rdev.server_rk = NULL;
+                            rdev.server_tk = NULL;
+                            rdev.fsr_list = NULL;
+                            rdev.fsr_count = 0;
                             memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
                             rdev.dev_state_flag = RDSF_UNVERIFIED; // the device is not verified
+
+                            memcpy(known_key.key, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
+                            if (known_keys_tree->search(known_keys_tree, &known_key)) {
+                                rdev.dev_state_flag |= known_key.status;
+                            }
+                            else {
+                                rdev.dev_state_flag |= KNOWN_KEY_STATUS_UNKOWN;
+                            }
 
                             ret = args->device_tree->insert(args->device_tree, &rdev);
                             if (ret) {
@@ -486,6 +535,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                                     found_rdev->ip = packet_info->address.sin_addr.s_addr; // ip may have changed
 
                                     found_rdev->dev_state_flag |= RDSF_VERIFIED;
+                                    found_rdev->dev_state_flag &= (~RDSF_UNVERIFIED);
 
                                     // check if we need to verify ourselves
                                     if (((signing_response_data_t *)(packet->data))->sig_request) {
@@ -583,7 +633,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                                                     break; // winlib errors go here
                                             }
                                         }
-                                    } else {
+                                    }
+                                    else {
                                         // todo: improve error handling
                                         // create the client and server keys
                                         ret = crypto_kx_client_session_keys(
@@ -622,7 +673,9 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                             // file packet
 
                             Q_FILE_SENDING_REQUEST *fsr;
+                            Q_FILE_SENDING_REQUEST *temp_fsr = NULL;
                             file_sending_request_data_t *data;
+
                             if (packet->magic_number != MAGIC_NUMBER_2)
                                 break;
                             fsr = malloc(sizeof(Q_FILE_SENDING_REQUEST));
@@ -630,17 +683,45 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                                 *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                                 goto cleanup;
                             }
+
                             data = (file_sending_request_data_t *)packet->data;
                             memcpy(fsr->id, packet->id, crypto_sign_PUBLICKEYBYTES);
                             fsr->file_size = data->file_size;
                             memcpy(fsr->file_name, data->file_name, PATH_MAX * sizeof(wchar_t));
-                            fsr->file_name[PATH_MAX - 1] = L'\0';
+                            fsr->file_name[PATH_MAX - 1] = '\0';
                             fsr->addr = packet_info->address.sin_addr.s_addr;
 
-                            if (queue_push(args->ui_queue, fsr, QET_FILE_SENDING_REQUEST)) {
-                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                                goto cleanup;
+                            if (args->device_tree->search_pin(args->device_tree, &rdev, (void **)&found_rdev)) {
+                                if (found_rdev->dev_state_flag & KNOWN_KEY_STATUS_TOO_GOOD) {
+                                    // in this case and this case only the user has specified
+                                    // that this peer does not need aproval
+                                    ret = create_server_session(fwd, args->device_tree, args->session_tree, xfp_tree,
+                                                                public_key, args->sockets, args->flag);
+                                    if (ret) {
+                                        // todo: create_server_session() uses send_packet() and returns its errors
+                                        // todo: do more complex error handling
+                                        *process_return = ret;
+                                        goto cleanup;
+                                    }
+                                    break;
+                                }
+                                if (found_rdev->fsr_count == MAX_SEND_REQUEST_COUNT) {
+                                    // remove the last request
+                                    for (Q_FILE_SENDING_REQUEST *i = found_rdev->fsr_list; i->next != NULL;
+                                         i = i->next) {
+                                        temp_fsr = i;
+                                    }
+                                    free(temp_fsr->next);
+                                    temp_fsr->next = NULL;
+                                    (found_rdev->fsr_count)--;
+                                }
+                                (found_rdev->fsr_count)++;
+                                temp_fsr = found_rdev->fsr_list;
+                                found_rdev->fsr_list = fsr;
+                                fsr->next = temp_fsr;
                             }
+                            args->device_tree->search_release(args->device_tree);
+
                             break;
                         }
                     case MSG_FILE_SENDING_RESPONSE:
@@ -743,7 +824,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                             // write)
                             if (chunk_number * PAC_DATA_PAYLOAD_BYTES < LLONG_MAX) {
                                 fseeko64(found_xfp->file, (long long)(chunk_number * PAC_DATA_PAYLOAD_BYTES), SEEK_SET);
-                            } else {
+                            }
+                            else {
                                 // not very sure who owns a file bigger than 2 exbi-bytes, but why not
                                 fseeko64(found_xfp->file, LLONG_MAX, SEEK_SET);
                                 fseeko64(found_xfp->file,
@@ -822,7 +904,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                 args->mempool->free(args->mempool, packet);
                 packet = NULL;
                 packet_info = NULL;
-            } else if (node->type == QET_SESSION_START) {
+            }
+            else if (node->type == QET_SESSION_START) {
                 // they sent us a send request and the user said yes
                 fwd = node->data;
                 ret = create_server_session(fwd, args->device_tree, args->session_tree, xfp_tree, public_key,
@@ -836,7 +919,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                 }
                 destroy_qnode(node);
                 node = NULL;
-            } else if (node->type == QET_EXPECT_SEND_RESPONSE) {
+            }
+            else if (node->type == QET_EXPECT_SEND_RESPONSE) {
                 Q_EXPECT_SEND_RESPONSE *qe = (Q_EXPECT_SEND_RESPONSE *)node->data;
                 // we sent a request to send a file, and we expect a response to that request
                 memset(&xfp, 0, sizeof(xfp_t));
@@ -854,7 +938,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                     *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                     goto cleanup;
                 }
-            } else {
+            }
+            else {
                 // probably an error but good to check
                 destroy_qnode(node);
                 node = NULL;
@@ -871,7 +956,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
             iterations_until_cleanup--;
             if (!queue_is_empty(args->queue))
                 continue;
-        } else
+        }
+        else
             iterations_until_cleanup = 10;
 
         /////////////////////////////////////////
@@ -905,7 +991,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                         goto cleanup;
                     }
-                } else {
+                }
+                else {
                     // branchless minimum
                     lowest_time = time_diff + ((lowest_time - time_diff) &
                                                ((lowest_time - time_diff) >> (sizeof(time_t) * CHAR_BIT - 1)));
@@ -943,7 +1030,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                         goto cleanup;
                     }
-                } else {
+                }
+                else {
                     // branchless minimum
                     lowest_time = time_diff + ((lowest_time - time_diff) &
                                                ((lowest_time - time_diff) >> (sizeof(time_t) * CHAR_BIT - 1)));
@@ -981,7 +1069,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
                         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                         goto cleanup;
                     }
-                } else {
+                }
+                else {
                     // branchless minimum
                     lowest_time = time_diff + ((lowest_time - time_diff) &
                                                ((lowest_time - time_diff) >> (sizeof(time_t) * CHAR_BIT - 1)));
@@ -1008,6 +1097,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args) {
 
     free_tree(xsr_tree);
     free_tree(xfp_tree);
+    free_tree(known_keys_tree);
     free(signing_request_data);
     free(signing_response_data);
     free(file_sending_request_data);
@@ -1018,6 +1108,7 @@ cleanup:
     destroy_qnode(node);
     free_tree(xsr_tree);
     free_tree(xfp_tree);
+    free_tree(known_keys_tree);
     free(signing_request_data);
     free(signing_response_data);
     free(file_sending_request_data);
@@ -1031,13 +1122,15 @@ cleanup:
 // cmp functions (helpers)
 int cmp_xsr(void *s1, void *s2) { return memcmp(((xsr_t *)s1)->id, ((xsr_t *)s2)->id, crypto_kx_PUBLICKEYBYTES); }
 
-int cmp_xfp(void *s1, void *s2) {
+int cmp_xfp(void *s1, void *s2)
+{
     return memcmp(&((xfp_t *)s1)->session_id, &((xfp_t *)s2)->session_id,
                   (sizeof(uint64_t) + crypto_sign_PUBLICKEYBYTES));
 }
 
 int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t *session_tree, tree_t *xfp_tree,
-                          unsigned char pk[crypto_sign_PUBLICKEYBYTES], socket_ll *sockets, EFLAG *flag) {
+                          unsigned char pk[crypto_sign_PUBLICKEYBYTES], socket_ll *sockets, EFLAG *flag)
+{
     // they sent us a send request and the user said yes
 
     int ret;
@@ -1133,7 +1226,8 @@ cleanup:
 }
 
 int create_client_session(const packet_t *const packet, const packet_info_t *const packet_info, tree_t *dev_tree,
-                          tree_t *session_tree, tree_t *xfp_tree, QUEUE *send_queue) {
+                          tree_t *session_tree, tree_t *xfp_tree, QUEUE *send_queue)
+{
     // we got their one time public key, and confirmation to proceed
     // we calculate the send key
     // tell the sending thread to start sending the file
@@ -1207,7 +1301,8 @@ cleanup:
     return ret;
 }
 
-int sanitize_username(wchar_t username[MAX_USERNAME_LEN]) {
+int sanitize_username(wchar_t username[MAX_USERNAME_LEN])
+{
     if (username == NULL)
         return 1;
 

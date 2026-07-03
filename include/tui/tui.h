@@ -22,14 +22,14 @@ SOFTWARE.
 #ifndef TUI_H
 #define TUI_H
 
+#include "indigo_types.h"
 #define _XOPEN_SOURCE_EXTENDED
 
 #include <Queue.h>
 #include <binary_tree.h>
+#include <lht.h>
 #include <ncursesw/curses.h>
 #include <stdint.h>
-
-typedef uint64_t utf8_char_t;
 
 int verify_user(void **master_key);
 
@@ -41,5 +41,10 @@ int create_new_password();
 int iswspecialchar(wint_t ch);
 int get_user_input(WINDOW *win, utf8_char_t *input);
 
-int create_main_interface(tree_t *dev_tree, QUEUE *ui_queue);
+int create_main_interface(tree_t *dev_tree, QUEUE *ui_queue, QUEUE *ph_queue);
+int pathfinder(char path[PATH_MAX]);
+int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_t *id_count,
+                  unsigned char last_id[crypto_sign_PUBLICKEYBYTES], int *last_row);
+int print_device(WINDOW *win, remote_device_t *rdev, uint64_t count, char highlight);
+int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, lht_t *active_files);
 #endif // TUI_H

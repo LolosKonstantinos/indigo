@@ -41,10 +41,12 @@ SOFTWARE.
 #define MAX_PSW_LEN 128
 #define MAX_USERNAME_LEN 32
 #define INDIGO_NONCE_SIZE 32
+#define MAX_SEND_REQUEST_COUNT 10
 
 #define ON 1
 #define OFF 0
 
+#define INDIGO_CONFIG_DIR "config"
 #define INDIGO_CRYPTO_DIR "config/crypto/"
 #define INDIGO_PSW_DIR "config/crypto/psw/"
 #define INDIGO_KEY_DIR "config/crypto/key/"
@@ -56,11 +58,17 @@ SOFTWARE.
 #define INDIGO_USER_DIR "config/user/"
 #define INDIGO_USERNAME_FILE_NAME "username.txt"
 #define INDIGO_SETTINGS_DIR "config/settings/"
-#define INDIGO_SETTINGS_FILE_NAME "settings.config"
+#define INDIGO_SETTINGS_FILE_NAME "settings.conf"
 
 // RDSF == RemoteDeviceStateFlag
-#define RDSF_UNVERIFIED 0x0000
-#define RDSF_VERIFIED 0x0001
+#define RDSF_UNVERIFIED 0x0001
+#define RDSF_VERIFIED 0x0002
+// known key status values (can be used in the dev_state_flag)
+#define KNOWN_KEY_STATUS_TOO_GOOD 0x0004
+#define KNOWN_KEY_STATUS_GOOD 0x0008
+#define KNOWN_KEY_STATUS_UNKOWN 0x0010
+#define KNOWN_KEY_STATUS_BAD 0x0020
+#define KNOWN_KEY_STATUS_EVIL_AND_SINISTER 0x0040
 
 #define PAC_VERSION (1)
 #define DISCOVERY_SEND_PERIOD_SEC (10)
@@ -87,6 +95,8 @@ SOFTWARE.
 #define MSG_IP_CHANGE 0x0b
 #define MSG_ERR 0xff
 // more types may be added
+
+typedef uint64_t utf8_char_t;
 
 // the packet that is sent for everything, device discovery, signature
 // handshakes, file chunks, etc. it's a little big but since the buffer is at
@@ -125,7 +135,7 @@ typedef struct packet_info_t {
 
 typedef struct PACKED init_packet_data_t {
     time_t timestamp;
-    wchar_t username[MAX_USERNAME_LEN];
+    char username[MAX_USERNAME_LEN * sizeof(utf8_char_t)];
     unsigned char signature[crypto_sign_BYTES];
 } init_packet_data_t;
 #define PAC_INIT_SIZE (sizeof(udp_packet_header) + sizeof(init_packet_data_t))
@@ -175,6 +185,17 @@ typedef struct PACKED transmission_control_data_t {
 } transmission_control_data_t;
 #define PAC_TRANSMISSION_CONTROL_SIZE (sizeof(udp_packet_header) + sizeof(transmission_control_data_t))
 
+typedef struct fwd_fsr_t {
+    uint64_t serial;
+    size_t file_size; // the size of the file in bytes
+    char file_name[NAME_MAX];
+    uint32_t addr;
+    unsigned char id[crypto_sign_PUBLICKEYBYTES];
+    char zero[4];
+    time_t expiration_time;
+    struct fwd_fsr_t *next;
+} fwd_fsr_t;
+
 typedef struct remote_device_t {
     time_t expiration_time; // the time until which we consider the device active,
                             // updated with any packet
@@ -188,8 +209,10 @@ typedef struct remote_device_t {
     unsigned char *server_rk;
     unsigned char *server_tk;
 
-    wchar_t username[MAX_USERNAME_LEN];
-    uint64_t dev_state_flag;
+    char username[MAX_USERNAME_LEN * sizeof(uint32_t)];
+    uint32_t dev_state_flag;
+    uint32_t fsr_count;
+    fwd_fsr_t *fsr_list;
 } remote_device_t;
 
 typedef struct session_id_t {
@@ -218,24 +241,15 @@ typedef struct active_file_t {
     uint32_t ip;
 } active_file_t;
 
+typedef struct known_key_t {
+    unsigned char key[crypto_sign_PUBLICKEYBYTES];
+    uint64_t status;
+} known_key_t;
+
 /*inline function definitions*/
-static FORCE_INLINE int cmp_rdev(void *s1, void *s2) {
+static FORCE_INLINE int cmp_rdev(void *s1, void *s2)
+{
     return memcmp(((remote_device_t *)s1)->peer_pk, ((remote_device_t *)s2)->peer_pk, crypto_sign_PUBLICKEYBYTES);
 }
-
-// key (project) universal codes
-#define KEY_ARROW_UP 0x01
-#define KEY_ARROW_DOWN 0x02
-#define KEY_ARROW_LEFT 0x03
-#define KEY_ARROW_RIGHT 0x04
-#define KEY_ENTER 0x05
-#define KEY_SPACE 0x06
-#define KEY_BACKSPACE 0x07
-#define KEY_TAB 0x08
-#define KEY_CTRL 0x09
-#define KEY_ALT 0x0A
-#define KEY_SHIFT 0x0B
-#define KEY_ESC 0x0C
-#define KEY_DELETE 0x0D
 
 #endif // INDIGO_TYPES_H

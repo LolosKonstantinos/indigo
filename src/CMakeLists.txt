@@ -1,8 +1,6 @@
 add_subdirectory(libs)
 
 # Create the executable from main.c.
-add_executable(${PROJECT_NAME}_cli main_cli.c)
-
 add_executable(${PROJECT_NAME}_tui main_tui.c)
 
 add_executable(${PROJECT_NAME}_gui main_gui.c)
@@ -16,5 +14,3 @@ target_link_libraries(${PROJECT_NAME}_tui PRIVATE indigo_core
                                                   ncursesw
                                                   sodium
 )
-
-target_link_libraries(${PROJECT_NAME}_cli PRIVATE cli)

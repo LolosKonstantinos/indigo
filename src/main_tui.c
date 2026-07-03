@@ -35,7 +35,8 @@ SOFTWARE.
 #include "manager.h"
 #include <tui/tui.h>
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
 #ifdef _WIN32
     WSADATA wsaData;
 #endif
@@ -51,6 +52,9 @@ int main(int argc, char *argv[]) {
 
     // ui queue
     QUEUE *ui_queue;
+
+    // the packet handler queue
+    QUEUE *ph_queue = NULL;
 
     MANAGER_ARGS *manager_args;
     pthread_t manager_tid;
@@ -119,7 +123,22 @@ int main(int argc, char *argv[]) {
     }
 
     // create the main tui interface
-    create_main_interface(device_tree, ui_queue);
+    init_pair(1, COLOR_RED, COLOR_BLACK);
+    init_pair(2, COLOR_MAGENTA, COLOR_BLACK);
+    init_pair(3, COLOR_YELLOW, COLOR_BLACK);
+    init_pair(4, COLOR_GREEN, COLOR_BLACK);
+    init_pair(5, COLOR_CYAN, COLOR_BLACK);
+    init_pair(6, COLOR_BLUE, COLOR_BLACK);
+
+    init_pair(7, COLOR_RED, COLOR_WHITE);
+    init_pair(8, COLOR_MAGENTA, COLOR_WHITE);
+    init_pair(9, COLOR_YELLOW, COLOR_WHITE);
+    init_pair(10, COLOR_GREEN, COLOR_WHITE);
+    init_pair(11, COLOR_CYAN, COLOR_WHITE);
+    init_pair(12, COLOR_BLUE, COLOR_WHITE);
+    init_pair(12, COLOR_BLACK, COLOR_WHITE);
+
+    create_main_interface(device_tree, ui_queue, ph_queue);
 
     endwin();
     printf("\nmain return:%d\n", ret);

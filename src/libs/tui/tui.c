@@ -19,18 +19,31 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+#include "tui.h"
+#include "Queue.h"
+#include "binary_tree.h"
 #include "crypto_utils.h"
 #include "indigo_errors.h"
 #include "indigo_types.h"
+#include "lht.h"
+#include <config.h>
+#include <glib-2.0/glib.h>
+#include <glib-2.0/glib/gstdio.h>
+#include <linux/limits.h>
+#include <ncursesw/curses.h>
+#include <pthread.h>
+#include <sodium/crypto_sign.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
-#include <tui.h>
-#include <uchar.h>
+#include <string.h>
 #include <unistd.h>
 #include <wctype.h>
 #ifdef _WIN32
 #define sleep(t) (Sleep(1000 * t))
 #endif
-int verify_user(void **master_key) {
+int verify_user(void **master_key)
+{
     int ret = 0;
 
     if (!password_hash_exists()) {
@@ -82,7 +95,8 @@ int verify_user(void **master_key) {
     return ret;
 }
 // todo this function makes the process crash, probably segfault, does not verify password correctly in debug mode
-int verify_password(void **master_key) {
+int verify_password(void **master_key)
+{
     char *psw;
     wint_t ch;
     char mch;
@@ -123,18 +137,22 @@ int verify_password(void **master_key) {
                 default:
                     break;
             }
-        } else if (res == OK) {
+        }
+        else if (res == OK) {
             if (mch == '\n' || mch == '\r') {
                 enter = 1;
-            } else if (mch == '\b' || mch == 127) {
+            }
+            else if (mch == '\b' || mch == 127) {
                 del = 1;
-            } else if (mch > 127 || !(iswalnum(mch) || iswspecialchar(mch))) {
+            }
+            else if (mch > 127 || !(iswalnum(mch) || iswspecialchar(mch))) {
                 move(20, 0); // todo check this to be bellow the password window
                 printw("use ONLY alpharithmetics and !@#$%%^&*_");
                 refresh();
                 wmove(password_window, 1, 1 + ((psw_len >= 62) ? 61 : psw_len));
                 wrefresh(password_window);
-            } else {
+            }
+            else {
                 if (psw_len < MAX_PSW_LEN) {
                     if (err_printed) {
                         wclear(password_window);
@@ -147,11 +165,13 @@ int verify_password(void **master_key) {
                         wprintw(password_window, "*");
                     psw[psw_len] = mch;
                     psw_len++;
-                } else {
+                }
+                else {
                     overflow = 1;
                 }
             }
-        } else {
+        }
+        else {
             sodium_memzero(psw, MAX_PSW_LEN);
             sodium_free(psw);
             delwin(password_window);
@@ -178,7 +198,8 @@ int verify_password(void **master_key) {
                 overflow = 0;
                 psw_len = 0;
                 sodium_memzero(psw, MAX_PSW_LEN + 1);
-            } else {
+            }
+            else {
                 sodium_free(psw);
                 return -1;
             }
@@ -214,7 +235,8 @@ int verify_password(void **master_key) {
     refresh();
     return 0;
 }
-WINDOW *create_welcome_screen() {
+WINDOW *create_welcome_screen()
+{
     WINDOW *password_window;
     const int maxx = getmaxx(stdscr);
     password_window = newwin(3, 64, 17, (maxx - 64) / 2);
@@ -232,7 +254,8 @@ WINDOW *create_welcome_screen() {
     return password_window;
 }
 
-int create_new_password() {
+int create_new_password()
+{
     WINDOW *psw_win_1;
     WINDOW *psw_win_2;
     WINDOW *curr_window;
@@ -328,12 +351,15 @@ int create_new_password() {
                 default:
                     break;
             }
-        } else if (res == OK) {
+        }
+        else if (res == OK) {
             if (ch == '\n' || ch == '\r') {
                 enter = 1;
-            } else if (ch == '\b' || ch == 127) {
+            }
+            else if (ch == '\b' || ch == 127) {
                 del = 1;
-            } else if (ch > 127 || !(iswalnum(ch) || iswspecialchar(ch))) {
+            }
+            else if (ch > 127 || !(iswalnum(ch) || iswspecialchar(ch))) {
                 move(19, 0);
                 printw("use ONLY alpharithmetics and !@#$%%^&*_");
                 refresh();
@@ -341,11 +367,13 @@ int create_new_password() {
                 if (curr_window == psw_win_1) {
                     wmove(psw_win_1, 1, 1 + ((psw_len_1 > 62) ? 61 : psw_len_1));
                     wrefresh(psw_win_1);
-                } else {
+                }
+                else {
                     wmove(psw_win_2, 1, 1 + ((psw_len_2 > 62) ? 61 : psw_len_2));
                     wrefresh(psw_win_2);
                 }
-            } else {
+            }
+            else {
                 if (curr_window == psw_win_1) {
                     if (psw_len_1 < MAX_PSW_LEN) {
                         if (err_writen) {
@@ -361,7 +389,8 @@ int create_new_password() {
                         psw_1[psw_len_1] = mch;
                         psw_len_1++;
                     }
-                } else {
+                }
+                else {
                     if (psw_len_2 < MAX_PSW_LEN) {
                         if (psw_len_2 < 62) {
                             wprintw(curr_window, "*");
@@ -371,7 +400,8 @@ int create_new_password() {
                     }
                 }
             }
-        } else {
+        }
+        else {
             sodium_memzero(psw_1, MAX_PSW_LEN);
             sodium_memzero(psw_2, MAX_PSW_LEN);
             sodium_free(psw_1);
@@ -433,7 +463,8 @@ int create_new_password() {
                 wmove(psw_win_1, 1, 1 + ((psw_len_1 >= 62) ? 61 : psw_len_1));
                 wprintw(psw_win_1, " ");
                 wmove(psw_win_1, 1, 1 + ((psw_len_1 >= 62) ? 61 : psw_len_1));
-            } else {
+            }
+            else {
                 if (psw_len_2 > 0) {
                     psw_len_2--;
                 }
@@ -464,7 +495,8 @@ int create_new_password() {
     refresh();
     return 0;
 }
-int iswspecialchar(const wint_t ch) {
+int iswspecialchar(const wint_t ch)
+{
     switch (ch) {
         case '!':
         case '@':
@@ -481,7 +513,8 @@ int iswspecialchar(const wint_t ch) {
     }
 }
 
-int get_user_input(WINDOW *win, utf8_char_t *input) {
+int get_user_input(WINDOW *win, utf8_char_t *input)
+{
     int ret = 0;
     wint_t c = 0;
 #ifdef _WIN32
@@ -502,17 +535,20 @@ int get_user_input(WINDOW *win, utf8_char_t *input) {
                     else {
                         return OK;
                     }
-                } else if (ret == KEY_CODE_YES) {
+                }
+                else if (ret == KEY_CODE_YES) {
                     *input = c;
                     return KEY_CODE_YES;
-                } else {
+                }
+                else {
                     return -1;
                 }
                 break;
             default:
                 break;
         }
-    } else if (ret == KEY_CODE_YES) {
+    }
+    else if (ret == KEY_CODE_YES) {
         *input = c;
         return KEY_CODE_YES;
     }
@@ -523,7 +559,8 @@ int get_user_input(WINDOW *win, utf8_char_t *input) {
     if (ret == OK) {
         wctomb((char *)input, c);
         return OK;
-    } else if (ret == KEY_CODE_YES) {
+    }
+    else if (ret == KEY_CODE_YES) {
         *input = c;
         return KEY_CODE_YES;
     }
@@ -531,59 +568,842 @@ int get_user_input(WINDOW *win, utf8_char_t *input) {
 #endif
 }
 
-int create_main_interface(tree_t *dev_tree, QUEUE *ui_queue) {
+// TODO: so as to not forget it
+//       user name is cyan
+//       ip is magenta
+//       trusted is [TRUSTED] and green
+//       not trusted yet is [UNKOWN] and yellow
+//       blocked or dagerous is [DANGEROUS] and red
+int create_main_interface(tree_t *dev_tree, QUEUE *ui_queue, QUEUE *ph_queue)
+{
     tree_iterator_t *dev_iter;
-    WINDOW *dialog_win;
-    WINDOW *device_win;
-    WINDOW *devinfo_win;
-    WINDOW *text_input_win;
+    WINDOW *notification_win;
+    WINDOW *device_pad;
+    // WINDOW *devinfo_pad;
+    // WINDOW *text_input_win;
 
     int maxx;
     int maxy;
+    int win_r;
+    int win_c;
+
+    int device_top_row = 0;
 
     utf8_char_t ch;
-    char mch;
+    char context = 0; // 0 is for devises and 1 is for devide info
+
+    QNODE *qnode = NULL;
+    Q_FILE_SENDING_REQUEST *fsr = NULL;
+
+    remote_device_t rdev;
+    remote_device_t *rdev_p = NULL;
+
+    unsigned char **dev_IDs = NULL;
+    size_t id_count = 0;
+    unsigned char last_id[crypto_sign_PUBLICKEYBYTES];
+    int last_id_row = 0;
+
+    char selected_path[PATH_MAX];
 
     int ret;
 
+    memset(last_id, 0, crypto_sign_PUBLICKEYBYTES);
+
     getmaxyx(stdscr, maxy, maxx);
+    win_r = (100 > maxy) ? 100 : maxy;
+    win_c = (100 > maxx) ? 100 : maxx;
+    device_pad = newpad(win_r, win_c);
 
-    dialog_win = newwin(3, maxx, 0, 0);
-    device_win = newwin(maxy - 8, (int)(maxx * 0.3), 3, 0); // maxy - (dialog (3) ) - (text(3) + 2)
-    devinfo_win = newwin(maxy - 8, maxx - (int)(maxx * 0.3), 3, (int)(maxx * 0.3));
-    text_input_win = newwin(3, (maxx << 1) / 3, maxy - 5, maxx / 6);
-
-    box(dialog_win, 0, 0);
-    box(device_win, 0, 0);
-    box(devinfo_win, 0, 0);
-    box(text_input_win, 0, 0);
-
-    keypad(text_input_win, TRUE);
+    keypad(device_pad, TRUE);
     curs_set(0);
+    halfdelay(10);
 
-    refresh();
-    wrefresh(dialog_win);
-    wrefresh(device_win);
-    wrefresh(devinfo_win);
-    wrefresh(text_input_win);
+    pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy, maxx);
+    // pnoutrefresh(devinfo_pad, devinfo_top_row, 0, 3, 0, maxy - 5, maxx - (int)(maxx * 0.3));
+
+    // wnoutrefresh(text_input_win);
 
     // the main loop
     while (1) {
-        ret = get_user_input(text_input_win, &ch);
+        ret = get_user_input(device_pad, &ch);
         if (ret == KEY_CODE_YES) {
             // function keys
-        } else if (ret == OK) {
+            switch (ch) {
+                case KEY_DOWN:
+                    if (context == 0) {
+                        if (device_top_row + win_c <= id_count) {
+                            wchgat(device_pad, 3, A_NORMAL, 0, NULL);
+                            wmove(device_pad, ++device_top_row, 0);
+                            wchgat(device_pad, 3, A_REVERSE, 0, NULL);
+                            ++last_id_row;
+                            pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy, maxx);
+                        }
+                    }
+                    else {
+                    }
+                    break;
+                case KEY_UP:
+                    if (context == 0) {
+                        if (device_top_row > 0) {
+                            wchgat(device_pad, 3, A_NORMAL, 0, NULL);
+                            wmove(device_pad, --device_top_row, 0);
+                            wchgat(device_pad, 3, A_REVERSE, 0, NULL);
+                            --last_id_row;
+                            pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy, maxx);
+                        }
+                    }
+                    else {
+                    }
+                    break;
+                case KEY_LEFT:
+                case KEY_RIGHT:
+                case KEY_DC: // delete
+                case KEY_RESIZE:
+                default:
+                    break;
+            }
+        }
+        else if (ret == OK) {
             // characters
-        } else {
-            printf("get_user_input() returned error %d\n", ret);
+            if (ch == '\x1b')
+                break;
+            if (ch == '\n' || ch == '\r') {
+                // select the action
+                if (context == 0) {
+                    context = 1;
+                    // TODO: print_device_files(device_pad, last_id, NULL);
+                }
+                else {
+                }
+            }
+        }
+
+        // update the ui
+        if (context == 0) {
+            werase(device_pad);
+            print_devices(device_pad, dev_tree, &dev_IDs, &id_count, last_id, &last_id_row);
+            pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy, maxx);
+        }
+        else {
+            werase(device_pad);
+            // TODO: print_device_files
+            pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy, maxx);
+        }
+        doupdate();
+    }
+    delwin(notification_win);
+    delwin(device_pad);
+    // delwin(devinfo_pad);
+    // delwin(text_input_win);
+    return 0;
+}
+int pathfinder(char path[PATH_MAX])
+{
+    utf8_char_t in_char;
+    int key_repeat_count = 0;
+    uint64_t character_len = 0;
+    char in_path[PATH_MAX] = {0};
+    char *initial_cwd = NULL;
+    int in_path_len = 0;
+    int ret = 0;
+    GDir *curr_dir = NULL;
+    GError *err = NULL;
+    GStatBuf stat_buf;
+    const char *dir_entry = NULL;
+    char *cpath = NULL;
+    char *cwd = NULL;
+    WINDOW *win;
+    WINDOW *win_frame;
+    WINDOW *win_text;
+    int maxx;
+    int maxy;
+    int win_c; // this is the visible window width
+    int win_r; // this is the visible window height
+    const int win_init_c = 120;
+    const int win_init_r = 500;
+    int x;
+    int y;
+    int longest_path = 0;
+    int entry_num = 0;
+    int win_origin_x = 0;
+    int win_origin_y = 0;
+
+    getmaxyx(stdscr, maxy, maxx);
+    win_c = maxx - 2;
+    win_r = maxy - 5; // we do -3 to make room for the text input
+    win = newpad((win_r > win_init_r) ? win_r : win_init_r, (win_c > win_init_c) ? win_c : win_init_c);
+    win_frame = newwin(maxy, maxx, 0, 0);
+
+    win_text = newwin(3, win_c, maxy - 4, 1);
+
+    box(win_frame, 0, 0);
+    box(win_text, 0, 0);
+
+    wnoutrefresh(win_frame);
+    wnoutrefresh(win_text);
+    x = 0;
+    y = 0;
+    wattron(win, COLOR_PAIR(2));
+    mvwprintw(win, y, x, "Enter . to select the cwd, or a filename to select the respective file.");
+    ++y;
+    mvwprintw(win, y, x, "Use ESC (escape) to quit this dialog.");
+    ++y;
+    wattroff(win, COLOR_PAIR(2));
+
+    keypad(win_text, TRUE);
+
+    cwd = g_get_current_dir();
+    if (cwd) {
+        wattron(win, COLOR_PAIR(5));
+        mvwprintw(win, y, x, "Current directory: %s", cwd);
+        wattroff(win, COLOR_PAIR(5));
+        y += 2;
+        pnoutrefresh(win, win_origin_y, win_origin_x, 1, 1, maxy - 5, maxx - 2);
+        g_free(cwd);
+    }
+    cwd = NULL;
+
+    curr_dir = g_dir_open(".", 0, &err);
+    if (err) {
+        // TODO: check error codes, we don't want to print plain errors. error handle bbetter
+        g_printerr("%s", err->message);
+        g_clear_error(&err);
+    }
+    // print the current directory
+
+    dir_entry = g_dir_read_name(curr_dir);
+    while (dir_entry) {
+        cpath = g_canonicalize_filename(dir_entry, NULL);
+        if (!cpath) {
+            g_dir_close(curr_dir);
+            g_free(cpath);
+            delwin(win);
+            delwin(win_frame);
+            delwin(win_text);
+            return -1;
+        }
+        ret = g_file_test(cpath, G_FILE_TEST_EXISTS);
+        if (ret == 0) {
+            g_free(cpath);
+            cpath = NULL;
+            continue;
+        }
+        ret = g_file_test(cpath, G_FILE_TEST_IS_DIR);
+        if (ret) {
+            // if it is a directory print it in blue
+            wattron(win, COLOR_PAIR(6) | A_BOLD);
+            mvwprintw(win, y, x, "%s", dir_entry);
+            wattroff(win, COLOR_PAIR(6) | A_BOLD);
+            ++y;
+        }
+        else {
+            // if it is a file or symlink print it in green
+            wattron(win, COLOR_PAIR(4) | A_BOLD);
+            mvwprintw(win, y, x, "%s", dir_entry);
+            wattroff(win, COLOR_PAIR(4) | A_BOLD);
+            ++y;
+        }
+        g_free(cpath);
+        cpath = NULL;
+        dir_entry = g_dir_read_name(curr_dir);
+        ++entry_num;
+    }
+    g_dir_close(curr_dir);
+    pnoutrefresh(win, win_origin_y, win_origin_x, 1, 1, maxy - 5, maxx - 2);
+    wmove(win_text, 1, 1);
+    doupdate();
+
+    while (1) {
+        // get user input
+        ret = get_user_input(win_text, &in_char);
+
+        if (ret == OK) {
+            if (in_char == '\x1b') {
+                // if it is escape we exit
+                memset(path, 0, PATH_MAX);
+                delwin(win);
+                delwin(win_frame);
+                delwin(win_text);
+                return 1;
+            }
+            else if (in_char == '\n' || in_char == '\r') {
+                // we support full paths
+                // we support relative paths
+                // enter goes to the path
+                // if the path is "." we select the current path
+                // TODO: use tab to autocomplete
+                cpath = g_canonicalize_filename(in_path, NULL);
+                if (!cpath) {
+                    delwin(win);
+                    delwin(win_frame);
+                    delwin(win_text);
+                    return -1;
+                }
+
+                // check if the user entered the current path to select it
+                cwd = g_get_current_dir();
+                if (strcmp(cwd, cpath) == 0) {
+                    g_utf8_strncpy(path, cpath, g_utf8_strlen(cpath, -1));
+                    g_free(cwd);
+                    g_free(cpath);
+                    delwin(win);
+                    delwin(win_frame);
+                    delwin(win_text);
+                    return 0;
+                }
+                g_free(cwd);
+
+                // check if the file exists
+                if (g_file_test(cpath, G_FILE_TEST_EXISTS) == 0) {
+                    // either path is a file, or path is invalid.
+                    //  the path is not valid or cannot be g_access
+                    //  print error and Re-enter
+                    wclear(win_text);
+                    box(win_text, 0, 0);
+                    wattron(win_text, COLOR_PAIR(3));
+                    mvwprintw(win_text, 1, 1, "Entered path is not valid or inaccesible! Try again!");
+                    wnoutrefresh(win_text);
+                    wattroff(win_text, COLOR_PAIR(3));
+
+                    doupdate();
+                    in_path_len = 0;
+                    memset(in_path, 0, PATH_MAX);
+                    g_free(cpath);
+                    cpath = NULL;
+                    continue;
+                }
+
+                if (g_file_test(cpath, G_FILE_TEST_IS_REGULAR)) {
+                    // we just select the file
+                    g_utf8_strncpy(path, cpath, g_utf8_strlen(cpath, -1));
+                    g_free(cpath);
+                    delwin(win);
+                    delwin(win_frame);
+                    delwin(win_text);
+                    return 0;
+                }
+                if (g_chdir(cpath)) {
+                    // either path is a file, or path is invalid.
+                    //  the path is not valid or cannot be g_access
+                    //  print error and Re-enter
+                    wclear(win_text);
+                    box(win_text, 0, 0);
+                    wattron(win_text, COLOR_PAIR(3));
+                    mvwprintw(win_text, 1, 1, "Entered path is not valid or inaccesible! Try again!");
+                    wrefresh(win_text);
+                    wattroff(win_text, COLOR_PAIR(3));
+
+                    in_path_len = 0;
+                    memset(in_path, 0, PATH_MAX);
+                    g_free(cpath);
+                    cpath = NULL;
+                    continue;
+                }
+
+                g_free(cpath);
+                cpath = NULL;
+
+                // print the current directory
+                wclear(win);
+                win_origin_y = 3;
+                x = 1;
+                y = 1;
+                wattron(win, COLOR_PAIR(2));
+                mvwprintw(win, y, x, "Enter . to select the cwd, or a filename to select the respective file.");
+                ++y;
+                mvwprintw(win, y, x, "Use ESC (escape) to quit this dialog.");
+                ++y;
+                wattroff(win, COLOR_PAIR(2));
+
+                cwd = g_get_current_dir();
+                if (!cwd) {
+                    // this is probably a memory error
+                    delwin(win);
+                    delwin(win_frame);
+                    delwin(win_text);
+                    return -1;
+                }
+                wattron(win, COLOR_PAIR(5));
+                mvwprintw(win, y, x, "Current directory: %s", cwd);
+                wattroff(win, COLOR_PAIR(5));
+                y += 2;
+                g_free(cwd);
+
+                entry_num = 0;
+                curr_dir = g_dir_open(".", 0, &err);
+                if (err) {
+                    // TODO: check error codes, we don't want to print plain errors. error handle bbetter
+                    g_printerr("%s", err->message);
+                    g_clear_error(&err);
+                }
+                dir_entry = g_dir_read_name(curr_dir);
+
+                while (dir_entry) {
+                    cpath = g_canonicalize_filename(dir_entry, NULL);
+                    if (!cpath) {
+                        g_dir_close(curr_dir);
+                        delwin(win);
+                        delwin(win_frame);
+                        delwin(win_text);
+                        return -1;
+                    }
+                    ret = g_file_test(cpath, G_FILE_TEST_EXISTS);
+                    if (ret == 0) {
+                        g_free(cpath);
+                        cpath = NULL;
+                        continue;
+                    }
+                    ret = g_file_test(cpath, G_FILE_TEST_IS_DIR);
+                    if (ret) {
+                        // if it is a directory print it in blue
+                        wattron(win, COLOR_PAIR(6) | A_BOLD);
+                        mvwprintw(win, y, x, "%s", dir_entry);
+                        wattroff(win, COLOR_PAIR(6) | A_BOLD);
+                        ++y;
+                    }
+                    else {
+                        // if it is a file or symlink print it in green
+                        wattron(win, COLOR_PAIR(4) | A_BOLD);
+                        mvwprintw(win, y, x, "%s", dir_entry);
+                        wattroff(win, COLOR_PAIR(4) | A_BOLD);
+                        ++y;
+                    }
+                    g_free(cpath);
+                    cpath = NULL;
+                    dir_entry = g_dir_read_name(curr_dir);
+                    ++entry_num;
+                }
+                g_dir_close(curr_dir);
+                pnoutrefresh(win, win_origin_y, win_origin_x, 1, 1, maxy - 5, maxx - 2);
+                werase(win_text);
+                box(win_text, 0, 0);
+                wmove(win_text, 1, 1);
+                wnoutrefresh(win_text);
+                in_path_len = 0;
+                memset(in_path, 0, PATH_MAX);
+            }
+            else if (PATH_MAX - strlen(in_path) - 1 > 4) {
+                // TODO: validate the character
+
+                strcat(in_path, (char *)&in_char);
+                ++in_path_len;
+                werase(win_text);
+                box(win_text, 0, 0);
+
+                ret = g_utf8_strlen(in_path, PATH_MAX - 1);
+                if (ret > (win_c - 2))
+                    mvwprintw(win_text, 1, 1, "%s", g_utf8_offset_to_pointer(in_path, ret - win_c + 2));
+                else
+                    mvwprintw(win_text, 1, 1, "%s", in_path);
+                wnoutrefresh(win_text);
+            }
+        }
+        else if (ret == KEY_CODE_YES) {
+            switch (in_char) {
+                case KEY_BACKSPACE:
+                    // delete the last character
+                    *((char *)(g_utf8_offset_to_pointer(in_path, g_utf8_strlen(in_path, PATH_MAX) - 1))) = '\0';
+                    --in_path_len;
+                    werase(win_text);
+                    box(win_text, 0, 0);
+                    ret = g_utf8_strlen(in_path, PATH_MAX - 1);
+                    if (ret > (win_c - 2))
+                        mvwprintw(win_text, 1, 1, "%s", g_utf8_offset_to_pointer(in_path, ret - win_c + 2));
+                    else
+                        mvwprintw(win_text, 1, 1, "%s", in_path);
+                    wnoutrefresh(win_text);
+                    break;
+                case KEY_DC:
+                case KEY_LEFT:
+                case KEY_RIGHT:
+                    break;
+                case KEY_UP:
+                    if (win_origin_y > 0) {
+                        --win_origin_y;
+                        pnoutrefresh(win, win_origin_y, win_origin_x, 1, 1, maxy - 5, maxx - 2);
+                    }
+                    break;
+                case KEY_DOWN:
+                    if (win_origin_y + win_r <= entry_num + 5) {
+                        ++win_origin_y;
+                        pnoutrefresh(win, win_origin_y, win_origin_x, 1, 1, maxy - 5, maxx - 2);
+                    }
+                    break;
+                case KEY_RESIZE:
+                    // resize the window
+                    wclear(win);
+                    clear();
+                    werase(win_frame);
+                    werase(win_text);
+                    wnoutrefresh(win_frame);
+                    pnoutrefresh(win, win_origin_y, win_origin_x, 1, 1, maxy - 5, maxx - 2);
+                    wnoutrefresh(win_text);
+                    doupdate();
+                    getmaxyx(stdscr, maxy, maxx);
+                    win_c = maxx - 2;
+                    win_r = maxy - 5; // we do -3 to make room for the text input
+
+                    wresize(win, ((win_r > win_init_r) ? win_r : win_init_r),
+                            (win_c > win_init_c) ? win_c : win_init_c);
+                    wresize(win_frame, maxy, maxx);
+                    wresize(win_text, 3, win_c);
+
+                    mvwin(win_frame, 0, 0);
+                    mvwin(win_text, maxy - 4, 1);
+                    box(win_frame, 0, 0);
+                    box(win_text, 0, 0);
+                    wnoutrefresh(win_frame);
+                    pnoutrefresh(win, win_origin_y, win_origin_x, 1, 1, maxy - 5, maxx - 2);
+
+                    wmove(win_text, 1, 1);
+                    wnoutrefresh(win_text);
+
+                    x = 0;
+                    y = 0;
+                    mvwprintw(win, y, x, "Enter . to select the cwd, or a filename to select the respective file.");
+                    ++y;
+                    mvwprintw(win, y, x, "Use ESC (escape) to quit this dialog.");
+                    ++y;
+                    pnoutrefresh(win, win_origin_y, win_origin_x, 1, 1, maxy - 5, maxx - 2);
+
+                    // print the cwd
+                    cwd = g_get_current_dir();
+                    if (cwd) {
+                        mvwprintw(win, y, x, "Current directory: %s", cwd);
+                        y += 2;
+                        pnoutrefresh(win, win_origin_y, win_origin_x, 1, 1, maxy - 5, maxx - 2);
+
+                        g_free(cwd);
+                    }
+                    cwd = NULL;
+
+                    curr_dir = g_dir_open(".", 0, &err);
+                    if (err) {
+                        // TODO: check error codes, we don't want to print plain errors. error handle bbetter
+                        g_printerr("%s", err->message);
+                        g_clear_error(&err);
+                    }
+                    // print the current directory
+
+                    dir_entry = g_dir_read_name(curr_dir);
+                    while (dir_entry) {
+                        cpath = g_canonicalize_filename(dir_entry, NULL);
+                        if (!cpath) {
+                            g_dir_close(curr_dir);
+                            delwin(win);
+                            delwin(win_frame);
+                            delwin(win_text);
+                            return -1;
+                        }
+                        ret = g_file_test(cpath, G_FILE_TEST_EXISTS);
+                        if (ret == 0) {
+                            g_free(cpath);
+                            cpath = NULL;
+                            continue;
+                        }
+                        ret = g_file_test(cpath, G_FILE_TEST_IS_DIR);
+                        if (ret) {
+                            // if it is a directory print it in blue
+                            mvwprintw(win, y, x, "%s", dir_entry);
+                            ++y;
+                        }
+                        else {
+                            // if it is a file or symlink print it in green
+                            mvwprintw(win, y, x, "%s", dir_entry);
+                            ++y;
+                        }
+                        g_free(cpath);
+                        cpath = NULL;
+                        dir_entry = g_dir_read_name(curr_dir);
+                    }
+                    g_dir_close(curr_dir);
+                    pnoutrefresh(win, win_origin_y, win_origin_x, 1, 1, maxy - 5, maxx - 2);
+                    ret = g_utf8_strlen(in_path, PATH_MAX - 1);
+                    if (ret > (win_c - 2))
+                        mvwprintw(win_text, 1, 1, "%s", g_utf8_offset_to_pointer(in_path, ret - win_c + 2));
+                    else
+                        mvwprintw(win_text, 1, 1, "%s", in_path);
+                    wnoutrefresh(win_text);
+                    break;
+                default:
+                    break;
+            }
+        }
+        else {
             break;
         }
-        break; // temporary so as not to block
+        doupdate();
+    }
+    delwin(win);
+    delwin(win_frame);
+    delwin(win_text);
+    return -1;
+}
+
+int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_t *id_count,
+                  unsigned char last_id[crypto_sign_PUBLICKEYBYTES], int *last_row)
+{
+    int ret;
+    int y = 0;
+    uint64_t count = 0;
+    tree_iterator_t *iter;
+    remote_device_t *rdev;
+    remote_device_t *found_rdev;
+    remote_device_t s_rdev;
+    known_key_t known_key;
+    unsigned char **id_array = NULL;
+    char highlight = 0;
+    char found = 0;
+    void *temp;
+
+    if (!dev_IDs || !dev_tree || !win || !last_id || !last_row) {
+        return -1;
     }
 
-    delwin(dialog_win);
-    delwin(device_win);
-    delwin(devinfo_win);
-    delwin(text_input_win);
+    memcpy(s_rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);
+    // searches the tree and does not unlock it
+    if (dev_tree->search_pin(dev_tree, &s_rdev, (void **)&found_rdev)) {
+        found = 1;
+    }
+    else {
+        found = 0;
+    }
+    ret = new_tree_iterator(dev_tree, &iter);
+    while (tree_has_next(iter)) {
+        if (found && (memcmp(last_id, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES) == 0)) {
+            // ignore the the device that was last highlighed
+            // it will be printed on the same line it was before
+            continue;
+        }
+        if (y == *last_row && found) {
+            // print the last highlighed device on the row it was before
+            print_device(win, found_rdev, count, 1);
+            ++y;
+            ++count;
+            // add the device to the id array
+            temp = reallocarray(id_array, count + 1, sizeof(unsigned char));
+            if (!temp) {
+                tree_unlock(dev_tree);
+                return -1;
+            }
+            id_array = temp;
+            temp = malloc(crypto_sign_PUBLICKEYBYTES);
+            if (!temp) {
+                tree_unlock(dev_tree);
+                return -1;
+            }
+            id_array[count] = temp;
+            memcpy(temp, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES);
+            continue;
+        }
+        else if (y == *last_row && found == 0)
+            highlight = 1;
+
+        tree_next(iter, (void **)&rdev);
+
+        print_device(win, rdev, count, highlight);
+        ++y;
+        ++count;
+
+        highlight = 0;
+
+        // add the device to the id array
+        temp = reallocarray(id_array, count + 1, sizeof(unsigned char));
+        if (!temp) {
+            tree_unlock(dev_tree);
+            return -1;
+        }
+        id_array = temp;
+        temp = malloc(crypto_sign_PUBLICKEYBYTES);
+        if (!temp) {
+            tree_unlock(dev_tree);
+            return -1;
+        }
+        id_array[count] = temp;
+        memcpy(temp, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES);
+    }
+    if (found && count < *last_row) {
+        // some devises got removed, so we print the our device at the end
+        print_device(win, found_rdev, count, 1);
+        ++count;
+        *last_row = count;
+
+        // add the device to the id array
+        temp = reallocarray(id_array, count + 1, sizeof(unsigned char));
+        if (!temp) {
+            tree_unlock(dev_tree);
+            return -1;
+        }
+        id_array = temp;
+        temp = malloc(crypto_sign_PUBLICKEYBYTES);
+        if (!temp) {
+            tree_unlock(dev_tree);
+            return -1;
+        }
+        id_array[count] = temp;
+        memcpy(temp, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES);
+    }
+    else if (!found && count < *last_row) {
+        // if we havent highlighed any device yet, we highlight the last one
+        // that is because we have less devises than before and the last one is not there
+        // so the lowest device above the last device is the last one printed
+        wmove(win, count, 0);
+        wchgat(win, 3, A_REVERSE, 0, NULL);
+        *last_row = count;
+        memcpy(last_id, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES);
+    }
+
+    tree_unlock(dev_tree);
+
+    *id_count = count + 1;
+    *dev_IDs = id_array;
+
+    return 0;
+}
+
+int print_device(WINDOW *win, remote_device_t *rdev, uint64_t count, char highlight)
+{
+    char *username;
+    uint8_t *ip_bytes;
+    known_key_t known_key;
+    if (!win || !rdev)
+        return -1;
+
+    username = g_utf8_make_valid(rdev->username, MAX_USERNAME_LEN * sizeof(uint32_t));
+    if (!username)
+        return -1;
+    if (g_utf8_strlen(username, -1) > MAX_USERNAME_LEN) {
+        *(g_utf8_offset_to_pointer(username, MAX_USERNAME_LEN)) = '\0';
+    }
+
+    wmove(win, count, 0);
+    wprintw(win, "dev%lu ", count);
+    wattron(win, COLOR_PAIR(5));
+    wprintw(win, "%s ", username);
+    wattroff(win, COLOR_PAIR(5));
+    ip_bytes = (uint8_t *)&(rdev->ip);
+    wattron(win, COLOR_PAIR(2));
+    wprintw(win, "%d.%d.%d.%d ", ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]);
+    wattroff(win, COLOR_PAIR(2));
+    memcpy(known_key.key, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES);
+    if (rdev->dev_state_flag & KNOWN_KEY_STATUS_TOO_GOOD) {
+        wattron(win, COLOR_PAIR(4) | A_BOLD);
+        wprintw(win, "[TRUSTED+]");
+        wattroff(win, COLOR_PAIR(4) | A_BOLD);
+    }
+    else if (rdev->dev_state_flag & KNOWN_KEY_STATUS_GOOD) {
+        wattron(win, COLOR_PAIR(4));
+        wprintw(win, "[TRUSTED]");
+        wattroff(win, COLOR_PAIR(4));
+    }
+    else if (rdev->dev_state_flag & KNOWN_KEY_STATUS_UNKOWN) {
+        wattron(win, COLOR_PAIR(3));
+        wprintw(win, "[UNKOWN]");
+        wattroff(win, COLOR_PAIR(3));
+    }
+    else if (rdev->dev_state_flag & KNOWN_KEY_STATUS_BAD) {
+        wattron(win, COLOR_PAIR(1));
+        wprintw(win, "[DANGEROUS]");
+        wattroff(win, COLOR_PAIR(1));
+    }
+    else if (rdev->dev_state_flag & KNOWN_KEY_STATUS_EVIL_AND_SINISTER) {
+        wattron(win, COLOR_PAIR(1) | A_BOLD);
+        wprintw(win, "[SINISTER]");
+        wattroff(win, COLOR_PAIR(1) | A_BOLD);
+    }
+    if (rdev->fsr_count > 0) {
+        wattron(win, COLOR_PAIR(3));
+        wprintw(win, " (%d)", rdev->fsr_count);
+        wattroff(win, COLOR_PAIR(3));
+    }
+    g_free(username);
+
+    if (highlight) {
+        wmove(win, count, 0);
+        wchgat(win, 3, A_REVERSE, 0, NULL);
+    }
+    return -1;
+}
+
+int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, lht_t *active_files)
+{
+    int ret;
+    int y = 0;
+    int i;
+    size_t file_size;
+    char *username;
+    char *file_name;
+    char *units[] = {"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"};
+    remote_device_t rdev;
+    remote_device_t *found_rdev;
+    lht_node_t *af_node = NULL;
+    active_file_t *af = NULL;
+
+    if (!win || !dev_tree || !active_files)
+        return -1;
+
+    memcpy(rdev.peer_pk, id, crypto_sign_PUBLICKEYBYTES);
+    ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev);
+    if (ret == 0) {
+        // the device was not found
+        // we return with an error
+        tree_unlock(dev_tree);
+        return 1;
+    }
+
+    username = g_utf8_make_valid(rdev.username, MAX_USERNAME_LEN * sizeof(uint32_t));
+    if (!username) {
+        tree_unlock(dev_tree);
+        return -1;
+    }
+    if (g_utf8_strlen(username, -1) > MAX_USERNAME_LEN) {
+        *(g_utf8_offset_to_pointer(username, MAX_USERNAME_LEN)) = '\0';
+    }
+
+    wmove(win, 0, 0);
+
+    wprintw(win, "%s", username);
+    g_free(username);
+    wmove(win, ++y, 0);
+    for (int i = 0; i < 32; ++i) {
+        wprintw(win, "%02x", id[i]);
+    }
+
+    wmove(win, ++y, 0);
+    mvwprintw(win, ++y, 0, "[actions]");
+    mvwprintw(win, ++y, 0, ">send a file...");
+    mvwprintw(win, ++y, 0, ">trust this device.");
+    mvwprintw(win, ++y, 0, ">super trust this device.");
+    mvwprintw(win, ++y, 0, ">device is EVIL and SINISTER.");
+
+    wmove(win, ++y, 0);
+    mvwprintw(win, ++y, 0, "[requests]");
+    for (fwd_fsr_t *fsr = found_rdev->fsr_list; fsr != NULL; fsr = fsr->next) {
+        file_name = g_utf8_make_valid(fsr->file_name, NAME_MAX);
+        if (!username) {
+            tree_unlock(dev_tree);
+            return -1;
+        }
+        mvwprintw(win, ++y, 0, "%s ", file_name);
+
+        file_size = fsr->file_size;
+        for (i = 0; i < 7; ++i) {
+            if (file_size >> 10 != 0)
+                file_size >>= 10;
+            else
+                break;
+        }
+        file_size = fsr->file_size;
+        wprintw(win, "%.2f %s", (float)file_size / (float)((unsigned long long)1 << (i * 10)), units[i]);
+        g_free(file_name);
+    }
+    tree_unlock(dev_tree);
+
+    wmove(win, ++y, 0);
+    mvwprintw(win, ++y, 0, "[active files]");
+    // TODO: we need a way to get all file transfers happening right now
+    //       make a tree that is shared between send thread, packet handler and ui_queue
+    //       each node has a file id, file name, persentage, and probably speed
+
     return 0;
 }

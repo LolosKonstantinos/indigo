@@ -4,3 +4,12 @@ TabWidth: 4
 ColumnLimit: 120
 IndentCaseBlocks: true
 IndentCaseLabels: true
+BreakBeforeBraces: Stroustrup
+AlignAfterOpenBracket: true
+AlignArrayOfStructures: Left
+AlignOperands:   Align
+SortIncludes:
+  Enabled:         false
+  IgnoreCase:      false
+  IgnoreExtension: false
+PointerAlignment: Right

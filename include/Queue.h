@@ -57,14 +57,7 @@ typedef struct Q_NEW_PACKET_DATA {
     packet_t *packet;
 } Q_NEW_PACKET_DATA;
 
-typedef struct Q_FILE_SENDING_REQUEST {
-    uint64_t serial;
-    size_t file_size; // the size of the file in bytes
-    wchar_t file_name[PATH_MAX];
-    uint32_t addr;
-    unsigned char id[crypto_sign_PUBLICKEYBYTES];
-    char zero[4];
-} Q_FILE_SENDING_REQUEST, Q_SESSION_START;
+typedef fwd_fsr_t Q_FILE_SENDING_REQUEST;
 
 typedef struct Q_EXPECT_SEND_RESPONSE {
     session_id_t session_id;
