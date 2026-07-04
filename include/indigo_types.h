@@ -22,6 +22,7 @@ SOFTWARE.
 #ifndef INDIGO_TYPES_H
 #define INDIGO_TYPES_H
 
+#include <linux/limits.h>
 #ifdef _WIN32
 #include <winsock2.h>
 #else
@@ -246,10 +247,20 @@ typedef struct known_key_t {
     uint64_t status;
 } known_key_t;
 
+typedef struct ui_file_t {
+    char name[NAME_MAX];
+    session_id_t id;
+    char direction;
+} ui_file_t;
+
 /*inline function definitions*/
 static FORCE_INLINE int cmp_rdev(void *s1, void *s2)
 {
     return memcmp(((remote_device_t *)s1)->peer_pk, ((remote_device_t *)s2)->peer_pk, crypto_sign_PUBLICKEYBYTES);
 }
 
+static FORCE_INLINE int cmp_ui_file(void *s1, void *s2)
+{
+    return memcmp(&(((ui_file_t *)s1)->id), &(((ui_file_t *)s2)->id), sizeof(session_id_t));
+}
 #endif // INDIGO_TYPES_H

@@ -25,7 +25,6 @@ SOFTWARE.
 #include "crypto_utils.h"
 #include "indigo_errors.h"
 #include "indigo_types.h"
-#include "lht.h"
 #include <config.h>
 #include <glib-2.0/glib.h>
 #include <glib-2.0/glib/gstdio.h>
@@ -568,13 +567,7 @@ int get_user_input(WINDOW *win, utf8_char_t *input)
 #endif
 }
 
-// TODO: so as to not forget it
-//       user name is cyan
-//       ip is magenta
-//       trusted is [TRUSTED] and green
-//       not trusted yet is [UNKOWN] and yellow
-//       blocked or dagerous is [DANGEROUS] and red
-int create_main_interface(tree_t *dev_tree, QUEUE *ui_queue, QUEUE *ph_queue)
+int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, QUEUE *ph_queue)
 {
     tree_iterator_t *dev_iter;
     WINDOW *notification_win;
@@ -588,6 +581,7 @@ int create_main_interface(tree_t *dev_tree, QUEUE *ui_queue, QUEUE *ph_queue)
     int win_c;
 
     int device_top_row = 0;
+    int file_top_row = 0;
 
     utf8_char_t ch;
     char context = 0; // 0 is for devises and 1 is for devide info
@@ -604,6 +598,14 @@ int create_main_interface(tree_t *dev_tree, QUEUE *ui_queue, QUEUE *ph_queue)
     int last_id_row = 0;
 
     char selected_path[PATH_MAX];
+
+    unsigned char **request_list;
+    int request_count;
+    unsigned char **file_list;
+    int file_count;
+
+    int file_last_row = 0;
+    char file_last_level = 0;
 
     int ret;
 
@@ -631,26 +633,59 @@ int create_main_interface(tree_t *dev_tree, QUEUE *ui_queue, QUEUE *ph_queue)
             switch (ch) {
                 case KEY_DOWN:
                     if (context == 0) {
-                        if (device_top_row + win_c <= id_count) {
+                        if (last_id_row < id_count - 1) {
                             wchgat(device_pad, 3, A_NORMAL, 0, NULL);
-                            wmove(device_pad, ++device_top_row, 0);
+                            wmove(device_pad, ++last_id_row, 0);
                             wchgat(device_pad, 3, A_REVERSE, 0, NULL);
-                            ++last_id_row;
+                            memcpy(last_id, dev_IDs[last_id_row], crypto_sign_PUBLICKEYBYTES);
+                            if (device_top_row + win_c <= id_count) {
+                                ++device_top_row;
+                            }
                             pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy, maxx);
                         }
                     }
                     else {
+                        if (file_last_level == 0) {
+                            if (file_last_row < 4) {
+                                ++file_last_row;
+                            }
+                            else {
+                                if (request_count > 0) {
+                                    wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                    file_last_level = 1;
+                                    file_last_row = 0;
+                                }
+                                else if (file_count > 0) {
+                                    wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                    file_last_level = 2;
+                                    file_last_row = 0;
+                                }
+                            }
+                        }
+                        else if (file_last_level == 1) {
+                        }
+                        else {
+                        }
+                        if (file_last_row + win_c <= 8 + 1 + request_count + 1 + file_count) {
+                            wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                            wmove(device_pad, ++file_last_row, 0);
+                            wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                        }
                     }
                     break;
                 case KEY_UP:
                     if (context == 0) {
-                        if (device_top_row > 0) {
+                        if (last_id_row > 0) {
                             wchgat(device_pad, 3, A_NORMAL, 0, NULL);
-                            wmove(device_pad, --device_top_row, 0);
+                            wmove(device_pad, --last_id_row, 0);
                             wchgat(device_pad, 3, A_REVERSE, 0, NULL);
-                            --last_id_row;
+                            if (device_top_row > 0) {
+                                --device_top_row;
+                            }
                             pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy, maxx);
                         }
+                    }
+                    if (device_top_row > 0) {
                     }
                     else {
                     }
@@ -671,7 +706,10 @@ int create_main_interface(tree_t *dev_tree, QUEUE *ui_queue, QUEUE *ph_queue)
                 // select the action
                 if (context == 0) {
                     context = 1;
-                    // TODO: print_device_files(device_pad, last_id, NULL);
+                    print_device_files(device_pad, last_id, dev_tree, file_tree, &request_list, &request_count,
+                                       &file_list, &file_count, &file_last_row, &file_last_level);
+                    doupdate();
+                    continue;
                 }
                 else {
                 }
@@ -680,13 +718,31 @@ int create_main_interface(tree_t *dev_tree, QUEUE *ui_queue, QUEUE *ph_queue)
 
         // update the ui
         if (context == 0) {
+            for (int i = 0; i < id_count; ++i) {
+                free(dev_IDs[i]);
+            }
+            free(dev_IDs);
+            dev_IDs = NULL;
             werase(device_pad);
             print_devices(device_pad, dev_tree, &dev_IDs, &id_count, last_id, &last_id_row);
             pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy, maxx);
         }
         else {
+            for (int i = 0; i < request_count; ++i) {
+                free(request_list[i]);
+            }
+            free(request_list);
+            request_list = NULL;
+
+            for (int i = 0; i < file_count; ++i) {
+                free(file_list[i]);
+            }
+            free(file_list);
+            file_list = NULL;
+
             werase(device_pad);
-            // TODO: print_device_files
+            print_device_files(device_pad, last_id, dev_tree, file_tree, &request_list, &request_count, &file_list,
+                               &file_count, &file_last_row, &file_last_level);
             pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy, maxx);
         }
         doupdate();
@@ -1325,22 +1381,30 @@ int print_device(WINDOW *win, remote_device_t *rdev, uint64_t count, char highli
     return -1;
 }
 
-int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, lht_t *active_files)
+int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree_t *active_files,
+                       unsigned char ***requests_list, int *request_count, unsigned char ***file_list, int *file_count,
+                       int *last_row, char *level)
 {
     int ret;
+    void *temp;
+    int temp_row = 0;
+    int count = 0;
     int y = 0;
     int i;
     size_t file_size;
     char *username;
     char *file_name;
-    char *units[] = {"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"};
+    const char *const units[] = {"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"};
+    const char *const directions[] = {"UP", "DOWN"};
     remote_device_t rdev;
     remote_device_t *found_rdev;
-    lht_node_t *af_node = NULL;
-    active_file_t *af = NULL;
+    tree_iterator_t *iter;
+    ui_file_t *file;
 
-    if (!win || !dev_tree || !active_files)
+    if (!win || !dev_tree || !active_files || !requests_list || !file_list || !request_count || !file_count ||
+        !last_row || !level) {
         return -1;
+    }
 
     memcpy(rdev.peer_pk, id, crypto_sign_PUBLICKEYBYTES);
     ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev);
@@ -1372,12 +1436,22 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, lht_
     wmove(win, ++y, 0);
     mvwprintw(win, ++y, 0, "[actions]");
     mvwprintw(win, ++y, 0, ">send a file...");
+    temp_row = y;
     mvwprintw(win, ++y, 0, ">trust this device.");
     mvwprintw(win, ++y, 0, ">super trust this device.");
     mvwprintw(win, ++y, 0, ">device is EVIL and SINISTER.");
 
+    if (*level == 0) {
+        if (*last_row > y) {
+            *last_row = 0;
+        }
+        wmove(win, temp_row + *last_row, 0);
+        wchgat(win, -1, A_REVERSE, 0, NULL);
+    }
+
     wmove(win, ++y, 0);
     mvwprintw(win, ++y, 0, "[requests]");
+    temp_row = y;
     for (fwd_fsr_t *fsr = found_rdev->fsr_list; fsr != NULL; fsr = fsr->next) {
         file_name = g_utf8_make_valid(fsr->file_name, NAME_MAX);
         if (!username) {
@@ -1396,14 +1470,110 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, lht_
         file_size = fsr->file_size;
         wprintw(win, "%.2f %s", (float)file_size / (float)((unsigned long long)1 << (i * 10)), units[i]);
         g_free(file_name);
+
+        // add the device to the id array
+        ++count;
+        temp = reallocarray(requests_list, count, sizeof(unsigned char));
+        if (!temp) {
+            tree_unlock(dev_tree);
+            for (int i = 0; i < count - 1; ++i) {
+                free(requests_list[i]);
+            }
+            free(requests_list);
+            *requests_list = NULL;
+            *file_list = NULL;
+            *request_count = 0;
+            *file_count = 0;
+
+            return -1;
+        }
+        requests_list = temp;
+        temp = malloc(crypto_sign_PUBLICKEYBYTES);
+        if (!temp) {
+            tree_unlock(dev_tree);
+            for (int i = 0; i < count - 1; ++i) {
+                free(requests_list[i]);
+            }
+            free(requests_list);
+            *requests_list = NULL;
+            *file_list = NULL;
+            *request_count = 0;
+            *file_count = 0;
+            return -1;
+        }
+        requests_list[count] = temp;
+        memcpy(temp, fsr->id, crypto_sign_PUBLICKEYBYTES);
     }
     tree_unlock(dev_tree);
+    *request_count = count;
+
+    if (*level == 1) {
+        if (count > 0 && *last_row > count - 1) {
+            *last_row = count - 1;
+        }
+        else if (count == 0) {
+            *last_row = 0;
+            *level = 0;
+            temp_row = 4; // it is the y for the send file
+        }
+        wmove(win, temp_row + count, 0);
+        wchgat(win, -1, A_REVERSE, 0, NULL);
+    }
+    count = 0;
 
     wmove(win, ++y, 0);
     mvwprintw(win, ++y, 0, "[active files]");
-    // TODO: we need a way to get all file transfers happening right now
-    //       make a tree that is shared between send thread, packet handler and ui_queue
-    //       each node has a file id, file name, persentage, and probably speed
+    temp_row = y;
+
+    tree_lock(active_files);
+    new_tree_iterator(active_files, &iter);
+    while (tree_has_next(iter)) {
+        tree_next(iter, (void **)&file);
+        if (memcmp(id, file->id.pk, crypto_sign_PUBLICKEYBYTES) == 0) {
+            mvwprintw(win, ++y, 0, "%s [%s]", file->name, directions[file->direction]);
+            // add the device to the id array
+            ++count;
+            temp = reallocarray(file_list, count, sizeof(unsigned char));
+            if (!temp) {
+                tree_unlock(active_files);
+                for (int i = 0; i < count - 1; ++i) {
+                    free(file_list[i]);
+                }
+                free(file_list);
+                *file_list = NULL;
+                *file_count = 0;
+                return -1;
+            }
+            file_list = temp;
+            temp = malloc(crypto_sign_PUBLICKEYBYTES);
+            if (!temp) {
+                tree_unlock(active_files);
+                for (int i = 0; i < count - 1; ++i) {
+                    free(file_list[i]);
+                }
+                free(file_list);
+                *file_list = NULL;
+                *file_count = 0;
+                return -1;
+            }
+            file_list[count - 1] = temp;
+            memcpy(temp, file->id.pk, crypto_sign_PUBLICKEYBYTES);
+        }
+    }
+    tree_unlock(active_files);
+    *file_count = count;
+    if (*level == 2) {
+        if (count > 0 && *last_row > count - 1) {
+            *last_row = count - 1;
+        }
+        else if (count == 0) {
+            *last_row = 0;
+            *level = 0;
+            temp_row = 4; // it is the y for the send file
+        }
+        wmove(win, temp_row + count, 0);
+        wchgat(win, -1, A_REVERSE, 0, NULL);
+    }
 
     return 0;
 }
