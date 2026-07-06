@@ -21,9 +21,18 @@ SOFTWARE.
 
 #include <indigo_core/net_monitor.h>
 #include <indigo_errors.h>
+#include <linux/limits.h>
+#include <netinet/in.h>
 #include <stdio.h>
 #ifndef _WIN32
-#define INVALID_SOCKET
+#define INVALID_SOCKET (-1)
+#endif
+#ifdef __linux__
+#include <sys/socket.h>
+#include <unistd.h>
+#include <ifaddrs.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
 #endif
 ///////////////////////////////////
 //                               //
@@ -36,8 +45,10 @@ SOFTWARE.
  *Priority is given to IPs of ethernet adapters over Wi-Fi adapters
  *returns a pointer to the first node else returns NULL
  */
+
 #ifdef _WIN32
-socket_node *get_discovery_sockets(const int port, const uint32_t multicast_addr) {
+socket_node *get_discovery_sockets(const int port, const uint32_t multicast_addr)
+{
     socket_node *new_sock = NULL;
     socket_node *first_sock = NULL;
     socket_node *temp_sock = NULL;
@@ -75,7 +86,8 @@ socket_node *get_discovery_sockets(const int port, const uint32_t multicast_addr
         if (first_sock != NULL && temp_sock != NULL) {
             temp_sock->next = new_sock;
             temp_sock = new_sock;
-        } else {
+        }
+        else {
             first_sock = new_sock;
             temp_sock = new_sock;
         }
@@ -120,7 +132,8 @@ socket_node *get_discovery_sockets(const int port, const uint32_t multicast_addr
 }
 
 /*Closes all sockets in the linked list and frees the allocated memory for the list*/
-void free_discv_sock_ll(socket_node *firstnode) {
+void free_discv_sock_ll(socket_node *firstnode)
+{
     socket_node *curr;
     socket_node *next;
 
@@ -145,7 +158,8 @@ void free_discv_sock_ll(socket_node *firstnode) {
 // creates an array of the compatible IPs and the respective subnet masks.
 // the minimum amount of separate interfaces and higher speed is ensured.
 // returns 0 on success and non-zero on failure
-int get_compatible_interfaces(ip_subnet_t **ip_subnet, size_t *count) {
+int get_compatible_interfaces(ip_subnet_t **ip_subnet, size_t *count)
+{
     void *temp = NULL;
     PIP_ADAPTER_ADDRESSES adapter = NULL;
     PIP_ADAPTER_ADDRESSES p = 0;
@@ -283,7 +297,8 @@ int get_compatible_interfaces(ip_subnet_t **ip_subnet, size_t *count) {
  *
  *Returns a pointer to the node created. If it fails it returns NULL.
  */
-socket_node *create_discv_sock_node() {
+socket_node *create_discv_sock_node()
+{
     char optval = 1;
     DWORD ttl = 1;
     socket_node *node = malloc(sizeof(socket_node));
@@ -319,17 +334,231 @@ socket_node *create_discv_sock_node() {
     return node;
 }
 #else
-socket_node *get_discovery_sockets(int port, uint32_t multicast_addr) { return NULL; }
-void free_discv_sock_ll(socket_node *firstnode) {
+socket_node *get_discovery_sockets(int port, uint32_t multicast_addr)
+{
+
+    socket_node *new_sock = NULL;
+    socket_node *first_sock = NULL;
+    socket_node *temp_sock = NULL;
+    ip_subnet_t *p_ip_subnet = NULL;
+    size_t addr_count = 0;
+    struct sockaddr_in server; // TODO: find better name
+    struct ip_mreq mreq;       // the structure for the IP_ADD_MEMBERSHIP socket option
+    int optval = 0;            // the optval for the IP_MULTICAST_LOOP
+    // initialize the multicast address
+    mreq.imr_multiaddr.s_addr = multicast_addr;
+    int err;
+
+    err = get_compatible_interfaces(&p_ip_subnet, &addr_count);
+    if (err != INDIGO_SUCCESS) {
+        fprintf(stderr, "get_compatible_interfaces failed in get_discovery_sockets\n");
+        return NULL;
+    }
+
+    if (p_ip_subnet == NULL) {
+        fprintf(stderr, "NO VALID INTERFACE FOUND...\n");
+        return NULL;
+    }
+
+    for (int i = 0; i < addr_count; i++) {
+        // create new node
+        new_sock = create_discv_sock_node();
+        if (new_sock == NULL) {
+            fprintf(stderr, "Failed to create disc node\n");
+            free_discv_sock_ll(first_sock);
+            free(p_ip_subnet);
+
+            return NULL;
+        }
+        // connect node to linked list
+        if (first_sock != NULL && temp_sock != NULL) {
+            temp_sock->next = new_sock;
+            temp_sock = new_sock;
+        }
+        else {
+            first_sock = new_sock;
+            temp_sock = new_sock;
+        }
+        memcpy(&(new_sock->ip_subnet), &(p_ip_subnet[i]), sizeof(ip_subnet_t));
+
+        // bind the socket to the local address (one for every address found)
+        memset(&server, 0, sizeof(server));
+        server.sin_family = AF_INET;
+        server.sin_port = port;
+        server.sin_addr.s_addr = htonl(p_ip_subnet[i].ip);
+
+        err = bind(new_sock->sock, (struct sockaddr *)(&server), sizeof(server));
+        if (err) {
+            perror("Failed to bind disc node");
+            free_discv_sock_ll(first_sock);
+            free(p_ip_subnet);
+            return NULL;
+        }
+
+        mreq.imr_interface.s_addr = server.sin_addr.s_addr;
+        err = setsockopt(new_sock->sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq));
+        if (err) {
+            perror("Failed to add membership");
+            free_discv_sock_ll(first_sock);
+            free(p_ip_subnet);
+            return NULL;
+        }
+
+        err = setsockopt(new_sock->sock, IPPROTO_IP, IP_MULTICAST_LOOP, (char *)&optval, sizeof(optval));
+        if (err) {
+            perror("Failed to set multicast loop");
+            free_discv_sock_ll(first_sock);
+            free(p_ip_subnet);
+            return NULL;
+        }
+    }
+
+    // we don't need the ip list anymore
+    free(p_ip_subnet);
+
+    return first_sock;
+}
+
+int get_compatible_interfaces(ip_subnet_t **ip_subnet, size_t *count)
+{
+    void *temp;
+    int ret;
+    ip_subnet_t *p_ip_subnet = NULL;
+    ip_subnet_t temp_ip_subnet;
+    int addr_count = 0;
+    unsigned int flags = 0;
+    int family;
+    struct sockaddr_in *saddr;
+    struct ifaddrs *ifap = NULL;
+    char interface_wireless_path[PATH_MAX];
+    char interface_type = -1;
+
+    ret = getifaddrs(&ifap);
+    if (ret) {
+        // TODO: there is an error, log it
+        return INDIGO_ERROR;
+    }
+    if (ifap == NULL) {
+        return INDIGO_ERROR_NO_ADDRESS_FOUND;
+    }
+    for (struct ifaddrs *i = ifap; i != NULL; i = i->ifa_next) {
+        if (i->ifa_addr == NULL)
+            continue;
+        flags = i->ifa_flags;
+        family = i->ifa_addr->sa_family;
+        saddr = (struct sockaddr_in *)i->ifa_addr;
+
+        if (flags & IFF_LOOPBACK)
+            continue;
+        if (family == AF_INET6)
+            continue;
+
+        if (flags & IFF_UP) {
+            // find the interface_type
+            snprintf(interface_wireless_path, PATH_MAX, "/sys/class/net/%s/wireless", i->ifa_name);
+
+            if (access(interface_wireless_path, F_OK) == 0) {
+                interface_type = 1;
+            }
+            else {
+                interface_type = 0;
+            }
+
+            // check if the current unicast is in the same subnet as some other address
+            temp_ip_subnet.ip = ntohl(saddr->sin_addr.s_addr);
+            saddr = (struct sockaddr_in *)i->ifa_netmask;
+            temp_ip_subnet.mask = ntohl(saddr->sin_addr.s_addr);
+
+            if (!ip_in_any_subnet(temp_ip_subnet, p_ip_subnet, addr_count)) {
+                // create more space for 1 more subnet
+                temp = realloc(p_ip_subnet, sizeof(ip_subnet) * (addr_count + 1));
+                if (temp == NULL) {
+                    perror("Failed to reallocate memory for ip_subnet_t");
+                    free(p_ip_subnet);
+                    return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                }
+                p_ip_subnet = temp;
+                // store the new-found subnet
+                p_ip_subnet[addr_count] = temp_ip_subnet;
+                // update the length of the dynamic array
+                addr_count++;
+            }
+            // prioritize ethernet over Wi-Fi
+            // replaces any Wi-Fi address with an ethernet one of the same subnet
+            else if (p_ip_subnet && ip_in_any_subnet(temp_ip_subnet, p_ip_subnet, addr_count) && interface_type == 0) {
+                // the p_ip_subnet condition is pointless, because ip_in_any_subnet would return 0 if p_ip_subnet is
+                // NULL put it there because clang cries, though is pintless
+                for (int i = 0; i < addr_count; i++) {
+                    if (p_ip_subnet[i].interface_type == 1) {
+                        if (ips_share_subnet(p_ip_subnet[i], temp_ip_subnet))
+                            p_ip_subnet[i] = temp_ip_subnet;
+                    }
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+socket_node *create_discv_sock_node()
+{
+    char optval = 1;
+    int ttl = 1;
+
+    socket_node *node = malloc(sizeof(socket_node));
+    if (node == NULL) {
+        perror("Failed to allocate memory for DISCV_SOCK");
+        return NULL;
+    }
+
+    node->next = NULL;
+    node->sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (node->sock == INVALID_SOCKET) {
+        printf("\nFailed to create socket: \n");
+        free(node);
+        return NULL;
+    }
+
+    if (setsockopt(node->sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) != 0) {
+        perror("setsockopt() SO_REUSEADDR failed");
+        close(node->sock);
+        free(node);
+        return NULL;
+    }
+
+    // set time to live to 1 --> local network, cant be routed
+    if (setsockopt(node->sock, IPPROTO_IP, IP_MULTICAST_TTL, (const char *)&ttl, sizeof(ttl)) != 0) {
+        perror("setsockopt() IP_MULTICAST_TTL failed");
+        close(node->sock);
+        free(node);
+        return NULL;
+    }
+
+    return node;
+}
+void free_discv_sock_ll(socket_node *firstnode)
+{
     if (!firstnode)
         return;
+    socket_node *curr;
+    socket_node *next;
+
+    if (firstnode == NULL)
+        return;
+
+    curr = firstnode;
+    while (curr != NULL) {
+        next = curr->next;
+        close(curr->sock);
+        free(curr);
+        curr = next;
+    }
 }
-int get_compatible_interfaces(ip_subnet_t **ip_subnet, size_t *count) { return 0; }
-socket_node *create_discv_sock_node() { return NULL; }
 #endif
 //____IP AND SUBNET HELPERS____//
 
-uint32_t sub_mask_8to32b(const uint8_t mask_8b) {
+uint32_t sub_mask_8to32b(const uint8_t mask_8b)
+{
     uint32_t mask_32b = 0;
     for (uint8_t j = 0; j < mask_8b; j++) {
         mask_32b |= 1;
@@ -341,11 +570,13 @@ uint32_t sub_mask_8to32b(const uint8_t mask_8b) {
     return mask_32b;
 }
 
-uint8_t ips_share_subnet(const ip_subnet_t addr1, const ip_subnet_t addr2) {
+uint8_t ips_share_subnet(const ip_subnet_t addr1, const ip_subnet_t addr2)
+{
     return ((addr1.ip & addr1.mask) == (addr2.ip & addr2.mask));
 }
 
-uint8_t ip_in_any_subnet(const ip_subnet_t addr, const ip_subnet_t *p_addrs, const size_t num_addrs) {
+uint8_t ip_in_any_subnet(const ip_subnet_t addr, const ip_subnet_t *p_addrs, const size_t num_addrs)
+{
     if (p_addrs == NULL)
         return 0;
     for (int i = 0; i < num_addrs; i++) {
@@ -356,7 +587,8 @@ uint8_t ip_in_any_subnet(const ip_subnet_t addr, const ip_subnet_t *p_addrs, con
 }
 
 #ifdef _WIN32
-SOCKET ip_to_socket(const uint32_t ip, const socket_ll *const sockets) {
+SOCKET ip_to_socket(const uint32_t ip, const socket_ll *const sockets)
+{
     ip_subnet_t sub;
     if (sockets == NULL)
         return INVALID_SOCKET;
@@ -370,7 +602,20 @@ SOCKET ip_to_socket(const uint32_t ip, const socket_ll *const sockets) {
     return INVALID_SOCKET;
 }
 #else
-int ip_to_socket(const uint32_t ip, const socket_ll *const sockets) { return 0; }
+int ip_to_socket(const uint32_t ip, const socket_ll *const sockets)
+{
+    ip_subnet_t sub;
+    if (sockets == NULL)
+        return -1;
+
+    for (socket_node *node = sockets->head; node; node = node->next) {
+        sub = node->ip_subnet;
+        if ((ip & sub.mask) == (sub.ip & sub.mask)) {
+            return node->sock;
+        }
+    }
+    return -1;
+}
 #endif
 
 //////////////////////////////////////////////////////////
@@ -380,7 +625,8 @@ int ip_to_socket(const uint32_t ip, const socket_ll *const sockets) { return 0; 
 //////////////////////////////////////////////////////////
 
 #ifdef _WIN32
-int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args) {
+int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args)
+{
     HANDLE notification_handle = NULL;
     HANDLE handles[2];
     WSAOVERLAPPED overlapped = {0};
@@ -516,14 +762,15 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args) {
                 fflush(stdout);
                 return process_return;
             }
-
-        } else if (ret_val - WAIT_OBJECT_0 == 0) {
+        }
+        else if (ret_val - WAIT_OBJECT_0 == 0) {
             // termination event
             CancelIPChangeNotify(&overlapped);
             printf("DEBUG: update exit\n");
             fflush(stdout);
             return process_return;
-        } else {
+        }
+        else {
             // there is probably an error
             fprintf(stderr, "WaitForMultipleObjects() failed in interface_updater: %d\n", WSAGetLastError());
 

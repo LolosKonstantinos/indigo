@@ -155,3 +155,60 @@ int ins_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBYT
         return ret;
     return 0;
 }
+
+int edit_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBYTES], uint64_t status)
+{
+    FILE *fd;
+    char *file_name;
+
+    int ret;
+    known_key_t known_key;
+    known_key_t *found_key;
+    memcpy(known_key.key, key, crypto_sign_PUBLICKEYBYTES);
+
+    // edit the tree
+    ret = known_keys->search_pin(known_keys, &known_key, (void **)&found_key);
+    if (ret) {
+        return ret;
+    }
+    found_key->status = status;
+    known_keys->search_release(known_keys);
+
+    // edit the file
+
+    file_name = malloc(strlen(INDIGO_CONFIG_DIR) + strlen(INDIGO_KNOWN_KEYS_FILE_NAME) + 1);
+    if (file_name == NULL) {
+        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+    }
+    strcpy(file_name, INDIGO_CONFIG_DIR);
+    strcat(file_name, INDIGO_KNOWN_KEYS_FILE_NAME);
+    fd = fopen(file_name, "r+");
+    if (!fd) {
+        free(file_name);
+        return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
+    }
+    fseek(fd, 0, SEEK_SET);
+    while (1) {
+        ret = fread(&found_key, sizeof(known_key_t), 1, fd);
+        if (ret != 1) {
+            if (feof(fd)) {
+                memcpy(known_key.key, key, crypto_sign_PUBLICKEYBYTES);
+                known_key.status = status;
+                fseek(fd, 0, SEEK_END);
+                fwrite(&known_key, sizeof(known_key), 1, fd);
+                return 0;
+            }
+            else {
+                // well this is an error
+                //  TODO: error encountered
+                return INDIGO_ERROR;
+            }
+        }
+        if (memcmp(key, known_key.key, crypto_sign_PUBLICKEYBYTES) == 0) {
+            fseek(fd, -sizeof(uint64_t), SEEK_CUR);
+            fwrite(&status, sizeof(uint64_t), 1, fd);
+            break;
+        }
+    }
+    return 0;
+}

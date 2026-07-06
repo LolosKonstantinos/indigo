@@ -23,6 +23,7 @@ SOFTWARE.
 #include "Queue.h"
 #include "binary_tree.h"
 #include "crypto_utils.h"
+#include "indigo_core/net_io.h"
 #include "indigo_errors.h"
 #include "indigo_types.h"
 #include <config.h>
@@ -567,7 +568,7 @@ int get_user_input(WINDOW *win, utf8_char_t *input)
 #endif
 }
 
-int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, QUEUE *ph_queue)
+int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, QUEUE *ph_queue, QUEUE *send_queue)
 {
     tree_iterator_t *dev_iter;
     WINDOW *notification_win;
@@ -586,7 +587,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
     utf8_char_t ch;
     char context = 0; // 0 is for devises and 1 is for devide info
 
-    QNODE *qnode = NULL;
+    Q_SEND_FILE *send_node;
     Q_FILE_SENDING_REQUEST *fsr = NULL;
 
     remote_device_t rdev;
@@ -607,7 +608,19 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
     int file_last_row = 0;
     char file_last_level = 0;
 
+    tree_t *known_key_tree;
+    uint64_t status = 0;
+
     int ret;
+
+    if (!dev_tree || !file_tree || !ui_queue || !ph_queue || !send_queue)
+        return INDIGO_ERROR_INVALID_PARAM;
+
+    ret = new_tree(&known_key_tree, key_cmp, sizeof(known_key_t), BINARY_TREE_FLAG_AVL);
+    if (ret) {
+        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+    }
+    load_known_keys(known_key_tree);
 
     memset(last_id, 0, crypto_sign_PUBLICKEYBYTES);
 
@@ -646,31 +659,56 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
                     }
                     else {
                         if (file_last_level == 0) {
-                            if (file_last_row < 4) {
+                            if (file_last_row < 3) {
+                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
                                 ++file_last_row;
+                                wmove(device_pad, 4 + file_last_row, 0);
+                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
                             }
                             else {
                                 if (request_count > 0) {
                                     wchgat(device_pad, -1, A_NORMAL, 0, NULL);
                                     file_last_level = 1;
                                     file_last_row = 0;
+                                    wmove(device_pad, 10, 0);
+                                    wchgat(device_pad, -1, A_REVERSE, 0, NULL);
                                 }
                                 else if (file_count > 0) {
                                     wchgat(device_pad, -1, A_NORMAL, 0, NULL);
                                     file_last_level = 2;
                                     file_last_row = 0;
+                                    wmove(device_pad, 9 + request_count + 3, 0);
+                                    wchgat(device_pad, -1, A_REVERSE, 0, NULL);
                                 }
                             }
                         }
                         else if (file_last_level == 1) {
+                            if (file_last_row < request_count - 1) {
+                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                ++file_last_row;
+                                wmove(device_pad, 9 + file_last_row, 0);
+                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                            }
+                            else if (file_count > 0) {
+                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                file_last_level = 2;
+                                file_last_row = 0;
+                                wmove(device_pad, 9 + request_count + 3, 0);
+                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                            }
                         }
                         else {
+                            if (file_last_row < file_count - 1) {
+                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                ++file_last_row;
+                                wmove(device_pad, 9 + request_count + 3 + file_last_row, 0);
+                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                            }
                         }
-                        if (file_last_row + win_c <= 8 + 1 + request_count + 1 + file_count) {
-                            wchgat(device_pad, -1, A_NORMAL, 0, NULL);
-                            wmove(device_pad, ++file_last_row, 0);
-                            wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                        if (file_top_row + win_c <= 8 + 1 + request_count + 1 + file_count) {
+                            ++file_top_row;
                         }
+                        pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy, maxx);
                     }
                     break;
                 case KEY_UP:
@@ -685,9 +723,54 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
                             pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy, maxx);
                         }
                     }
-                    if (device_top_row > 0) {
-                    }
-                    else {
+                    else if (context == 1) {
+                        if (file_last_level == 0) {
+                            if (file_last_row > 0) {
+                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                --file_last_row;
+                                wmove(device_pad, 4 + file_last_row, 0);
+                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                            }
+                        }
+                        else if (file_last_level == 1) {
+                            if (file_last_row > 0) {
+                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                --file_last_row;
+                                wmove(device_pad, 9 + file_last_row, 0);
+                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                            }
+                            else if (file_count == 0) {
+                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                file_last_level = 0;
+                                file_last_row = 3;
+                                wmove(device_pad, 4 + file_last_row, 0);
+                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                            }
+                        }
+                        else {
+                            if (file_last_row > 0) {
+                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                --file_last_row;
+                                wmove(device_pad, 9 + request_count + 3 + file_last_row, 0);
+                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                            }
+                            else if (file_count == 0) {
+                                if (request_count > 0) {
+                                    wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                    file_last_level = 1;
+                                    file_last_row = request_count - 1;
+                                    wmove(device_pad, 9 + file_last_row, 0);
+                                    wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                                }
+                                else {
+                                    wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                    file_last_level = 0;
+                                    file_last_row = 3;
+                                    wmove(device_pad, 4 + file_last_row, 0);
+                                    wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                                }
+                            }
+                        }
                     }
                     break;
                 case KEY_LEFT:
@@ -712,7 +795,71 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
                     continue;
                 }
                 else {
+                    if (file_last_level == 0) {
+                        if (file_last_row == 0) {
+                            // send a file
+                            ret = pathfinder(selected_path);
+                            if (ret == -1) {
+                                // it is probably a memory error
+                                //  TODO: handle all errors
+                                break;
+                            }
+                            if (ret == 1)
+                                continue;
+                            if (ret == 0) {
+                                // send this to the queue
+                                send_node = malloc(sizeof(Q_SEND_FILE));
+                                if (!send_node) {
+                                    break;
+                                }
+
+                                memcpy(rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);
+                                ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&rdev_p);
+                                send_node->ip = rdev.ip;
+                                send_node->tk = rdev.client_tk;
+                                send_node->session_id.serial = ++(rdev.last_fid);
+                                dev_tree->search_release(dev_tree);
+                                send_node->counter = 0;
+                                send_node->port = PORT;
+                                send_node->next = NULL;
+                                memcpy(send_node->session_id.pk, last_id, crypto_sign_PUBLICKEYBYTES);
+                                randombytes(send_node->nonce, 24);
+
+                                ret = queue_push(send_queue, send_node, QET_SEND_FILE);
+                                if (ret) {
+                                    // TODO: error is memory error, handle it
+                                    free(send_node);
+                                    send_node = NULL;
+                                    break;
+                                }
+                                send_node = NULL;
+                            }
+                        }
+                        else {
+                            // set the trust status
+                            switch (file_last_row) {
+                                case 1:
+                                    status = KNOWN_KEY_STATUS_TOO_GOOD;
+                                    break;
+                                case 2:
+                                    status = KNOWN_KEY_STATUS_GOOD;
+                                    break;
+                                case 3:
+                                    status = KNOWN_KEY_STATUS_BAD;
+                                    break;
+                                default:
+                                    status = KNOWN_KEY_STATUS_UNKOWN;
+                                    break;
+                            }
+                            edit_known_key(known_key_tree, last_id, status);
+                        }
+                    }
+                    else if (file_last_level == 1) {
+                    }
                 }
+            }
+            else if (ch == ' ' && context == 1 && file_last_level == 2) {
+                // pause files
             }
         }
 

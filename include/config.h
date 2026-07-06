@@ -53,6 +53,8 @@ int save_known_key(unsigned char key[crypto_sign_PUBLICKEYBYTES], uint64_t statu
 int insert_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBYTES], uint64_t status);
 // insert and save the key and status, to the tree and key file respectively
 int ins_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBYTES], uint64_t status);
+// edit a key value
+int edit_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBYTES], uint64_t status);
 
 static FORCE_INLINE int key_cmp(void *k1, void *k2)
 {

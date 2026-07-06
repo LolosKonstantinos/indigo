@@ -23,7 +23,6 @@ SOFTWARE.
 #include <glib-2.0/glib.h>
 #include <indigo_core/net_io.h>
 #include <indigo_errors.h>
-#include <netinet/in.h>
 #include <pthread.h>
 #include <sodium/crypto_aead_xchacha20poly1305.h>
 #include <sodium/randombytes.h>
@@ -37,10 +36,14 @@ SOFTWARE.
 #include <indigo_types.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef __linux__
+#include <netinet/in.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#endif
 
 #include "config.h"
 #include "event_flags.h"
@@ -58,7 +61,8 @@ SOFTWARE.
 #ifdef _WIN32
 int send_discovery_packets(const int port, const uint32_t multicast_addr, socket_ll *sockets, EFLAG *flag,
                            const uint32_t pCount, const int32_t msec, signing_key_pair_t *sign_key_pair,
-                           wchar_t username[MAX_USERNAME_LEN]) {
+                           wchar_t username[MAX_USERNAME_LEN])
+{
 
     uint8_t restart = 0;
     // temporary variables for memory allocation
@@ -379,7 +383,8 @@ cleanup:
     free(handles);
     return routine_ret;
 }
-int register_single_receiver(SOCKET sock, RECV_INFO **info, mempool_t *mempool) {
+int register_single_receiver(SOCKET sock, RECV_INFO **info, mempool_t *mempool)
+{
     RECV_INFO *temp_info;
 
     int recv_ret;
@@ -413,7 +418,8 @@ int register_single_receiver(SOCKET sock, RECV_INFO **info, mempool_t *mempool) 
             }
         }
         *info = temp_info;
-    } else {
+    }
+    else {
         // if we are provided an allocated RECV_INFO (most likely from previous use)
         recv_ret = WSARecvFrom(sock, (*info)->buf, 1, (*info)->bytes_recv, (*info)->flags, (*info)->source,
                                (*info)->fromLen, (*info)->overlapped, NULL);
@@ -430,7 +436,8 @@ int register_single_receiver(SOCKET sock, RECV_INFO **info, mempool_t *mempool) 
     return 0;
 }
 
-int register_multiple_receivers(socket_ll *sockets, RECV_ARRAY *info, mempool_t *mempool, EFLAG *flag) {
+int register_multiple_receivers(socket_ll *sockets, RECV_ARRAY *info, mempool_t *mempool, EFLAG *flag)
+{
     void *temp = NULL;
     RECV_INFO *tempinf = NULL;
 
@@ -505,7 +512,8 @@ int register_multiple_receivers(socket_ll *sockets, RECV_ARRAY *info, mempool_t 
         return 0;
     }
 }
-int send_packet(const int port, const uint32_t addr, socket_ll *sockets, const packet_t *const packet, EFLAG *flag) {
+int send_packet(const int port, const uint32_t addr, socket_ll *sockets, const packet_t *const packet, EFLAG *flag)
+{
     SEND_INFO temp_info;
     SOCKET sock;
     void *temp;
@@ -656,14 +664,16 @@ cleanup:
     return routine_ret;
 }
 #else
-int register_single_event(int epoll_fd, int fd, struct epoll_event event) {
+int register_single_event(int epoll_fd, int fd, struct epoll_event event)
+{
     event.data.fd = fd;
     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &event) == -1) {
         return INDIGO_ERROR;
     }
     return INDIGO_SUCCESS;
 }
-int register_multiple_receivers(int epoll_fd, socket_ll *sockets, size_t *event_count) {
+int register_multiple_receivers(int epoll_fd, socket_ll *sockets, size_t *event_count)
+{
     struct epoll_event *recv_events;
     size_t count;
 
@@ -703,7 +713,8 @@ int register_multiple_receivers(int epoll_fd, socket_ll *sockets, size_t *event_
 }
 int send_discovery_packets(const int port, const uint32_t multicast_addr, socket_ll *sockets, EFLAG *flag,
                            const uint32_t pCount, const int32_t msec, signing_key_pair_t *sign_key_pair,
-                           wchar_t username[MAX_USERNAME_LEN]) {
+                           wchar_t username[MAX_USERNAME_LEN])
+{
     int ret;
     time_t curr_time;
     packet_t packet;
@@ -735,7 +746,8 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, socket
     return 0;
 }
 
-int send_packet(const int port, const uint32_t addr, socket_ll *sockets, const packet_t *const packet, EFLAG *flag) {
+int send_packet(const int port, const uint32_t addr, socket_ll *sockets, const packet_t *const packet, EFLAG *flag)
+{
 
     int ret = 0;
     int sock;
@@ -762,7 +774,8 @@ int send_packet(const int port, const uint32_t addr, socket_ll *sockets, const p
     return 0;
 }
 #endif
-int send_next_file_packet(active_file_t *file, const unsigned char *const pk, socket_ll *sockets, EFLAG *flag) {
+int send_next_file_packet(active_file_t *file, const unsigned char *const pk, socket_ll *sockets, EFLAG *flag)
+{
     unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
     packet_t packet;
     size_t read_ret;
@@ -813,7 +826,8 @@ int send_next_file_packet(active_file_t *file, const unsigned char *const pk, so
 }
 
 int send_file_packet(active_file_t *file, uint64_t counter, const unsigned char *const pk, socket_ll *sockets,
-                     EFLAG *flag) {
+                     EFLAG *flag)
+{
     unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
     packet_t packet;
     size_t read_ret;
@@ -868,7 +882,8 @@ int send_file_packet(active_file_t *file, uint64_t counter, const unsigned char 
 
 void build_packet(packet_t *restrict packet, const unsigned pac_type,
                   const unsigned char id[crypto_sign_PUBLICKEYBYTES],
-                  const unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES], const void *restrict data) {
+                  const unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES], const void *restrict data)
+{
 
     sodium_memzero(packet, sizeof(packet_t));
 
@@ -904,7 +919,8 @@ void build_packet(packet_t *restrict packet, const unsigned pac_type,
 }
 
 #ifdef _WIN32
-int create_handle_array_from_send_info(const SEND_INFO *info, const size_t infolen, HANDLE **handles, size_t *hCount) {
+int create_handle_array_from_send_info(const SEND_INFO *info, const size_t infolen, HANDLE **handles, size_t *hCount)
+{
     void *temp;
     if (info == NULL || handles == NULL || hCount == NULL)
         return 1;
@@ -924,7 +940,8 @@ int create_handle_array_from_send_info(const SEND_INFO *info, const size_t infol
     return 0;
 }
 
-void free_send_info(const SEND_INFO *info) {
+void free_send_info(const SEND_INFO *info)
+{
     if (info == NULL)
         return;
 
@@ -940,7 +957,8 @@ void free_send_info(const SEND_INFO *info) {
     }
 }
 
-int allocate_recv_info(RECV_INFO **info, mempool_t *mempool) {
+int allocate_recv_info(RECV_INFO **info, mempool_t *mempool)
+{
     void *temp;
     RECV_INFO *tmp_rcv;
 
@@ -1078,7 +1096,8 @@ int allocate_recv_info(RECV_INFO **info, mempool_t *mempool) {
     return 0;
 }
 
-int allocate_recv_info_fields(RECV_INFO *info, mempool_t *mempool) {
+int allocate_recv_info_fields(RECV_INFO *info, mempool_t *mempool)
+{
     void *temp;
 
     if (info == NULL) {
@@ -1185,7 +1204,8 @@ int allocate_recv_info_fields(RECV_INFO *info, mempool_t *mempool) {
     return 0;
 }
 
-void free_recv_info(const RECV_INFO *info, mempool_t *mempool) {
+void free_recv_info(const RECV_INFO *info, mempool_t *mempool)
+{
     if (info == NULL) {
         return;
     }
@@ -1214,7 +1234,8 @@ void free_recv_info(const RECV_INFO *info, mempool_t *mempool) {
 // todo: implement control signals for the packets (stop, pause, continue, resend)
 
 #ifdef _WIN32
-int *recv_thread(RECV_ARGS *args) {
+int *recv_thread(RECV_ARGS *args)
+{
     // todo we need a hash table to hold the expected packets
     RECV_ARRAY info = {0};
     RECV_INFO *recv_info = NULL;
@@ -1314,7 +1335,8 @@ int *recv_thread(RECV_ARGS *args) {
 
             handles[0] = args->termination_handle;
             handles[1] = args->wake_handle;
-        } else if (flag_val & EF_TERMINATION) {
+        }
+        else if (flag_val & EF_TERMINATION) {
             free(handles);
             free_recv_array(&info, args->mempool);
             *process_return = 0;
@@ -1471,7 +1493,8 @@ int *recv_thread(RECV_ARGS *args) {
     return process_return;
 }
 #else
-int *recv_thread(RECV_ARGS *args) {
+int *recv_thread(RECV_ARGS *args)
+{
     // todo we need a hash table to hold the expected packets
 
     mempool_t *mempool = NULL;
@@ -1586,7 +1609,8 @@ int *recv_thread(RECV_ARGS *args) {
             tmp_event.data.u32 = 2;
             register_single_event(epoll_fd, args->termination_fd, tmp_event);
             memset(&tmp_event, 0, sizeof(struct epoll_event));
-        } else if (flag_val & EF_TERMINATION) {
+        }
+        else if (flag_val & EF_TERMINATION) {
             *process_return = 0;
             return process_return;
         }
@@ -1616,11 +1640,13 @@ int *recv_thread(RECV_ARGS *args) {
                 free(recv_events);
                 *process_return = INDIGO_SUCCESS;
                 return process_return;
-            } else if (event_type == 2) {
+            }
+            else if (event_type == 2) {
                 // we got a wake event, probably the sockets got updated
                 // we break form the for loop and then the main loop starts again
                 break;
-            } else {
+            }
+            else {
                 // we got a socket ready
                 recv_buffer = mempool->alloc(mempool);
                 lret = recvfrom(recv_events[i].data.fd, recv_buffer, sizeof(packet_t) + sizeof(packet_info_t), 0,
@@ -1665,7 +1691,8 @@ int *recv_thread(RECV_ARGS *args) {
 }
 #endif
 
-int *send_thread(SEND_ARGS *args) {
+int *send_thread(SEND_ARGS *args)
+{
     uint32_t flag_val;
     struct timespec deadline_ts;
     struct timespec current_ts;
@@ -1733,7 +1760,8 @@ int *send_thread(SEND_ARGS *args) {
                     return process_return;
                 }
             }
-        } else if (flag_val & EF_SEND_NEW_FILE) {
+        }
+        else if (flag_val & EF_SEND_NEW_FILE) {
             node = queue_pop(args->queue, QOPT_NON_BLOCK);
 
             if (node == NULL)
@@ -1744,6 +1772,7 @@ int *send_thread(SEND_ARGS *args) {
                 if (ret) {
                     // todo: do something
                 }
+                free(node->data);
             }
             destroy_qnode(node);
             node = NULL;
@@ -1783,7 +1812,8 @@ int *send_thread(SEND_ARGS *args) {
             free(node->data);
             destroy_qnode(node);
             node = NULL;
-        } else if (flag_val & EF_STOP_FILE_TRANSMISSION) {
+        }
+        else if (flag_val & EF_STOP_FILE_TRANSMISSION) {
             node = queue_peek(args->queue);
             if (node == NULL)
                 continue;
@@ -1912,7 +1942,8 @@ int *send_thread(SEND_ARGS *args) {
 /////////////////////////////////////////////////////////////////
 
 #ifdef _WIN32
-int create_handle_array_from_recv_info(const RECV_ARRAY *info, HANDLE **handles, size_t *hCount) {
+int create_handle_array_from_recv_info(const RECV_ARRAY *info, HANDLE **handles, size_t *hCount)
+{
     if (info == NULL || handles == NULL || hCount == NULL)
         return 1;
 
@@ -1931,7 +1962,8 @@ int create_handle_array_from_recv_info(const RECV_ARRAY *info, HANDLE **handles,
     return 0;
 }
 
-void free_recv_array(const RECV_ARRAY *info, mempool_t *mempool) {
+void free_recv_array(const RECV_ARRAY *info, mempool_t *mempool)
+{
     for (int i = 0; i < info->size; i++) {
         free_recv_info(&(info->array[i]), mempool);
     }

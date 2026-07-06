@@ -19,6 +19,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+#include "binary_tree.h"
 #include <locale.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -29,7 +30,6 @@ SOFTWARE.
 #endif
 
 #include "Queue.h"
-#include "crypto_utils.h"
 #include "indigo_core/net_io.h"
 #include "indigo_types.h"
 #include "manager.h"
@@ -49,12 +49,16 @@ int main(int argc, char *argv[])
 
     // device table
     tree_t *device_tree;
+    // the file tree
+    tree_t *file_tree;
 
     // ui queue
     QUEUE *ui_queue;
 
     // the packet handler queue
     QUEUE *ph_queue = NULL;
+    // the send queue
+    QUEUE *send_queue = NULL;
 
     MANAGER_ARGS *manager_args;
     pthread_t manager_tid;
@@ -82,8 +86,6 @@ int main(int argc, char *argv[])
     if (ret != 0) {
         endwin();
         goto cleanup;
-        printf("\nverify_user failed\n");
-        return ret;
     }
 
     // create the device tree
@@ -93,7 +95,12 @@ int main(int argc, char *argv[])
         fprintf(stderr, "malloc failed\n");
         endwin();
         goto cleanup;
-        return ret;
+    }
+    ret = new_tree(&file_tree, cmp_ui_file, sizeof(ui_file_t), BINARY_TREE_FLAG_AVL);
+    if (ret) {
+        fprintf(stderr, "malloc failed\n");
+        endwin();
+        goto cleanup;
     }
 
     ui_queue = malloc(sizeof(QUEUE));
@@ -101,25 +108,34 @@ int main(int argc, char *argv[])
         fprintf(stderr, "malloc failed\n");
         endwin();
         goto cleanup;
-        return 1;
     }
     ret = init_queue(ui_queue);
     if (ret) {
         fprintf(stderr, "init_queue failed\n");
         endwin();
         goto cleanup;
-        return 1;
+    }
+    send_queue = malloc(sizeof(QUEUE));
+    if (ui_queue == NULL) {
+        fprintf(stderr, "malloc failed\n");
+        endwin();
+        goto cleanup;
+    }
+    ret = init_queue(send_queue);
+    if (ret) {
+        fprintf(stderr, "init_queue failed\n");
+        endwin();
+        goto cleanup;
     }
 
     inet_pton(AF_INET, MULTICAST_ADDR, &multicast_addr);
-    port = htons(PORT);
+    port = PORT;
 
     ret = create_thread_manager_thread(&manager_args, port, multicast_addr, device_tree, ui_queue, &manager_tid);
     if (ret != 0) {
         fprintf(stderr, "Error creating thread_manager thread\n");
         endwin();
         goto cleanup;
-        return 1;
     }
 
     // create the main tui interface
@@ -138,7 +154,7 @@ int main(int argc, char *argv[])
     init_pair(12, COLOR_BLUE, COLOR_WHITE);
     init_pair(12, COLOR_BLACK, COLOR_WHITE);
 
-    create_main_interface(device_tree, ui_queue, ph_queue);
+    create_main_interface(device_tree, file_tree, ui_queue, ph_queue, send_queue);
 
     endwin();
     printf("\nmain return:%d\n", ret);
