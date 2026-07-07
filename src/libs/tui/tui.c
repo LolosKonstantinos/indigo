@@ -955,6 +955,8 @@ int pathfinder(char path[PATH_MAX])
 
     keypad(win_text, TRUE);
 
+    initial_cwd = g_get_current_dir();
+
     cwd = g_get_current_dir();
     if (cwd) {
         wattron(win, COLOR_PAIR(5));
@@ -978,6 +980,8 @@ int pathfinder(char path[PATH_MAX])
     while (dir_entry) {
         cpath = g_canonicalize_filename(dir_entry, NULL);
         if (!cpath) {
+            g_chdir(initial_cwd);
+            g_free(initial_cwd);
             g_dir_close(curr_dir);
             g_free(cpath);
             delwin(win);
@@ -1023,6 +1027,8 @@ int pathfinder(char path[PATH_MAX])
         if (ret == OK) {
             if (in_char == '\x1b') {
                 // if it is escape we exit
+                g_chdir(initial_cwd);
+                g_free(initial_cwd);
                 memset(path, 0, PATH_MAX);
                 delwin(win);
                 delwin(win_frame);
@@ -1037,6 +1043,8 @@ int pathfinder(char path[PATH_MAX])
                 // TODO: use tab to autocomplete
                 cpath = g_canonicalize_filename(in_path, NULL);
                 if (!cpath) {
+                    g_chdir(initial_cwd);
+                    g_free(initial_cwd);
                     delwin(win);
                     delwin(win_frame);
                     delwin(win_text);
@@ -1046,6 +1054,8 @@ int pathfinder(char path[PATH_MAX])
                 // check if the user entered the current path to select it
                 cwd = g_get_current_dir();
                 if (strcmp(cwd, cpath) == 0) {
+                    g_chdir(initial_cwd);
+                    g_free(initial_cwd);
                     g_utf8_strncpy(path, cpath, g_utf8_strlen(cpath, -1));
                     g_free(cwd);
                     g_free(cpath);
@@ -1078,6 +1088,8 @@ int pathfinder(char path[PATH_MAX])
 
                 if (g_file_test(cpath, G_FILE_TEST_IS_REGULAR)) {
                     // we just select the file
+                    g_chdir(initial_cwd);
+                    g_free(initial_cwd);
                     g_utf8_strncpy(path, cpath, g_utf8_strlen(cpath, -1));
                     g_free(cpath);
                     delwin(win);
@@ -1121,6 +1133,8 @@ int pathfinder(char path[PATH_MAX])
                 cwd = g_get_current_dir();
                 if (!cwd) {
                     // this is probably a memory error
+                    g_chdir(initial_cwd);
+                    g_free(initial_cwd);
                     delwin(win);
                     delwin(win_frame);
                     delwin(win_text);
@@ -1144,6 +1158,8 @@ int pathfinder(char path[PATH_MAX])
                 while (dir_entry) {
                     cpath = g_canonicalize_filename(dir_entry, NULL);
                     if (!cpath) {
+                        g_chdir(initial_cwd);
+                        g_free(initial_cwd);
                         g_dir_close(curr_dir);
                         delwin(win);
                         delwin(win_frame);
@@ -1292,6 +1308,8 @@ int pathfinder(char path[PATH_MAX])
                     while (dir_entry) {
                         cpath = g_canonicalize_filename(dir_entry, NULL);
                         if (!cpath) {
+                            g_chdir(initial_cwd);
+                            g_free(initial_cwd);
                             g_dir_close(curr_dir);
                             delwin(win);
                             delwin(win_frame);
@@ -1337,6 +1355,8 @@ int pathfinder(char path[PATH_MAX])
         }
         doupdate();
     }
+    g_chdir(initial_cwd);
+    g_free(initial_cwd);
     delwin(win);
     delwin(win_frame);
     delwin(win_text);

@@ -19,7 +19,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+#include "tui/tui.h"
 #include "binary_tree.h"
+#include "indigo_errors.h"
+#include "Queue.h"
+#include "indigo_core/net_io.h"
+#include "indigo_types.h"
+#include "manager.h"
 #include <locale.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -29,18 +35,12 @@ SOFTWARE.
 #include <ws2tcpip.h>
 #endif
 
-#include "Queue.h"
-#include "indigo_core/net_io.h"
-#include "indigo_types.h"
-#include "manager.h"
-#include <tui/tui.h>
-
 int main(int argc, char *argv[])
 {
 #ifdef _WIN32
     WSADATA wsaData;
 #endif
-    int ret;
+    int ret = 0;
 
     // network
     int port;
@@ -73,18 +73,17 @@ int main(int argc, char *argv[])
 #endif
 
     if (sodium_init() == -1)
-        return 1;
+        return INDIGO_ERROR_SODIUM_ERROR;
+
     setlocale(LC_ALL, "");
     initscr();
     // todo learn how to use color
-    init_pair(1, COLOR_RED, COLOR_BLACK);
     cbreak();
     noecho();
 
     // verify the user, check if crypto files are ready to go, and check password
     ret = verify_user(&master_key);
     if (ret != 0) {
-        endwin();
         goto cleanup;
     }
 
@@ -93,48 +92,59 @@ int main(int argc, char *argv[])
     ret = new_tree(&device_tree, cmp_rdev, sizeof(remote_device_t), BINARY_TREE_FLAG_AVL);
     if (ret) {
         fprintf(stderr, "malloc failed\n");
-        endwin();
+        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
     ret = new_tree(&file_tree, cmp_ui_file, sizeof(ui_file_t), BINARY_TREE_FLAG_AVL);
     if (ret) {
         fprintf(stderr, "malloc failed\n");
-        endwin();
+        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
 
     ui_queue = malloc(sizeof(QUEUE));
     if (ui_queue == NULL) {
         fprintf(stderr, "malloc failed\n");
-        endwin();
+        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
     ret = init_queue(ui_queue);
     if (ret) {
         fprintf(stderr, "init_queue failed\n");
-        endwin();
+        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
     send_queue = malloc(sizeof(QUEUE));
     if (ui_queue == NULL) {
         fprintf(stderr, "malloc failed\n");
-        endwin();
+        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
     ret = init_queue(send_queue);
     if (ret) {
         fprintf(stderr, "init_queue failed\n");
-        endwin();
+        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        goto cleanup;
+    }
+    ph_queue = (QUEUE *)malloc(sizeof(QUEUE));
+    if (ph_queue == NULL) {
+        fprintf(stderr, "Failed to allocate memory for packet_queue\n");
+        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        goto cleanup;
+    }
+    if (init_queue(ph_queue)) {
+        fprintf(stderr, "init_queue failed\n");
+        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
 
     inet_pton(AF_INET, MULTICAST_ADDR, &multicast_addr);
     port = PORT;
 
-    ret = create_thread_manager_thread(&manager_args, port, multicast_addr, device_tree, ui_queue, &manager_tid);
-    if (ret != 0) {
+    ret = create_thread_manager_thread(&manager_args, port, multicast_addr, device_tree, ui_queue, ph_queue, send_queue,
+                                       &manager_tid);
+    if (ret != INDIGO_SUCCESS) {
         fprintf(stderr, "Error creating thread_manager thread\n");
-        endwin();
         goto cleanup;
     }
 
@@ -165,4 +175,6 @@ cleanup:
 #ifdef _WIN32
     WSACleanup();
 #endif
+    endwin();
+    return ret;
 }

@@ -26,6 +26,7 @@ SOFTWARE.
 #include <indigo_types.h>
 #include <binary_tree.h>
 #include <indigo_types.h>
+#include <linux/limits.h>
 
 /*THIS LIBRARY CONTAINS ALL FUNCTIONS AND TYPES CONCERNING USER AND PROGRAM DATA MANAGEMENT*/
 
@@ -60,4 +61,7 @@ static FORCE_INLINE int key_cmp(void *k1, void *k2)
 {
     return memcmp(((known_key_t *)k1)->key, ((known_key_t *)k2)->key, crypto_sign_PUBLICKEYBYTES);
 }
+
+/*PATH UTILS*/
+int get_source_dir(char path[PATH_MAX]);
 #endif // INDIGO_CONFIG_H

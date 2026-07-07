@@ -1515,6 +1515,7 @@ int *recv_thread(RECV_ARGS *args)
     uint32_t flag_val;
     int ret;
     ssize_t lret;
+    uint64_t signaled_event_val = 0;
 
     int *process_return = NULL;
 
@@ -1579,6 +1580,7 @@ int *recv_thread(RECV_ARGS *args)
             close(epoll_fd);
             epoll_fd = epoll_create1(0);
             if (epoll_fd == -1) {
+                free(recv_events);
                 *process_return = INDIGO_ERROR_SYS_FAIL;
                 return process_return;
             }
@@ -1611,6 +1613,7 @@ int *recv_thread(RECV_ARGS *args)
             memset(&tmp_event, 0, sizeof(struct epoll_event));
         }
         else if (flag_val & EF_TERMINATION) {
+            free(recv_events);
             *process_return = 0;
             return process_return;
         }
@@ -1637,6 +1640,9 @@ int *recv_thread(RECV_ARGS *args)
             event_type = recv_events[i].data.u32;
             if (event_type == 1) {
                 // we need to terminate
+                read(args->termination_fd, &signaled_event_val, 8);
+                if (signaled_event_val != 1)
+                    continue;
                 free(recv_events);
                 *process_return = INDIGO_SUCCESS;
                 return process_return;
@@ -1644,6 +1650,9 @@ int *recv_thread(RECV_ARGS *args)
             else if (event_type == 2) {
                 // we got a wake event, probably the sockets got updated
                 // we break form the for loop and then the main loop starts again
+                read(args->wake_fd, &signaled_event_val, 8);
+                if (signaled_event_val != 2)
+                    continue;
                 break;
             }
             else {
@@ -1686,6 +1695,7 @@ int *recv_thread(RECV_ARGS *args)
             }
         }
     }
+    free(recv_events);
     *process_return = 0;
     return process_return;
 }

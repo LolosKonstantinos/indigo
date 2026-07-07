@@ -72,6 +72,8 @@ typedef struct INTERFACE_UPDATE_ARGS {
     EFLAG *wake;
 #ifdef _WIN32
     HANDLE termination_handle;
+#else
+    int termination_fd;
 #endif
     socket_ll *sockets;
     int port;

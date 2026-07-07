@@ -19,20 +19,27 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+#include "event_flags.h"
 #include <indigo_core/net_monitor.h>
 #include <indigo_errors.h>
-#include <linux/limits.h>
-#include <netinet/in.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #ifndef _WIN32
 #define INVALID_SOCKET (-1)
 #endif
 #ifdef __linux__
+#include <asm/types.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <ifaddrs.h>
 #include <sys/ioctl.h>
 #include <net/if.h>
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
+#include <linux/limits.h>
+#include <sys/epoll.h>
+#include <netinet/in.h>
 #endif
 ///////////////////////////////////
 //                               //
@@ -336,7 +343,6 @@ socket_node *create_discv_sock_node()
 #else
 socket_node *get_discovery_sockets(int port, uint32_t multicast_addr)
 {
-
     socket_node *new_sock = NULL;
     socket_node *first_sock = NULL;
     socket_node *temp_sock = NULL;
@@ -791,5 +797,138 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args)
     return process_return;
 }
 #else
-int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args) { return NULL; }
+int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args)
+{
+    int ret;
+    int sock = -1;
+    struct sockaddr_nl sa;
+    struct nlmsghdr buf[8192 / sizeof(struct nlmsghdr)];
+    struct iovec iov = {buf, sizeof(buf)};
+    struct msghdr msg;
+    struct nlmsghdr *nh;
+    ssize_t size;
+    int epoll_fd = -1;
+    struct epoll_event event = {0};
+    uint64_t termination_val;
+
+    int *process_return = malloc(sizeof(int));
+    if (process_return == NULL) {
+        set_event_flag(args->flag, EF_TERMINATION | EF_ERROR);
+        set_event_flag(args->wake, EF_WAKE_MANAGER);
+        printf("DEBUG: update exit\n");
+        fflush(stdout);
+        return NULL;
+    }
+    *process_return = 0;
+
+    sock = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
+    if (sock < 0) {
+        *process_return = INDIGO_ERROR;
+        goto cleanup;
+    }
+
+    memset(&sa, 0, sizeof(sa));
+    sa.nl_family = AF_NETLINK;
+    sa.nl_groups = RTMGRP_LINK;
+    ret = bind(sock, (struct sockaddr *)&sa, sizeof(sa));
+    if (ret) {
+        *process_return = INDIGO_ERROR;
+        goto cleanup;
+    }
+    epoll_fd = epoll_create1(0);
+    if (epoll_fd == -1) {
+        *process_return = INDIGO_ERROR_SYS_FAIL;
+        goto cleanup;
+    }
+
+    event.events = EPOLLIN;
+    event.data.fd = args->termination_fd;
+    event.data.u32 = 1;
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, args->termination_fd, &event) == -1) {
+        *process_return = INDIGO_ERROR;
+        goto cleanup;
+    }
+    event.events = EPOLLIN;
+    event.data.fd = sock;
+    event.data.u32 = 0;
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, sock, &event) == -1) {
+        *process_return = INDIGO_ERROR;
+        goto cleanup;
+    }
+
+    msg = (struct msghdr){&sa, sizeof(sa), &iov, 1, NULL, 0, 0};
+
+    // the main loop
+    while (termination_is_on(args->flag) == 0) {
+        ret = epoll_wait(epoll_fd, &event, 1, 10000);
+        if (ret >= 1) {
+            // if it is a netlink event
+            if (event.data.u32 == 0) {
+                ret = 0;
+                size = recvmsg(sock, &msg, 0);
+                if (size < 0) {
+                    *process_return = INDIGO_ERROR;
+                    goto cleanup;
+                }
+                for (nh = (struct nlmsghdr *)buf; NLMSG_OK(nh, size); nh = NLMSG_NEXT(nh, size)) {
+                    if (nh->nlmsg_type == NLMSG_DONE) {
+                        break;
+                    }
+                    if (nh->nlmsg_type == NLMSG_ERROR) {
+                        // idk do some error handiling
+                        continue;
+                    }
+                    ret = 1;
+                }
+                if (ret == 1) {
+                    // in any case we need to update the socket list
+                    // raise the override flags of the io threads
+                    for (int i = 0; i < 3; i++) {
+                        set_event_flag(args->override_flags[i], EF_OVERRIDE_IO);
+                    }
+                    pthread_mutex_lock(&(args->sockets->mutex));
+                    free_discv_sock_ll(args->sockets->head);
+                    args->sockets->head = get_discovery_sockets(args->port, args->multicast_addr);
+                    if (args->sockets->head == NULL) {
+                        // no discovery sockets, no device discovery
+                        set_event_flag(args->flag, EF_TERMINATION | EF_ERROR);
+                        set_event_flag(args->wake, EF_WAKE_MANAGER);
+                        *process_return = INDIGO_ERROR_NO_ADDRESS_FOUND;
+                        pthread_mutex_unlock(&(args->sockets->mutex));
+                        printf("DEBUG: update exit\n");
+                        fflush(stdout);
+                        goto cleanup;
+                    }
+                    pthread_mutex_unlock(&(args->sockets->mutex));
+                    // lower the override flag for the io threads
+                    for (int i = 0; i < 3; i++) {
+                        reset_single_event(args->override_flags[i], EF_OVERRIDE_IO);
+                    }
+                }
+            }
+            else if (ret == -1) {
+                // idk cleanup;
+                *process_return = INDIGO_ERROR;
+                goto cleanup;
+            }
+        }
+        else if (event.data.u32 == 1) {
+            // termination event
+            read(args->termination_fd, &termination_val, 8);
+            if (termination_val == 1) {
+                *process_return = 0;
+                goto cleanup;
+            }
+        }
+    }
+    close(sock);
+    close(epoll_fd);
+    return process_return;
+cleanup:
+    if (sock >= 0)
+        close(sock);
+    if (epoll_fd >= 0)
+        close(epoll_fd);
+    return process_return;
+}
 #endif

@@ -22,6 +22,12 @@ SOFTWARE.
 #include <crypto_utils.h>
 #include <indigo_core/manager.h>
 #include <indigo_errors.h>
+#include <stdint.h>
+#include <unistd.h>
+
+#ifdef __linux__
+#include <sys/eventfd.h>
+#endif
 
 //////////////////////////////////////////////////////////
 ///                                                    ///
@@ -29,7 +35,8 @@ SOFTWARE.
 ///                                                    ///
 //////////////////////////////////////////////////////////
 ///
-int *thread_manager_thread(MANAGER_ARGS *args) {
+int *thread_manager_thread(MANAGER_ARGS *args)
+{
     // for the thread creation
     pthread_t tid_send = pthread_self();
     pthread_t tid_receive = pthread_self();
@@ -71,13 +78,16 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     // flags
     uint32_t flag_val;
 
+    const uint64_t termination_val = 1;
+    const uint64_t wake_val = 2;
+
     void *temp = NULL;
 
     int *process_return = NULL;
     int ret_val = 0; // general purpose return value variable
 
-    /*_________________________________________HERE STARTS THE FUNCTIONS
-     * LOGIC____________________________________________*/
+    /*_______________________________________HERE STARTS THE FUNCTIONS LOGIC__________________________________________*/
+
     // allocate memory for the return value
     process_return = malloc(sizeof(int));
     if (process_return == NULL) {
@@ -108,29 +118,9 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     sockets->head = temp;
 
     // create the packet queue
-    packet_queue = (QUEUE *)malloc(sizeof(QUEUE));
-    if (packet_queue == NULL) {
-        fprintf(stderr, "Failed to allocate memory for packet_queue\n");
-        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-    if (init_queue(packet_queue)) {
-        fprintf(stderr, "init_queue failed\n");
-        *process_return = INDIGO_ERROR_SYS_FAIL;
-        goto cleanup;
-    }
-    // create the send queue
-    send_queue = (QUEUE *)malloc(sizeof(QUEUE));
-    if (send_queue == NULL) {
-        fprintf(stderr, "Failed to allocate memory for send_queue\n");
-        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-    if (init_queue(send_queue)) {
-        fprintf(stderr, "init_queue failed\n");
-        *process_return = INDIGO_ERROR_SYS_FAIL;
-        goto cleanup;
-    }
+    packet_queue = args->ph_queue;
+    send_queue = args->send_queue;
+
     // create the memory pool
     pool_attr.dynamic_pool = 1;
     pool_attr.growth_factor = 1;
@@ -257,6 +247,9 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
 #ifdef _WIN32
     WSASetEvent(recv_args->termination_handle);
     WSASetEvent(update_args->termination_handle);
+#else
+    write(recv_args->termination_fd, &termination_val, 8);
+    write(update_args->termination_fd, &termination_val, 8);
 #endif
     set_event_flag(send_args->flag, EF_TERMINATION);
     set_event_flag(recv_args->flag, EF_TERMINATION);
@@ -285,6 +278,9 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
 #ifdef _WIN32
     WSACloseEvent(recv_args->termination_handle);
     WSACloseEvent(recv_args->wake_handle);
+#else
+    close(recv_args->termination_fd);
+    close(recv_args->wake_fd);
 #endif
     free_event_flag(recv_args->flag);
     free(recv_args);
@@ -292,6 +288,8 @@ int *thread_manager_thread(MANAGER_ARGS *args) {
     // update args
 #ifdef _WIN32
     WSACloseEvent(update_args->termination_handle);
+#else
+    write(update_args->termination_fd, &termination_val, 8);
 #endif
     free_event_flag(update_args->flag);
     free(update_args);
@@ -337,6 +335,14 @@ cleanup:
     if (update_args != NULL) {
         WSASetEvent(update_args->termination_handle);
     }
+
+#else
+    if (recv_args != NULL) {
+        write(recv_args->termination_fd, &termination_val, 8);
+    }
+    if (update_args != NULL) {
+        write(update_args->termination_fd, &termination_val, 8);
+    }
 #endif
 
     if (send_args != NULL)
@@ -376,7 +382,11 @@ cleanup:
 #ifdef _WIN32
             WSACloseEvent(recv_args->termination_handle);
             WSACloseEvent(recv_args->wake_handle);
+#else
+            close(recv_args->termination_fd);
+            close(recv_args->wake_fd);
 #endif
+
             free_event_flag(recv_args->flag);
             free(recv_args);
         }
@@ -386,6 +396,8 @@ cleanup:
         if (update_args) {
 #ifdef _WIN32
             WSACloseEvent(update_args->termination_handle);
+#else
+            close(update_args->termination_fd);
 #endif
             free_event_flag(update_args->flag);
             free(update_args);
@@ -429,7 +441,8 @@ cleanup:
 ///                                                             ///
 ///////////////////////////////////////////////////////////////////
 
-int cancel_device_discovery(pthread_t tid, EFLAG *flag) {
+int cancel_device_discovery(pthread_t tid, EFLAG *flag)
+{
     int *ret = NULL;
     int val;
 
@@ -447,9 +460,9 @@ int cancel_device_discovery(pthread_t tid, EFLAG *flag) {
     free(ret);
     return val;
 }
-
-int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint32_t multicast_address,
-                                 tree_t *dev_tree, QUEUE *ui_queue, pthread_t *tid) {
+int create_thread_manager_thread(MANAGER_ARGS **args, int port, uint32_t multicast_address, tree_t *dev_tree,
+                                 QUEUE *ui_queue, QUEUE *ph_queue, QUEUE *send_queue, pthread_t *tid)
+{
     pthread_t thread;
 
     MANAGER_ARGS *manager_args = malloc(sizeof(MANAGER_ARGS));
@@ -471,6 +484,8 @@ int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint
     manager_args->multicast_addr = multicast_address;
     manager_args->device_tree = dev_tree;
     manager_args->ui_queue = ui_queue;
+    manager_args->ph_queue = ph_queue;
+    manager_args->send_queue = send_queue;
 
     if (pthread_create(&thread, NULL, (void *)(&thread_manager_thread), manager_args)) {
         free_event_flag(flag);
@@ -484,7 +499,8 @@ int create_thread_manager_thread(MANAGER_ARGS **args, const int port, const uint
 }
 
 int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, socket_ll *sockets, EFLAG *wake_mngr,
-                          QUEUE *queue, const void *master_key, pthread_t *tid) {
+                          QUEUE *queue, const void *master_key, pthread_t *tid)
+{
     pthread_t thread;
 
     SEND_ARGS *send_args = malloc(sizeof(SEND_ARGS));
@@ -532,20 +548,21 @@ int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address
 }
 
 int create_receiving_thread(RECV_ARGS **args, socket_ll *sockets, QUEUE *queue, mempool_t *mempool, EFLAG *wake_mngr,
-                            pthread_t *tid) {
+                            pthread_t *tid)
+{
 
     pthread_t thread;
 
     RECV_ARGS *recv_args = malloc(sizeof(RECV_ARGS));
     if (recv_args == NULL) {
-        fprintf(stderr, "malloc() failed in create_sending_thread\n");
+        fprintf(stderr, "malloc() failed in create_receiving_thread\n");
         return 1;
     }
     *args = recv_args;
 
     EFLAG *flag = create_event_flag();
     if (flag == NULL) {
-        fprintf(stderr, "create_event_flag() failed in create_sending_thread\n");
+        fprintf(stderr, "create_event_flag() failed in create_receiving_thread\n");
         free(recv_args);
         return 1;
     }
@@ -553,7 +570,7 @@ int create_receiving_thread(RECV_ARGS **args, socket_ll *sockets, QUEUE *queue, 
 #ifdef _WIN32
     recv_args->wake_handle = WSACreateEvent();
     if (recv_args->wake_handle == NULL) {
-        fprintf(stderr, "WSACreateEvent() failed in create_sending_thread\n");
+        fprintf(stderr, "WSACreateEvent() failed in create_receiving_thread\n");
         free_event_flag(flag);
         free(recv_args);
         return 1;
@@ -565,6 +582,23 @@ int create_receiving_thread(RECV_ARGS **args, socket_ll *sockets, QUEUE *queue, 
         free_event_flag(flag);
         WSACloseEvent(recv_args->wake_handle);
         free(recv_args);
+        return 1;
+    }
+#else
+    recv_args->wake_fd = eventfd(0, EFD_NONBLOCK);
+    if (recv_args->wake_fd == -1) {
+        fprintf(stderr, "eventfd was unable to cleate file descriptor in create_receiving_thread\n");
+        free(recv_args);
+        free_event_flag(flag);
+        return 1;
+    }
+    recv_args->termination_fd = eventfd(0, EFD_NONBLOCK);
+    if (recv_args->termination_fd == -1) {
+        fprintf(stderr, "eventfd was unable to cleate file descriptor in create_receiving_thread\n");
+        close(recv_args->wake_fd);
+        free(recv_args);
+        free_event_flag(flag);
+        return 1;
     }
 #endif
     recv_args->queue = queue;
@@ -585,7 +619,8 @@ int create_receiving_thread(RECV_ARGS **args, socket_ll *sockets, QUEUE *queue, 
 }
 
 int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint32_t multicast_address,
-                                    EFLAG *wake_mngr, EFLAG *override_flags[3], socket_ll *sockets, pthread_t *tid) {
+                                    EFLAG *wake_mngr, EFLAG *override_flags[3], socket_ll *sockets, pthread_t *tid)
+{
     pthread_t thread;
 
     INTERFACE_UPDATE_ARGS *update_args = malloc(sizeof(INTERFACE_UPDATE_ARGS));
@@ -604,6 +639,14 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
 #ifdef _WIN32
     update_args->termination_handle = WSACreateEvent();
     if (update_args->termination_handle == NULL) {
+        fprintf(stderr, "WSACreateEvent() failed in create_interface_updater_thread\n");
+        free_event_flag(flag);
+        free(update_args);
+        return 1;
+    }
+#else
+    update_args->termination_fd = eventfd(0, EFD_NONBLOCK);
+    if (update_args->termination_fd == -1) {
         fprintf(stderr, "WSACreateEvent() failed in create_interface_updater_thread\n");
         free_event_flag(flag);
         free(update_args);
@@ -629,7 +672,8 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
 
 int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, QUEUE *ui_queue,
                                  QUEUE *send_queue, EFLAG *send_flag, mempool_t *mempool, tree_t *device_tree,
-                                 const void *const master_key, socket_ll *sockets, pthread_t *tid) {
+                                 const void *const master_key, socket_ll *sockets, pthread_t *tid)
+{
 
     pthread_t thread;
 

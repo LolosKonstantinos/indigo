@@ -27,6 +27,10 @@ SOFTWARE.
 #include <unistd.h>
 #include <glib-2.0/glib.h>
 #include <glib-2.0/glib/gstdio.h>
+#ifdef __linux__
+#include <sys/types.h>
+#include <linux/limits.h>
+#endif
 
 #include "binary_tree.h"
 #include "indigo_errors.h"
@@ -211,4 +215,39 @@ int edit_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBY
         }
     }
     return 0;
+}
+int get_source_dir(char path[PATH_MAX])
+{
+#ifdef _WIN32
+    char *dir;
+    char *utf8_xpath;
+    WCHAR xpath[PATH_MAX];
+    DWORD len = GetModuleFileNameW(NULL, xpath, PATH_MAX);
+    if (len > 0) {
+        utf8_xpath = g_utf16_to_utf8(xpath, -1, NULL, NULL, NULL);
+        dir = g_path_get_dirname(utf8_xpath);
+        strncpy(path, dir, PATH_MAX - 1);
+        g_free(dir);
+        g_free(utf8_xpath);
+        path[PATH_MAX - 1] = '\0';
+        return 0;
+    }
+    return -1;
+#endif
+#ifdef __linux__
+    char *dir;
+    char xpath[PATH_MAX];
+    ssize_t ret = readlink("proc/self/exe", xpath, PATH_MAX - 1);
+    if (ret == -1) {
+        memset(path, 0, PATH_MAX);
+        return -1;
+    }
+    xpath[ret] = '\0';
+    dir = g_path_get_dirname(xpath);
+    strncpy(path, dir, PATH_MAX - 1);
+    g_free(dir);
+    path[PATH_MAX - 1] = '\0';
+
+    return 0;
+#endif
 }

@@ -94,7 +94,6 @@ typedef struct SEND_ARGS {
     socket_ll *sockets;
     QUEUE *queue;
     signing_key_pair_t *sign_keys;
-    // TODO: add username field, must be a thread safe buffer
 } SEND_ARGS;
 
 typedef struct RECV_ARGS {
