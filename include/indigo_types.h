@@ -23,6 +23,8 @@ SOFTWARE.
 #define INDIGO_TYPES_H
 
 #include <linux/limits.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #ifdef _WIN32
 #include <winsock2.h>
 #else
@@ -48,17 +50,18 @@ SOFTWARE.
 #define OFF 0
 
 #define INDIGO_CONFIG_DIR "config"
-#define INDIGO_CRYPTO_DIR "config/crypto/"
-#define INDIGO_PSW_DIR "config/crypto/psw/"
-#define INDIGO_KEY_DIR "config/crypto/key/"
+#define INDIGO_CRYPTO_DIR "config/crypto"
+#define INDIGO_PSW_DIR "config/crypto/psw"
+#define INDIGO_KEY_DIR "config/crypto/key"
+#define INDIGO_USER_DIR "config/user"
+#define INDIGO_PROGRAM_DATA_DIR "data"
+#define INDIGO_SETTINGS_DIR "config/settings"
+#define INDIGO_TEMP_DIR "data/temp"
 #define INDIGO_SIGN_KEY_FILE_NAME "sign.dat"
 #define INDIGO_PSW_HASH_FILE_NAME "psw-hash.txt"
 #define INDIGO_PSW_HASH_SETTINGS_FILE "psw-hash-settings.dat"
-#define INDIGO_KNOWN_KEYS_FILE_NAME "known-keys.dat" // todo use database (sqlite3)
-#define INDIGO_PROGRAM_DATA_DIR "data"
-#define INDIGO_USER_DIR "config/user/"
+#define INDIGO_KNOWN_KEYS_FILE_NAME "known-keys.dat" // TODO: use database (sqlite3)
 #define INDIGO_USERNAME_FILE_NAME "username.txt"
-#define INDIGO_SETTINGS_DIR "config/settings/"
 #define INDIGO_SETTINGS_FILE_NAME "settings.conf"
 
 // RDSF == RemoteDeviceStateFlag
@@ -98,6 +101,22 @@ SOFTWARE.
 // more types may be added
 
 typedef uint64_t utf8_char_t;
+
+typedef struct range_t {
+    uint64_t start;
+    uint64_t end;
+} range_t;
+typedef struct range_node_t {
+    range_t r;
+    struct range_node_t *next;
+} range_node_t;
+
+static FORCE_INLINE int in_range(range_t *r, uint64_t n)
+{
+    if (n >= r->start && n <= r->end)
+        return 1;
+    return 0;
+}
 
 // the packet that is sent for everything, device discovery, signature
 // handshakes, file chunks, etc. it's a little big but since the buffer is at
@@ -161,7 +180,7 @@ typedef struct PACKED signing_response_data_t {
 typedef struct PACKED file_sending_request_data_t {
     uint64_t serial;
     size_t file_size;
-    wchar_t file_name[PATH_MAX];
+    char file_name[NAME_MAX];
 } file_sending_request_data_t;
 #define PAC_FILE_SENDING_REQUEST_SIZE (sizeof(udp_packet_header) + sizeof(file_sending_request_data_t))
 
@@ -179,10 +198,7 @@ typedef struct PACKED file_chunk_data_t {
 
 typedef struct PACKED transmission_control_data_t {
     uint64_t serial;
-    uint64_t first_packet_number; // used only for resend, otherwise should be 0
-                                  // and ignored
-    uint64_t last_packet_number;  // the end of the range, if we need a range of
-                                  // packets to be resent
+    range_t range; // used only for resend, otherwise should be 0 and ignored
 } transmission_control_data_t;
 #define PAC_TRANSMISSION_CONTROL_SIZE (sizeof(udp_packet_header) + sizeof(transmission_control_data_t))
 

@@ -23,6 +23,7 @@ SOFTWARE.
 #include <sodium/crypto_sign.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <glib-2.0/glib.h>
@@ -36,11 +37,14 @@ SOFTWARE.
 #include "indigo_errors.h"
 #include "indigo_types.h"
 
-int load_username(wchar_t username[MAX_USERNAME_LEN])
+int load_username(char username[(MAX_USERNAME_LEN + 1) * sizeof(uint32_t)])
 {
     size_t ret;
     int size;
-    FILE *fd = fopen(strcat(INDIGO_USER_DIR, INDIGO_USERNAME_FILE_NAME), "rb");
+
+    g_mkdir_with_parents(INDIGO_USER_DIR, 755);
+
+    FILE *fd = fopen(strcat(INDIGO_USER_DIR, INDIGO_USERNAME_FILE_NAME), "rwb");
     if (!fd) {
         return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
     }
@@ -48,9 +52,15 @@ int load_username(wchar_t username[MAX_USERNAME_LEN])
     size = ftell(fd);
     fseek(fd, 0, SEEK_SET);
 
-    memset(username, 0, sizeof(wchar_t) * MAX_USERNAME_LEN);
+    if (size == 0) {
+        strcpy(username, "FAT_AND_UGLY");
+        fwrite(username, 5, 1, fd);
+        return 1;
+    }
 
-    ret = fread(username, 1, MAX_USERNAME_LEN * sizeof(wchar_t), fd);
+    memset(username, 0, sizeof(uint32_t) * MAX_USERNAME_LEN);
+
+    ret = fread(username, 1, MAX_USERNAME_LEN * sizeof(uint32_t), fd);
     if (ret != size) {
 
         fclose(fd);
@@ -59,15 +69,34 @@ int load_username(wchar_t username[MAX_USERNAME_LEN])
     }
     return 0;
 }
+int validate_username(char username[(MAX_USERNAME_LEN + 1) * sizeof(uint32_t)])
+{
+    return g_utf8_validate(username, MAX_USERNAME_LEN * sizeof(uint32_t), NULL);
+}
+int sanitize_username(char username[(MAX_USERNAME_LEN + 1) * sizeof(uint32_t)])
+{
+    char *valid_username;
+    valid_username = g_utf8_make_valid(username, MAX_USERNAME_LEN + 1);
+    if (!valid_username) {
+        return -1;
+    }
+    strncpy(username, valid_username, MAX_USERNAME_LEN * sizeof(uint32_t));
+    username[MAX_USERNAME_LEN * sizeof(uint32_t)] = '\0';
+    g_free(valid_username);
+    return 0;
+}
 
-int set_username(wchar_t username[MAX_USERNAME_LEN])
+int set_username(char username[(MAX_USERNAME_LEN + 1) * sizeof(uint32_t)])
 {
     size_t ret;
+
+    g_mkdir_with_parents(INDIGO_USER_DIR, 755);
+
     FILE *fd = fopen(strcat(INDIGO_USER_DIR, INDIGO_USERNAME_FILE_NAME), "wb");
     if (!fd) {
         return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
     }
-    ret = fwrite(username, 1, MAX_USERNAME_LEN * sizeof(wchar_t), fd);
+    ret = fwrite(username, 1, MAX_USERNAME_LEN * sizeof(uint32_t), fd);
     if (ret != MAX_USERNAME_LEN) {
         fclose(fd);
         return INDIGO_ERROR;
@@ -250,4 +279,39 @@ int get_source_dir(char path[PATH_MAX])
 
     return 0;
 #endif
+}
+
+int move_to_downloads(char path[PATH_MAX], char new_file_name[NAME_MAX])
+{
+    char new_path[PATH_MAX];
+    char file_serial[65];
+#ifdef _WIN32
+    const char *profile = getenv(USERPROFILE);
+    if (!profile) {
+        return -1
+    }
+    snprintf(new_path, PATH_MAX - 1, "%s\\Downloads\\%s", profile, new_file_name);
+#else
+    const char *home = getenv("HOME");
+    if (!home) {
+        return -1;
+    }
+    snprintf(new_path, PATH_MAX - 1, "%s/Downloads/%s", home, new_file_name);
+#endif
+    new_path[PATH_MAX - 1] = '\0';
+    if (rename(path, new_path)) {
+        return -1;
+        // if file already exists we add a (n) at the end
+        if (strlen(new_path) >= PATH_MAX - 1) {
+            for (uint32_t i = 0; i < UINT_MAX; ++i) {
+                snprintf(file_serial, 64, "%x", i);
+
+                // remove the extension if it exists
+                // apend the serial
+                // apend the extension
+                // check if the file exists
+            }
+        }
+    }
+    return 0;
 }

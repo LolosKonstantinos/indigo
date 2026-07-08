@@ -20,20 +20,27 @@ SOFTWARE.
 */
 
 #include "binary_tree.h"
+#include "event_flags.h"
 #include "indigo_types.h"
 #include "net_io.h"
+#include <asm-generic/errno-base.h>
 #include <config.h>
 #include <Queue.h>
+#include <glib.h>
 #include <indigo_core/packet_handler.h>
 #include <indigo_errors.h>
 #include <limits.h>
+#include <linux/limits.h>
 #include <math.h>
 #include <sodium/crypto_kx.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#include <wctype.h>
-#if _WIN32
-#else
+#include <time.h>
+#include <unistd.h>
+
+#ifndef _WIN32
 #define _FILE_OFFSET_BITS_64
 #define fseeko64 fseeko
 #include <errno.h>
@@ -52,6 +59,7 @@ SOFTWARE.
 // todo: i know for sure that there is some code around here that does not work at all, we need to find it
 int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 {
+    void *tmp_ptr;
     uint32_t flag_val = 0;
     QNODE *node = NULL;
 
@@ -102,13 +110,20 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     known_key_t known_key;
     tree_t *known_keys_tree = NULL;
 
-    wchar_t tmp_username[MAX_USERNAME_LEN];
+    char tmp_username[MAX_USERNAME_LEN * sizeof(utf8_char_t)];
+
+    range_node_t *range_node;
+    range_node_t *prev_node;
 
     int ret = 0; // general purpose return variable
 
     int *process_return = NULL;
 
     // allocate memory for the return value
+    if (errno) {
+        // this is here because clangd is crying again
+        // says i must remove errno.h
+    }
     process_return = malloc(sizeof(int));
     if (process_return == NULL) {
         set_event_flag(args->flag, EF_TERMINATION);
@@ -687,8 +702,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             data = (file_sending_request_data_t *)packet->data;
                             memcpy(fsr->id, packet->id, crypto_sign_PUBLICKEYBYTES);
                             fsr->file_size = data->file_size;
-                            memcpy(fsr->file_name, data->file_name, PATH_MAX * sizeof(wchar_t));
-                            fsr->file_name[PATH_MAX - 1] = '\0';
+                            memcpy(fsr->file_name, data->file_name, NAME_MAX);
+                            fsr->file_name[NAME_MAX - 1] = '\0';
                             fsr->addr = packet_info->address.sin_addr.s_addr;
 
                             if (args->device_tree->search_pin(args->device_tree, &rdev, (void **)&found_rdev)) {
@@ -747,9 +762,11 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             uint64_t chunk_number;
                             packet_t temp_packet;
 
+                            // ensure that the packet was encrypted
                             if (packet->magic_number != MAGIC_NUMBER_2)
                                 break;
 
+                            // find the expected file packet node
                             memcpy(xfp.session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
                             xfp.session_id.serial = ((file_chunk_data_t *)packet->data)->serial;
 
@@ -758,21 +775,16 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 xfp_tree->search_release(xfp_tree);
                                 break;
                             }
-                            if (xfp.packet_number == XFP_CLIENT_FILE) {
+                            // if it is a client file (we expect an acception response) we dont receive it
+                            if (found_xfp->packet_count == XFP_CLIENT_FILE) {
                                 xfp_tree->search_release(xfp_tree);
                                 break;
                             }
 
+                            // find the session node
                             memcpy(&(session->session_id), &(xfp.session_id), sizeof(session_id_t));
                             ret = args->session_tree->search_pin(args->session_tree, session, (void **)&found_session);
                             if (ret) {
-                                xfp_tree->search_release(xfp_tree);
-                                args->session_tree->search_release(args->session_tree);
-                                break;
-                            }
-
-                            if (found_xfp->packet_number == XFP_CLIENT_FILE) {
-                                // the xfp is for a file we don't receive
                                 xfp_tree->search_release(xfp_tree);
                                 args->session_tree->search_release(args->session_tree);
                                 break;
@@ -784,37 +796,206 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
                             if (chunk_number < found_xfp->last_chunk) {
                                 // we either received a duplicate packet or a resend
-                                // todo: we dont want to write duplicate packets, but it may also be a re-sent packet
                                 // in this case we dont update the packet number
+
+                                prev_node = NULL;
+                                for (range_node = found_xfp->missing_range_ll; range_node != NULL;
+                                     range_node = range_node->next) {
+                                    if (in_range(&(range_node->r), chunk_number))
+                                        break;
+                                    prev_node = range_node;
+                                }
+                                if (range_node == NULL)
+                                    break;
+
+                                // remove the file chunk from the range
+                                if (range_node->r.start == range_node->r.end) {
+                                    if (prev_node)
+                                        prev_node->next = range_node->next;
+                                    else {
+                                        found_xfp->missing_range_ll = range_node->next;
+                                    }
+                                    prev_node = NULL;
+                                    free(range_node);
+                                    range_node = NULL;
+                                }
+                                else {
+                                    if (chunk_number == range_node->r.start) {
+                                        --(range_node->r.start);
+                                    }
+                                    else if (chunk_number == range_node->r.end) {
+                                        --(range_node->r.end);
+                                    }
+                                    else {
+                                        // in this case we have to split the range
+
+                                        // here prev node is used a temporary node and not an actual previous node
+                                        prev_node = malloc(sizeof(range_node_t));
+                                        if (!prev_node) {
+                                            // idk do something
+                                            xfp_tree->search_release(xfp_tree);
+                                            args->session_tree->search_release(args->session_tree);
+                                            *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                            goto cleanup;
+                                        }
+                                        prev_node->r.start = chunk_number + 1;
+                                        prev_node->r.end = range_node->r.end;
+                                        range_node->r.end = chunk_number - 1;
+
+                                        tmp_ptr = found_xfp->missing_range_ll;
+                                        found_xfp->missing_range_ll = prev_node;
+                                        prev_node->next = tmp_ptr;
+                                        tmp_ptr = NULL;
+                                    }
+                                }
+
+                                // write the file chunk
+                                if (chunk_number * PAC_DATA_PAYLOAD_BYTES < LLONG_MAX) {
+                                    fseeko64(found_xfp->file, (long long)(chunk_number * PAC_DATA_PAYLOAD_BYTES),
+                                             SEEK_SET);
+                                }
+                                else {
+                                    // not very sure who owns a file bigger than 2 exbi-bytes, but why not
+                                    fseeko64(found_xfp->file, LLONG_MAX, SEEK_SET);
+                                    fseeko64(found_xfp->file,
+                                             (long long)((chunk_number * PAC_DATA_PAYLOAD_BYTES) - LLONG_MAX),
+                                             SEEK_CUR);
+                                }
+
+                                ret_val = fwrite(((file_chunk_data_t *)packet->data)->data, 1, PAC_DATA_PAYLOAD_BYTES,
+                                                 found_xfp->file);
+                                if (ret_val != PAC_DATA_PAYLOAD_BYTES) {
+                                    ret = ferror(found_xfp->file);
+                                    fprintf(stderr, "DEBUG: file error in fwrite in packet_handler");
+                                    // todo: here are all the errors of fwrite, handle them. these are bad errors, most
+                                    // of them
+                                    switch (ret) {
+                                        case EAGAIN:
+                                        case EBADF:
+                                        case EFBIG:
+                                        case EINTR:
+                                        case EIO:
+                                        case ENOSPC:
+                                        case EPIPE:
+                                        case ENOMEM:
+                                        case ENXIO:
+                                        default:
+                                            xfp_tree->search_release(xfp_tree);
+                                            args->session_tree->search_release(args->session_tree);
+                                            break;
+                                    }
+                                }
+                                found_session->bytes_moved += PAC_DATA_PAYLOAD_BYTES;
+                                ++(found_xfp->packets_writen);
+
+                                // check if we have received the whole file
+                                if (found_xfp->packets_writen == found_xfp->packet_count) {
+                                    // the missing packets should be NULL but well it does not hurt to check
+                                    for (range_node_t *r = found_xfp->missing_range_ll; r != NULL; r = prev_node) {
+                                        prev_node = r->next;
+                                        free(prev_node);
+                                    }
+                                    // TODO: rename the file
+                                    fclose(found_xfp->file);
+                                    xfp_tree->search_release(xfp_tree);
+                                    args->session_tree->search_release(args->session_tree);
+
+                                    xfp_tree->remove(xfp_tree, &xfp);
+                                    args->session_tree->remove(args->session_tree, &session);
+                                    break;
+                                }
+
+                                build_packet(&temp_packet, MSG_RESEND, public_key, NULL, NULL);
+                                ((transmission_control_data_t *)(temp_packet.data))->serial =
+                                    ((file_chunk_data_t *)packet->data)->serial;
+
+                                for (range_node = found_xfp->missing_range_ll; range_node != NULL;
+                                     range_node = range_node->next) {
+                                    // send a resend packet for each range we have
+                                    ((transmission_control_data_t *)(temp_packet.data))->range = range_node->r;
+                                    // send the packet
+                                    ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets,
+                                                      &temp_packet, args->flag);
+                                    if (ret) {
+                                        switch (ret) {
+                                            case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
+                                            case INDIGO_ERROR_INVALID_PARAM:
+                                            case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
+                                                xfp_tree->search_release(xfp_tree);
+                                                args->session_tree->search_release(args->session_tree);
+                                                *process_return = ret;
+                                                goto cleanup;
+                                            case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should
+                                                                                // terminate
+                                                xfp_tree->search_release(xfp_tree);
+                                                args->session_tree->search_release(args->session_tree); // for that
+                                                break;
+                                            case INDIGO_ERROR_NETWORK_RESET:
+                                                xfp_tree->search_release(xfp_tree);
+                                                args->session_tree->search_release(args->session_tree);
+                                                set_event_flag(args->flag, EF_RESET_SOCKETS);
+                                                break;
+                                            default:
+                                                xfp_tree->search_release(xfp_tree);
+                                                args->session_tree->search_release(args->session_tree);
+                                                break; // winlib errors go here
+                                        }
+                                    }
+                                    range_node = NULL;
+                                }
+
+                                xfp_tree->search_release(xfp_tree);
+                                args->session_tree->search_release(args->session_tree);
+                                break;
                             }
                             if (chunk_number > found_xfp->last_chunk) {
                                 // we lost a packet, send a re-send packet
+
+                                range_node = malloc(sizeof(range_node_t));
+                                if (!range_node) {
+                                    xfp_tree->search_release(xfp_tree);
+                                    args->session_tree->search_release(args->session_tree);
+                                    *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                    goto cleanup;
+                                }
+                                range_node->r.start = found_xfp->last_chunk;
+                                range_node->r.end = chunk_number - 1;
+                                tmp_ptr = found_xfp->missing_range_ll;
+                                range_node->next = tmp_ptr;
+                                found_xfp->missing_range_ll = range_node;
+                                range_node = NULL;
 
                                 // create the packet
                                 build_packet(&temp_packet, MSG_RESEND, public_key, NULL, NULL);
                                 ((transmission_control_data_t *)(temp_packet.data))->serial =
                                     ((file_chunk_data_t *)packet->data)->serial;
-                                ((transmission_control_data_t *)(temp_packet.data))->first_packet_number =
+                                ((transmission_control_data_t *)(temp_packet.data))->range.start =
                                     found_xfp->last_chunk;
-                                ((transmission_control_data_t *)(temp_packet.data))->last_packet_number =
-                                    chunk_number - 1;
+                                ((transmission_control_data_t *)(temp_packet.data))->range.end = chunk_number - 1;
                                 // send the packet
-                                ret = send_packet(htons(PORT), packet_info->address.sin_addr.s_addr, args->sockets,
+                                ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets,
                                                   &temp_packet, args->flag);
                                 if (ret) {
                                     switch (ret) {
                                         case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
                                         case INDIGO_ERROR_INVALID_PARAM:
                                         case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
+                                            xfp_tree->search_release(xfp_tree);
+                                            args->session_tree->search_release(args->session_tree);
                                             *process_return = ret;
                                             goto cleanup;
                                         case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should terminate
-                                                                            // for that
+                                            xfp_tree->search_release(xfp_tree);
+                                            args->session_tree->search_release(args->session_tree); // for that
                                             break;
                                         case INDIGO_ERROR_NETWORK_RESET:
+                                            xfp_tree->search_release(xfp_tree);
+                                            args->session_tree->search_release(args->session_tree);
                                             set_event_flag(args->flag, EF_RESET_SOCKETS);
                                             break;
                                         default:
+                                            xfp_tree->search_release(xfp_tree);
+                                            args->session_tree->search_release(args->session_tree);
                                             break; // winlib errors go here
                                     }
                                 }
@@ -829,7 +1010,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 // not very sure who owns a file bigger than 2 exbi-bytes, but why not
                                 fseeko64(found_xfp->file, LLONG_MAX, SEEK_SET);
                                 fseeko64(found_xfp->file,
-                                         (long long)((chunk_number * PAC_DATA_PAYLOAD_BYTES) - LLONG_MAX), SEEK_SET);
+                                         (long long)((chunk_number * PAC_DATA_PAYLOAD_BYTES) - LLONG_MAX), SEEK_CUR);
                             }
 
                             ret_val = fwrite(((file_chunk_data_t *)packet->data)->data, 1, PAC_DATA_PAYLOAD_BYTES,
@@ -850,12 +1031,31 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                     case ENOMEM:
                                     case ENXIO:
                                     default:
+                                        xfp_tree->search_release(xfp_tree);
+                                        args->session_tree->search_release(args->session_tree);
                                         break;
                                 }
                             }
                             if (chunk_number >= found_xfp->last_chunk)
                                 found_xfp->last_chunk = chunk_number + 1;
                             found_session->bytes_moved += PAC_DATA_PAYLOAD_BYTES;
+                            ++(found_xfp->packets_writen);
+
+                            if (found_xfp->packets_writen == found_xfp->packet_count) {
+                                // the missing packets should be NULL but well it does not hurt to check
+                                for (range_node_t *r = found_xfp->missing_range_ll; r != NULL; r = prev_node) {
+                                    prev_node = r->next;
+                                    free(prev_node);
+                                }
+                                // TODO: rename the file
+                                fclose(found_xfp->file);
+                                xfp_tree->search_release(xfp_tree);
+                                args->session_tree->search_release(args->session_tree);
+
+                                xfp_tree->remove(xfp_tree, &xfp);
+                                args->session_tree->remove(args->session_tree, &session);
+                                break;
+                            }
 
                             xfp_tree->search_release(xfp_tree);
                             args->session_tree->search_release(args->session_tree);
@@ -863,30 +1063,97 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         }
                     case MSG_RESEND:
                         {
+                            Q_RESEND_FILE_CHUNK *qdata;
                             if (packet->magic_number != MAGIC_NUMBER_2)
                                 break;
                             fprintf(stderr, "DEBUG: Resend attempted\n");
-                            transmission_control_data_t *control_packet = malloc(sizeof(transmission_control_data_t));
-                            if (control_packet == NULL) {
+                            qdata = malloc(sizeof(Q_RESEND_FILE_CHUNK));
+                            if (qdata == NULL) {
                                 *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                                 goto cleanup;
                             }
-                            memcpy(control_packet, packet->data, sizeof(transmission_control_data_t));
+                            memcpy(&(qdata->control), packet->data, sizeof(transmission_control_data_t));
+                            memcpy(qdata->session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
+                            qdata->session_id.serial = qdata->control.serial;
 
                             set_event_flag(args->send_flag, EF_RESEND_FILE_CHUNK);
-                            ret = queue_push(args->send_queue, control_packet, QET_RESEND_FILE_CHUNK);
+                            ret = queue_push(args->send_queue, qdata, QET_RESEND_FILE_CHUNK);
                             if (ret) {
-                                free(control_packet);
+                                free(qdata);
                                 *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                                 goto cleanup;
                             }
                             break;
                         }
                     case MSG_STOP_FILE_TRANSMISSION:
-                    case MSG_PAUSE_FILE_TRANSMISSION:
-                    case MSG_CONTINUE_FILE_TRANSMISSION:
-                        if (packet->magic_number != MAGIC_NUMBER_2)
+                        {
+                            Q_CONTROL_FILE_TRANSMISSION *qdata;
+                            if (packet->magic_number != MAGIC_NUMBER_2)
+                                break;
+                            qdata = malloc(sizeof(Q_CONTROL_FILE_TRANSMISSION));
+                            if (qdata == NULL) {
+                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                goto cleanup;
+                            }
+                            memcpy(&(qdata->control), packet->data, sizeof(transmission_control_data_t));
+                            memcpy(qdata->session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
+                            qdata->session_id.serial = qdata->control.serial;
+
+                            set_event_flag(args->send_flag, EF_STOP_FILE_TRANSMISSION);
+                            ret = queue_push(args->send_queue, qdata, QET_STOP_FILE_TRANSMISSION);
+                            if (ret) {
+                                free(qdata);
+                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                goto cleanup;
+                            }
                             break;
+                        }
+                    case MSG_PAUSE_FILE_TRANSMISSION:
+                        {
+                            Q_CONTROL_FILE_TRANSMISSION *qdata;
+                            if (packet->magic_number != MAGIC_NUMBER_2)
+                                break;
+                            qdata = malloc(sizeof(Q_CONTROL_FILE_TRANSMISSION));
+                            if (qdata == NULL) {
+                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                goto cleanup;
+                            }
+                            memcpy(&(qdata->control), packet->data, sizeof(transmission_control_data_t));
+                            memcpy(qdata->session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
+                            qdata->session_id.serial = qdata->control.serial;
+
+                            set_event_flag(args->send_flag, EF_PAUSE_FILE_TRANSMISSION);
+                            ret = queue_push(args->send_queue, qdata, QET_PAUSE_FILE_TRANSMISSION);
+                            if (ret) {
+                                free(qdata);
+                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                goto cleanup;
+                            }
+                            break;
+                        }
+                    case MSG_CONTINUE_FILE_TRANSMISSION:
+                        {
+                            Q_CONTROL_FILE_TRANSMISSION *qdata;
+                            if (packet->magic_number != MAGIC_NUMBER_2)
+                                break;
+                            qdata = malloc(sizeof(Q_CONTROL_FILE_TRANSMISSION));
+                            if (qdata == NULL) {
+                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                goto cleanup;
+                            }
+                            memcpy(&(qdata->control), packet->data, sizeof(transmission_control_data_t));
+                            memcpy(qdata->session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
+                            qdata->session_id.serial = qdata->control.serial;
+
+                            set_event_flag(args->send_flag, EF_CONTINUE_FILE_TRANSMISSION);
+                            ret = queue_push(args->send_queue, qdata, QET_CONTINUE_FILE_TRANSMISSION);
+                            if (ret) {
+                                free(qdata);
+                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                goto cleanup;
+                            }
+                            break;
+                        }
                     case MSG_IP_CHANGE:
                         if (packet->magic_number != MAGIC_NUMBER_2)
                             break;
@@ -927,7 +1194,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 memcpy(&(xfp.session_id), &(qe->session_id), sizeof(session_id_t));
                 xfp.file = qe->file;
                 xfp.expiration_time = time(NULL) + EXPIRATION_TIME;
-                xfp.packet_number = XFP_CLIENT_FILE;
+                xfp.packet_count = XFP_CLIENT_FILE;
                 free(node->data);
                 destroy_qnode(node);
                 node = NULL;
@@ -1140,6 +1407,9 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
     file_sending_response_data_t file_sending_response_data = {0};
     xfp_t xfp;
+    char file_name[2 * sizeof(session_id_t) + 1 + 9] = INDIGO_TEMP_DIR;
+    char xpath[PATH_MAX];
+    char *initial_cwd;
 
     // there is no point to receive a file of 0 bytes, I mean we don't transfer metadata, so I guess there is no point
     if (fwd->file_size == 0) {
@@ -1165,11 +1435,25 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     // zero out the xfp. Not sure if this is necessary, probably will be optimized out by the compiler
     memset(&xfp, 0, sizeof(xfp_t));
     // create the file we will write to
-    xfp.file = tmpfile();
+    for (int i = 0; i < crypto_sign_PUBLICKEYBYTES; ++i) {
+        sprintf(file_name + (2 * i), "%02x", (xfp.session_id.pk)[i]);
+    }
+    sprintf(file_name, "%016lx", xfp.session_id.serial);
+    file_name[2 * sizeof(session_id_t)] = '\0';
+
+    initial_cwd = g_get_current_dir();
+    get_source_dir(xpath);
+    chdir(xpath);
+
+    xfp.file = fopen(file_name, "wb");
     if (!xfp.file) {
+        chdir(initial_cwd);
+        g_free(initial_cwd);
         ret = INDIGO_ERROR_CAN_NOT_OPEN_FILE;
         goto cleanup;
     }
+    chdir(initial_cwd);
+    g_free(initial_cwd);
 
     // check if the serial is valid
     if (rdev.last_fid >= fwd->serial) {
@@ -1189,22 +1473,26 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     }
 
     ret = send_packet(htons(PORT), fwd->addr, sockets, packet, flag);
-    if (ret)
+    if (ret) {
         goto cleanup; // it's up to the caller to handle these errors, we cant do anything
+    }
 
     free(packet);
     packet = NULL;
 
     // create expected file packets
     xfp.expiration_time = time(NULL) + EXPIRATION_TIME;
-    xfp.packet_number = (uint64_t)ceil((double)(fwd->file_size) / (double)10);
+    xfp.packet_count = (uint64_t)ceil((double)(fwd->file_size) / (double)(1 << 10));
+    xfp.packets_writen = 0;
     xfp.last_chunk = 0;
     xfp.session_id.serial = file_sending_response_data.serial;
+    xfp.missing_range_ll = NULL;
     memcpy(xfp.session_id.pk, fwd->id, crypto_sign_PUBLICKEYBYTES);
 
     ret = xfp_tree->insert(xfp_tree, &xfp);
-    if (ret)
+    if (ret) {
         goto cleanup;
+    }
 
     memcpy(&(session->session_id), &(xfp.session_id), sizeof(session_id_t));
     session->bytes_moved = 0;
@@ -1214,8 +1502,9 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     session->ip = fwd->addr;
 
     ret = session_tree->insert(session_tree, session);
-    if (ret)
+    if (ret) {
         goto cleanup;
+    }
 
     return 0;
 
@@ -1257,7 +1546,7 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
 
     // if they sent us a serial of a file we are receiving then we reject.
     //(an attacker or a badly writen mod, either way me not happy).
-    if (xfp.packet_number != XFP_CLIENT_FILE) {
+    if (xfp.packet_count != XFP_CLIENT_FILE) {
         // we don't goto cleanup here. we don't want to remove an active file
         return INDIGO_ERROR_INVALID_PEER_PARAM;
     }
@@ -1299,21 +1588,4 @@ cleanup:
     free(session);
     xfp_tree->remove(xfp_tree, &xfp);
     return ret;
-}
-
-int sanitize_username(wchar_t username[MAX_USERNAME_LEN])
-{
-    if (username == NULL)
-        return 1;
-
-    username[MAX_USERNAME_LEN - 1] = L'\0';
-    for (int i = 0; i < MAX_USERNAME_LEN; i++) {
-        if (username[i] == '\0')
-            break;
-        if (!iswprint(username[i])) {
-            memmove(username + i, username + i + 1, MAX_USERNAME_LEN - i - 1);
-        }
-        // may add more rules, but for now it's ok
-    }
-    return 0;
 }

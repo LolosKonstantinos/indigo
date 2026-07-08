@@ -47,7 +47,9 @@ typedef enum QUEUE_EVENT_TYPE {
     QET_SEND_FILE,
     QET_EXPECT_SEND_RESPONSE,
     QET_RESEND_FILE_CHUNK,
-    QET_CONTROL_FILE_TRANSMISSION
+    QET_STOP_FILE_TRANSMISSION,
+    QET_PAUSE_FILE_TRANSMISSION,
+    QET_CONTINUE_FILE_TRANSMISSION
 } QUEUE_EVENT_TYPE,
     QET;
 
@@ -69,7 +71,7 @@ typedef session_id_t Q_SESSION_REJECTED;
 typedef active_file_t Q_SEND_FILE;
 
 typedef struct Q_RESEND_FILE_CHUNK {
-    transmission_control_data_t *control;
+    transmission_control_data_t control;
     session_id_t session_id;
 } Q_RESEND_FILE_CHUNK, Q_CONTROL_FILE_TRANSMISSION;
 

@@ -29,28 +29,31 @@ SOFTWARE.
 #include <Queue.h>
 #include "indigo_types.h"
 #include <binary_tree.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #define EXPIRATION_TIME 15
 
-//eXpected Signing Response
+// eXpected Signing Response
 typedef struct xsr_t {
     time_t expiration_time;
     unsigned char nonce[INDIGO_NONCE_SIZE];
     unsigned char id[crypto_sign_PUBLICKEYBYTES];
     unsigned char *pkx;
     unsigned char *skx;
-}xsr_t;
+} xsr_t;
 
-
-//eXpected File Packet
+// eXpected File Packet
 typedef struct xfp_t {
     session_id_t session_id;
     time_t expiration_time;
-    uint64_t packet_number;//the expected amount of packets
+    uint64_t packet_count; // the expected amount of packets
+    uint64_t packets_writen;
     uint64_t last_chunk;
     FILE *file;
-}xfp_t;
-//packet_number takes this value when the xfp is used to store the file of a file we want to send
+    range_node_t *missing_range_ll;
+} xfp_t;
+// packet_number takes this value when the xfp is used to store the file of a file we want to send
 #define XFP_CLIENT_FILE 0
 
 typedef struct PACKET_HANDLER_ARGS {
@@ -65,7 +68,7 @@ typedef struct PACKET_HANDLER_ARGS {
     mempool_t *mempool;
     signing_key_pair_t *signing_keys;
     socket_ll *sockets;
-}PACKET_HANDLER_ARGS;
+} PACKET_HANDLER_ARGS;
 
 //////////////////////////////////////////////////////////
 ///                                                    ///
@@ -75,25 +78,15 @@ typedef struct PACKET_HANDLER_ARGS {
 
 int *packet_handler_thread(PACKET_HANDLER_ARGS *args);
 
-//utilities
+// utilities
 
 int cmp_xsr(void *s1, void *s2);
 int cmp_xfp(void *s1, void *s2);
 
-int create_server_session(Q_FILE_SENDING_REQUEST *fwd
-                          , tree_t *dev_tree
-                          , tree_t *session_tree
-                          , tree_t *xfp_tree
-                          , unsigned char pk[crypto_sign_PUBLICKEYBYTES]
-                          , socket_ll* sockets, EFLAG *flag);
+int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t *session_tree, tree_t *xfp_tree,
+                          unsigned char pk[crypto_sign_PUBLICKEYBYTES], socket_ll *sockets, EFLAG *flag);
 
-int create_client_session(const packet_t *packet
-                          , const packet_info_t *packet_info
-                          , tree_t *dev_tree
-                          , tree_t *session_tree
-                          , tree_t *xfp_tree
-                          , QUEUE *send_queue
-);
+int create_client_session(const packet_t *packet, const packet_info_t *packet_info, tree_t *dev_tree,
+                          tree_t *session_tree, tree_t *xfp_tree, QUEUE *send_queue);
 
-int sanitize_username(wchar_t username[MAX_USERNAME_LEN]);
-#endif //PACKET_HANDLER_H
+#endif // PACKET_HANDLER_H

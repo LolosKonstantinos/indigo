@@ -713,7 +713,7 @@ int register_multiple_receivers(int epoll_fd, socket_ll *sockets, size_t *event_
 }
 int send_discovery_packets(const int port, const uint32_t multicast_addr, socket_ll *sockets, EFLAG *flag,
                            const uint32_t pCount, const int32_t msec, signing_key_pair_t *sign_key_pair,
-                           wchar_t username[MAX_USERNAME_LEN])
+                           char username[(MAX_USERNAME_LEN + 1) * sizeof(uint32_t)])
 {
     int ret;
     time_t curr_time;
@@ -1710,7 +1710,7 @@ int *send_thread(SEND_ARGS *args)
     lht_t *active_files = NULL;
     active_file_t *curr_af;
     lht_node_t *list;
-    wchar_t username[MAX_USERNAME_LEN];
+    char username[(MAX_USERNAME_LEN + 1) * sizeof(uint32_t)];
     int *process_return = NULL;
     int ret;
 
@@ -1794,7 +1794,7 @@ int *send_thread(SEND_ARGS *args)
                 continue;
             if (node->type == QET_RESEND_FILE_CHUNK) {
                 active_file_t *af;
-                transmission_control_data_t *data = ((Q_RESEND_FILE_CHUNK *)(node->data))->control;
+                transmission_control_data_t *data = &((Q_RESEND_FILE_CHUNK *)(node->data))->control;
 
                 af = lht_search(active_files, &(((Q_RESEND_FILE_CHUNK *)(node->data))->session_id));
                 if (!af) {
@@ -1804,7 +1804,7 @@ int *send_thread(SEND_ARGS *args)
                     continue;
                 }
 
-                for (size_t i = data->first_packet_number; i < data->last_packet_number + 1; i++) {
+                for (size_t i = data->range.start; i < data->range.end + 1; i++) {
                     ret = send_file_packet(af, i, args->sign_keys->public, args->sockets, args->flag);
                     if (ret) { // todo: are all errors non recoverable? check it please
                         free(node->data);
@@ -1827,9 +1827,32 @@ int *send_thread(SEND_ARGS *args)
             node = queue_peek(args->queue);
             if (node == NULL)
                 continue;
-            if (node->type == QET_CONTROL_FILE_TRANSMISSION) {
+            if (node->type == QET_STOP_FILE_TRANSMISSION) {
                 queue_remove_front(args->queue);
             }
+            // TODO: find and remove the active file
+            free(node->data);
+            destroy_qnode(node);
+        }
+        else if (flag_val & EF_CONTINUE_FILE_TRANSMISSION) {
+            node = queue_peek(args->queue);
+            if (node == NULL)
+                continue;
+            if (node->type == QET_CONTINUE_FILE_TRANSMISSION) {
+                queue_remove_front(args->queue);
+            }
+            // TODO: find and continue the active file
+            free(node->data);
+            destroy_qnode(node);
+        }
+        else if (flag_val & EF_PAUSE_FILE_TRANSMISSION) {
+            node = queue_peek(args->queue);
+            if (node == NULL)
+                continue;
+            if (node->type == QET_PAUSE_FILE_TRANSMISSION) {
+                queue_remove_front(args->queue);
+            }
+            // TODO: find and pause the active file
             free(node->data);
             destroy_qnode(node);
         } // we don't care about other events, if they are there we shouldn't get them anyway
