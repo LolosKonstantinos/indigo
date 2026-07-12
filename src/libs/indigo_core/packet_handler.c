@@ -39,6 +39,7 @@ SOFTWARE.
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <log.h>
 
 #ifndef _WIN32
 #define _FILE_OFFSET_BITS_64
@@ -59,6 +60,7 @@ SOFTWARE.
 // todo: i know for sure that there is some code around here that does not work at all, we need to find it
 int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 {
+
     void *tmp_ptr;
     uint32_t flag_val = 0;
     QNODE *node = NULL;
@@ -122,12 +124,14 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     // allocate memory for the return value
     if (errno) {
         // this is here because clangd is crying again
-        // says i must remove errno.h
+        // says I must remove errno.h
     }
     process_return = malloc(sizeof(int));
     if (process_return == NULL) {
         set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
+        log_fatal("[packet_handler_thread] malloc failed allocating %d bytes for return value | return NULL",
+            sizeof(int));
         return NULL;
     }
     *process_return = 0;
@@ -135,11 +139,13 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     ret = new_tree(&known_keys_tree, key_cmp, sizeof(known_key_t), BINARY_TREE_FLAG_AVL);
     if (ret) {
         *process_return = ret;
+        log_fatal("[packet_handler_thread] new_tree() failed creating known key tree | return %d", ret);
         goto cleanup;
     }
     ret = load_known_keys(known_keys_tree);
-    if (ret) {
+    if (ret != INDIGO_SUCCESS && ret != INDIGO_ERROR_FILE_NOT_FOUND) {
         *process_return = ret;
+        log_fatal("[packet_handler_thread] load_known_keys() failed | return %d", ret);
         goto cleanup;
     }
 
@@ -149,6 +155,10 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     file_sending_response_data = malloc(sizeof(file_sending_response_data_t));
     if (!signing_request_data || !signing_response_data || !file_sending_request_data || !file_sending_response_data) {
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        log_fatal("[packet_handler_thread] malloc failed allocating %d %d %d %d bytes for signing request"
+                  " and response and file sending request and response data respectively | return %d",
+                  sizeof(signing_request_data_t), sizeof(signing_response_data_t),
+                  sizeof(file_sending_request_data_t), sizeof(file_sending_response_data_t) , *process_return);
         goto cleanup;
     }
 
@@ -157,13 +167,17 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
     // create the expected packet table
     ret = new_tree(&xsr_tree, cmp_xsr, sizeof(xsr_t), BINARY_TREE_FLAG_AVL);
-    if (!ret) {
-        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+    if (ret != INDIGO_SUCCESS) {
+        *process_return = ret;
+        log_fatal("[packet_handler_thread] new_tree failed to create expected signing response tree | return %d", *process_return,
+            process_return);
         goto cleanup;
     }
     ret = new_tree(&xfp_tree, cmp_xfp, sizeof(xfp_t), BINARY_TREE_FLAG_AVL);
-    if (!ret) {
-        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+    if (ret != INDIGO_SUCCESS) {
+        *process_return = ret;
+        log_fatal("[packet_handler_thread] new_tree failed to create expected file packet tree | return %d",
+            process_return);
         goto cleanup;
     }
 
@@ -202,7 +216,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 // check if the packet is encrypted
                 if (packet->magic_number == MAGIC_NUMBER_2) {
                     ret = args->device_tree->search(args->device_tree, &rdev);
-                    if (ret) {
+                    if (ret == 0) {
                         // we cant decrypt a packet from a device we don't know
 
                         // we no longer need the packet
@@ -266,7 +280,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         // search in the tree
                         ret = args->device_tree->search_pin(args->device_tree, &rdev, (void **)&found_rdev);
 
-                        if (ret == 0) {
+                        if (ret == 1) {
                             found_rdev->expiration_time = time(NULL); // renew the timestamp
                             found_rdev->ip = packet_info->address.sin_addr.s_addr;
                             // copy the username
@@ -302,7 +316,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         ret = args->device_tree->insert(args->device_tree, &rdev);
 
                         if (ret) {
-                            *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                            *process_return = ret;
+                            log_fatal("[packet_handler_thread] device_tree insert() failed| return %d", ret);
                             goto cleanup;
                         }
 
@@ -318,6 +333,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                                  args->signing_keys->secret);
                         if (ret) {
                             *process_return = INDIGO_ERROR_INVALID_PARAM;
+                            log_fatal("[packet_handler_thread] crypto_sign_detached failed | return %d",
+                                *process_return);
                             goto cleanup;
                         }
 
@@ -330,6 +347,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 case INDIGO_ERROR_INVALID_PARAM:
                                 case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
                                     *process_return = ret;
+                                    log_fatal("[packet_handler_thread] send_packet() failed to send signing request "
+                                              "| return %d", ret);
                                     goto cleanup;
                                 case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should terminate for that
                                     break;
@@ -349,6 +368,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
                         if (xsr_tree->insert(xsr_tree, &xsr)) {
                             *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                            log_fatal("[packet_handler_thread] xsr_tree insert failed | return %d", *process_return);
                             goto cleanup;
                         }
 
@@ -365,8 +385,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             if ((((signing_request_data_t *)packet)->timestamp < curr_time - 1) ||
                                 (((signing_request_data_t *)packet)->timestamp > curr_time)) {
 
-                                printf("DEBUG: time rejected");
-                                fflush(stdout);
+                                log_info("[packet_handler_thread] signing request rejected due to "
+                                          "expired header time stamp");
                                 break;
                             }
                         }
@@ -379,6 +399,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         // can fail only dew to wrong usage
                         if (ret) {
                             *process_return = INDIGO_ERROR_INVALID_PARAM;
+                            log_fatal("[packet_handler_thread] sign_buffer failed signing a peer signing request nonce "
+                                      "| return %d", ret);
                             goto cleanup;
                         }
 
@@ -389,6 +411,9 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             free(session_pk);
                             free(session_sk);
                             *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                            log_fatal("[packet_handler_thread] malloc failed allocating %d+%d bytes"
+                                      " for session public and private key | return %d",
+                                      crypto_kx_PUBLICKEYBYTES, crypto_kx_SECRETKEYBYTES, *process_return);
                             goto cleanup;
                         }
                         sodium_mlock(session_sk, crypto_kx_SECRETKEYBYTES);
@@ -397,9 +422,9 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         if (ret) {
                             free(session_pk);
                             free(session_sk);
-                            printf("DEBUG: kx_keypair failed");
-                            fflush(stdout);
                             *process_return = INDIGO_ERROR_INVALID_PARAM;
+                            log_fatal("[packet_handler_thread] crypto_kx_keypair() failed creating session keys"
+                                      " | return %d", *process_return);
                             goto cleanup;
                         }
 
@@ -408,7 +433,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
                         // if the peer is verified we don't need to send a signing request
                         ret = args->device_tree->search_pin(args->device_tree, &rdev, (void **)&found_rdev);
-                        if (ret == 0) {
+                        if (ret == 1) {
                             // the device is found
 
                             found_rdev->expiration_time = time(NULL) + EXPIRATION_TIME;
@@ -428,10 +453,11 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
                                 ret = xsr_tree->insert(xsr_tree, &xsr);
                                 if (ret) {
-                                    printf("DEBUG: xsr_tree->insert() failed in packet_handler");
-                                    fflush(stdout);
+
                                     args->device_tree->search_release(args->device_tree);
                                     *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                    log_fatal("[packet_handler_thread] xsr_tree insert failed | return %d",
+                                        *process_return);
                                     goto cleanup;
                                 }
                             }
@@ -471,6 +497,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 free(session_pk);
                                 free(session_sk);
                                 *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                log_fatal("[packet_handler_thread] device_tree insert failed inserting device"
+                                          " from signing request | return %d", *process_return);
                                 goto cleanup;
                             }
 
@@ -486,6 +514,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
                             if (xsr_tree->insert(xsr_tree, &xsr)) {
                                 *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                log_fatal("[packet_handler_thread] xsr_tree insert failed | return %d",
+                                    *process_return);
                                 goto cleanup;
                             }
                             memset(&xsr, 0, sizeof(xsr_t));
@@ -497,6 +527,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                                  args->signing_keys->secret);
                         if (ret) {
                             *process_return = INDIGO_ERROR_INVALID_PARAM;
+                            log_fatal("[packet_handler_thread] crypto_sign_detached() failed signing nonce for"
+                                      " signing request | return %d", *process_return);
                             goto cleanup;
                         }
 
@@ -508,6 +540,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 case INDIGO_ERROR_INVALID_PARAM:
                                 case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
                                     *process_return = ret;
+                                    log_fatal("[packet_handler_thread] send_packet() failed sending "
+                                              "signing response| return %d", *process_return);
                                     goto cleanup;
                                 case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should terminate for that
                                     break;
@@ -524,12 +558,15 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         ret = crypto_sign_verify_detached(
                             ((signing_response_data_t *)packet->data)->signature, (unsigned char *)packet,
                             offsetof(packet_t, data) + offsetof(signing_response_data_t, signature), packet->id);
-                        if (ret)
-                            break; // we don't validate signed time, since there is already a signed nonce to verify
+                        if (ret) {
+                            log_debug("[packet_handler_thread] invalid signing response");
+                            break;
+                        }
+                        // we don't validate signed time, since there is already a signed nonce to verify
 
                         memcpy(xsr.id, packet->id, crypto_sign_PUBLICKEYBYTES);
                         ret = xsr_tree->search(xsr_tree, &xsr);
-                        if (ret)
+                        if (ret == 0)
                             break; // if there is no expected signing response, there is nothing to process
 
                         // verify the signed nonce
@@ -545,7 +582,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 /* I am not sure how we could get an expected packet for a device
                                  * that isn't in the device tree
                                  */
-                                if (ret == 0) {
+                                if (ret == 1) {
                                     found_rdev->expiration_time = time(NULL) + EXPIRATION_TIME;
                                     found_rdev->ip = packet_info->address.sin_addr.s_addr; // ip may have changed
 
@@ -563,6 +600,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                                           INDIGO_NONCE_SIZE, args->signing_keys->secret);
                                         if (ret) {
                                             *process_return = INDIGO_ERROR_INVALID_PARAM;
+                                            log_fatal("[packet_handler_thread] crypto_sign failed to sign nonce "
+                                                      "for signing request | return %d", *process_return);
                                             goto cleanup;
                                         }
 
@@ -578,6 +617,10 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                             free(session_pk);
                                             free(session_sk);
                                             *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                            log_fatal("[packet_handler_thread] malloc failed allocating %d+%d bytes "
+                                                      "for session keys | return %d",
+                                                      crypto_kx_SECRETKEYBYTES,crypto_kx_SECRETKEYBYTES,
+                                                      *process_return );
                                             goto cleanup;
                                         }
                                         sodium_mlock(session_sk, crypto_kx_SECRETKEYBYTES);
@@ -589,6 +632,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                             printf("DEBUG: kx_keypair failed");
                                             fflush(stdout);
                                             *process_return = INDIGO_ERROR_INVALID_PARAM;
+                                            log_fatal("[packet_handler_thread] kx_keypair failed | return %d",
+                                                *process_return);
                                             goto cleanup;
                                         }
                                         ret = crypto_kx_client_session_keys(
@@ -627,6 +672,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                             public_key);
                                         if (ret) {
                                             *process_return = INDIGO_ERROR_INVALID_PARAM;
+                                            log_fatal("[packet_handler_thread] crypto_sing_detached failed signing"
+                                                      " signing response packet | return %d", *process_return);
                                             goto cleanup;
                                         }
                                         ret = send_packet((int)htonl(PORT), packet_info->address.sin_addr.s_addr,
@@ -637,6 +684,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                                 case INDIGO_ERROR_INVALID_PARAM:
                                                 case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
                                                     *process_return = ret;
+                                                    log_fatal("[packet_handler_thread] send_packet failed sending"
+                                                              " signing response | return &d", *process_return);
                                                     goto cleanup;
                                                 case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should
                                                                                     // terminate for that
@@ -696,6 +745,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             fsr = malloc(sizeof(Q_FILE_SENDING_REQUEST));
                             if (!fsr) {
                                 *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                log_fatal("[packet_handler_thread] malloc failed allocating %d bytes for queue"
+                                          " file sending request | return %d", *process_return);
                                 goto cleanup;
                             }
 
@@ -709,13 +760,15 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             if (args->device_tree->search_pin(args->device_tree, &rdev, (void **)&found_rdev)) {
                                 if (found_rdev->dev_state_flag & KNOWN_KEY_STATUS_TOO_GOOD) {
                                     // in this case and this case only the user has specified
-                                    // that this peer does not need aproval
+                                    // that this peer does not need approval
                                     ret = create_server_session(fwd, args->device_tree, args->session_tree, xfp_tree,
                                                                 public_key, args->sockets, args->flag);
                                     if (ret) {
                                         // todo: create_server_session() uses send_packet() and returns its errors
                                         // todo: do more complex error handling
                                         *process_return = ret;
+                                        log_fatal("[packet_handler_thread] failed to create server session "
+                                                  "| return %d", *process_return);
                                         goto cleanup;
                                     }
                                     break;
@@ -726,8 +779,10 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                          i = i->next) {
                                         temp_fsr = i;
                                     }
-                                    free(temp_fsr->next);
-                                    temp_fsr->next = NULL;
+                                    if (temp_fsr) {
+                                        free(temp_fsr->next);
+                                        temp_fsr->next = NULL;
+                                    }
                                     (found_rdev->fsr_count)--;
                                 }
                                 (found_rdev->fsr_count)++;
@@ -746,6 +801,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                                     xfp_tree, args->send_queue);
                         if (ret) {
                             *process_return = ret;
+                            log_fatal("[packet_handler_thread] failed to create client session | "
+                                      "return %d", *process_return);
                             goto cleanup;
                         }
                         break;
@@ -771,11 +828,11 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             xfp.session_id.serial = ((file_chunk_data_t *)packet->data)->serial;
 
                             ret = xfp_tree->search_pin(xfp_tree, &xfp, (void **)&found_xfp);
-                            if (ret) {
+                            if (ret == 0) {
                                 xfp_tree->search_release(xfp_tree);
                                 break;
                             }
-                            // if it is a client file (we expect an acception response) we dont receive it
+                            // if it is a client file (we expect an acception response) we don't receive it
                             if (found_xfp->packet_count == XFP_CLIENT_FILE) {
                                 xfp_tree->search_release(xfp_tree);
                                 break;
@@ -784,7 +841,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             // find the session node
                             memcpy(&(session->session_id), &(xfp.session_id), sizeof(session_id_t));
                             ret = args->session_tree->search_pin(args->session_tree, session, (void **)&found_session);
-                            if (ret) {
+                            if (ret == 0) {
                                 xfp_tree->search_release(xfp_tree);
                                 args->session_tree->search_release(args->session_tree);
                                 break;
@@ -796,7 +853,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
                             if (chunk_number < found_xfp->last_chunk) {
                                 // we either received a duplicate packet or a resend
-                                // in this case we dont update the packet number
+                                // in this case we don't update the packet number
 
                                 prev_node = NULL;
                                 for (range_node = found_xfp->missing_range_ll; range_node != NULL;
@@ -832,7 +889,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                         // here prev node is used a temporary node and not an actual previous node
                                         prev_node = malloc(sizeof(range_node_t));
                                         if (!prev_node) {
-                                            // idk do something
+                                            // IDK do something
                                             xfp_tree->search_release(xfp_tree);
                                             args->session_tree->search_release(args->session_tree);
                                             *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
@@ -866,9 +923,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                                  found_xfp->file);
                                 if (ret_val != PAC_DATA_PAYLOAD_BYTES) {
                                     ret = ferror(found_xfp->file);
-                                    fprintf(stderr, "DEBUG: file error in fwrite in packet_handler");
-                                    // todo: here are all the errors of fwrite, handle them. these are bad errors, most
-                                    // of them
+                                    // TODO: here are all the errors of fwrite, handle them. these are bad errors,
+                                    //       most of them
                                     switch (ret) {
                                         case EAGAIN:
                                         case EBADF:
@@ -884,6 +940,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                             args->session_tree->search_release(args->session_tree);
                                             break;
                                     }
+                                    break;
                                 }
                                 found_session->bytes_moved += PAC_DATA_PAYLOAD_BYTES;
                                 ++(found_xfp->packets_writen);
@@ -917,32 +974,28 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                     ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets,
                                                       &temp_packet, args->flag);
                                     if (ret) {
+                                        xfp_tree->search_release(xfp_tree);
+                                        args->session_tree->search_release(args->session_tree);
                                         switch (ret) {
                                             case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
                                             case INDIGO_ERROR_INVALID_PARAM:
                                             case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
-                                                xfp_tree->search_release(xfp_tree);
-                                                args->session_tree->search_release(args->session_tree);
                                                 *process_return = ret;
+                                                log_fatal("[packet_handler_thread] send_packet failed "
+                                                          "sending resend packets | return %d", *process_return);
                                                 goto cleanup;
                                             case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should
-                                                                                // terminate
-                                                xfp_tree->search_release(xfp_tree);
-                                                args->session_tree->search_release(args->session_tree); // for that
+                                                                                // terminate for that
                                                 break;
                                             case INDIGO_ERROR_NETWORK_RESET:
-                                                xfp_tree->search_release(xfp_tree);
-                                                args->session_tree->search_release(args->session_tree);
                                                 set_event_flag(args->flag, EF_RESET_SOCKETS);
                                                 break;
                                             default:
-                                                xfp_tree->search_release(xfp_tree);
-                                                args->session_tree->search_release(args->session_tree);
                                                 break; // winlib errors go here
                                         }
                                     }
-                                    range_node = NULL;
                                 }
+                                range_node = NULL;
 
                                 xfp_tree->search_release(xfp_tree);
                                 args->session_tree->search_release(args->session_tree);
@@ -956,6 +1009,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                     xfp_tree->search_release(xfp_tree);
                                     args->session_tree->search_release(args->session_tree);
                                     *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                    log_fatal("[packet_handler_thread] malloc failed allocating %d bytes for "
+                                              "missing packet range node | return %d", *process_return);
                                     goto cleanup;
                                 }
                                 range_node->r.start = found_xfp->last_chunk;
@@ -976,26 +1031,22 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets,
                                                   &temp_packet, args->flag);
                                 if (ret) {
+                                    xfp_tree->search_release(xfp_tree);
+                                    args->session_tree->search_release(args->session_tree);
                                     switch (ret) {
                                         case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
                                         case INDIGO_ERROR_INVALID_PARAM:
                                         case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
-                                            xfp_tree->search_release(xfp_tree);
-                                            args->session_tree->search_release(args->session_tree);
                                             *process_return = ret;
+                                            log_fatal("[packet_handler_thread] send_packet failed "
+                                                          "sending resend packets | return %d", *process_return);
                                             goto cleanup;
                                         case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should terminate
-                                            xfp_tree->search_release(xfp_tree);
-                                            args->session_tree->search_release(args->session_tree); // for that
                                             break;
                                         case INDIGO_ERROR_NETWORK_RESET:
-                                            xfp_tree->search_release(xfp_tree);
-                                            args->session_tree->search_release(args->session_tree);
                                             set_event_flag(args->flag, EF_RESET_SOCKETS);
                                             break;
                                         default:
-                                            xfp_tree->search_release(xfp_tree);
-                                            args->session_tree->search_release(args->session_tree);
                                             break; // winlib errors go here
                                     }
                                 }
@@ -1016,8 +1067,11 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             ret_val = fwrite(((file_chunk_data_t *)packet->data)->data, 1, PAC_DATA_PAYLOAD_BYTES,
                                              found_xfp->file);
                             if (ret_val != PAC_DATA_PAYLOAD_BYTES) {
+                                xfp_tree->search_release(xfp_tree);
+                                args->session_tree->search_release(args->session_tree);
+                                log_fatal("[packet_handler_thread] send_packet fwrite failed writing file chunk "
+                                          "to file | return %d | errno %d", &process_return, errno);
                                 ret = ferror(found_xfp->file);
-                                fprintf(stderr, "DEBUG: file error in fwrite in packet_handler");
                                 // todo: here are all the errors of fwrite, handle them. these are bad errors, most of
                                 // them
                                 switch (ret) {
@@ -1031,8 +1085,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                     case ENOMEM:
                                     case ENXIO:
                                     default:
-                                        xfp_tree->search_release(xfp_tree);
-                                        args->session_tree->search_release(args->session_tree);
                                         break;
                                 }
                             }
@@ -1070,6 +1122,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             qdata = malloc(sizeof(Q_RESEND_FILE_CHUNK));
                             if (qdata == NULL) {
                                 *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                log_fatal("[packet_handler_thread] malloc failed allocating %d for queue resend file "
+                                          "chunk data | return %d", sizeof(Q_RESEND_FILE_CHUNK), *process_return);
                                 goto cleanup;
                             }
                             memcpy(&(qdata->control), packet->data, sizeof(transmission_control_data_t));
@@ -1081,6 +1135,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             if (ret) {
                                 free(qdata);
                                 *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                log_fatal("[packet_handler_thread] queue_push failed pushing resend file chunk node to "
+                                          "send thread | return %d", *process_return);
                                 goto cleanup;
                             }
                             break;
@@ -1093,6 +1149,9 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             qdata = malloc(sizeof(Q_CONTROL_FILE_TRANSMISSION));
                             if (qdata == NULL) {
                                 *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                log_fatal("[packet_handler_thread] malloc failed allocating %d bytes for queue stop "
+                                          "file transmission data  | return %d",
+                                          sizeof(Q_CONTROL_FILE_TRANSMISSION), *process_return);
                                 goto cleanup;
                             }
                             memcpy(&(qdata->control), packet->data, sizeof(transmission_control_data_t));
@@ -1104,6 +1163,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             if (ret) {
                                 free(qdata);
                                 *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                log_fatal("[packet_handler_thread] queue_push failed pushing stop file transmission "
+                                          "node to send thread | return %d", *process_return);
                                 goto cleanup;
                             }
                             break;
@@ -1116,6 +1177,9 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             qdata = malloc(sizeof(Q_CONTROL_FILE_TRANSMISSION));
                             if (qdata == NULL) {
                                 *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                log_fatal("[packet_handler_thread] malloc failed allocating %d bytes for queue pause "
+                                          "file transmission data  | return %d",
+                                          sizeof(Q_CONTROL_FILE_TRANSMISSION), *process_return);
                                 goto cleanup;
                             }
                             memcpy(&(qdata->control), packet->data, sizeof(transmission_control_data_t));
@@ -1127,6 +1191,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             if (ret) {
                                 free(qdata);
                                 *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                log_fatal("[packet_handler_thread] queue_push failed pushing pause file transmission "
+                                          "node to send thread | return %d", *process_return);
                                 goto cleanup;
                             }
                             break;
@@ -1139,6 +1205,9 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             qdata = malloc(sizeof(Q_CONTROL_FILE_TRANSMISSION));
                             if (qdata == NULL) {
                                 *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                log_fatal("[packet_handler_thread] malloc failed allocating %d bytes for queue "
+                                          "continue file transmission data  | return %d",
+                                          sizeof(Q_CONTROL_FILE_TRANSMISSION), *process_return);
                                 goto cleanup;
                             }
                             memcpy(&(qdata->control), packet->data, sizeof(transmission_control_data_t));
@@ -1150,6 +1219,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             if (ret) {
                                 free(qdata);
                                 *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                log_fatal("[packet_handler_thread] queue_push failed pushing continue file "
+                                          "transmission node to send thread | return %d", *process_return);
                                 goto cleanup;
                             }
                             break;
@@ -1182,6 +1253,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                     // todo: create_server_session() uses send_packet() and returns its errors
                     // todo: do more complex error handling
                     *process_return = ret;
+                    log_fatal("[packet_handler_thread] create_server_session failed creating session | return %d",
+                        *process_return);
                     goto cleanup;
                 }
                 destroy_qnode(node);
@@ -1203,6 +1276,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 if (ret) {
                     fclose(xfp.file);
                     *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                    log_fatal("[packet_handler_thread] xfp_tree insert failed inserting client file| return %d",
+                        *process_return);
                     goto cleanup;
                 }
             }
@@ -1235,17 +1310,13 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
         // update the xsr tree
         ret = new_tree_iterator(xsr_tree, &xsr_iterator);
         if (ret) {
-            *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+            *process_return = ret;
+            log_fatal("[packet_handler_thread] failed to create xsr iterator | return %d", *process_return);
             goto cleanup;
         }
         if (xsr_iterator) {
             while (tree_has_next(xsr_iterator)) {
-                ret = tree_next(xsr_iterator, (void **)&found_xsr);
-                if (ret) {
-                    free_tree_iterator(&xsr_iterator);
-                    *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                    goto cleanup;
-                }
+                tree_next(xsr_iterator, (void **)&found_xsr);
                 time_diff = found_xsr->expiration_time - curr_time;
                 if (time_diff < 0) {
                     memcpy(&xsr, found_xsr, sizeof(xsr_t));
@@ -1255,7 +1326,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         //  it is not an error about the node not existing,
                         //  that would indicate an implementation error
                         free_tree_iterator(&xsr_iterator);
-                        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                        *process_return = ret;
+                        log_fatal("[packet_handler_thread] xsr remove failed | return %d", *process_return);
                         goto cleanup;
                     }
                 }
@@ -1274,17 +1346,13 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
          */
         ret = new_tree_iterator(xfp_tree, &xfp_iterator);
         if (ret) {
-            *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+            *process_return = ret;
+            log_fatal("[packet_handler_thread] failed to create xfp iterator | return %d", *process_return);
             goto cleanup;
         }
         if (xfp_iterator) {
             while (tree_has_next(xfp_iterator)) {
-                ret = tree_next(xfp_iterator, (void **)&found_xfp);
-                if (ret) {
-                    free_tree_iterator(&xfp_iterator);
-                    *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                    goto cleanup;
-                }
+                tree_next(xfp_iterator, (void **)&found_xfp);
                 time_diff = found_xfp->expiration_time - curr_time;
                 if (time_diff < 0) {
                     memcpy(&xfp, found_xfp, sizeof(xfp_t));
@@ -1294,7 +1362,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         //  it is not an error about the node not existing,
                         //  that would indicate an implementation error
                         free_tree_iterator(&xfp_iterator);
-                        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                        *process_return = ret;
+                        log_fatal("[packet_handler_thread] xfp remove failed | return %d", *process_return);
                         goto cleanup;
                     }
                 }
@@ -1311,17 +1380,13 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
         tree_lock(args->device_tree);
         ret = new_tree_iterator(args->device_tree, &rdev_iterator);
         if (ret) {
-            *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+            *process_return = ret;
+            log_fatal("[packet_handler_thread] failed to create xsr iterator | return %d", *process_return);
             goto cleanup;
         }
         if (rdev_iterator) {
             while (tree_has_next(rdev_iterator)) {
-                ret = tree_next(rdev_iterator, (void **)&found_rdev);
-                if (ret) {
-                    free_tree_iterator(&rdev_iterator);
-                    *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                    goto cleanup;
-                }
+                tree_next(rdev_iterator, (void **)&found_rdev);
                 time_diff = found_rdev->expiration_time - curr_time;
                 if (time_diff < 0) {
                     memcpy(&rdev, found_rdev, sizeof(xfp_t));
@@ -1333,7 +1398,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         //  it is not an error about the node not existing,
                         //  that would indicate an implementation error
                         free_tree_iterator(&rdev_iterator);
-                        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                        *process_return = ret;
+                        log_fatal("[packet_handler_thread] device_tree remove failed | return %d", *process_return);
                         goto cleanup;
                     }
                 }
@@ -1369,6 +1435,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     free(signing_response_data);
     free(file_sending_request_data);
     free(file_sending_response_data);
+    log_info("[packet_handler_thread] thread successful exit");
     return process_return;
 
 cleanup:
@@ -1383,6 +1450,7 @@ cleanup:
 
     set_event_flag(args->flag, EF_TERMINATION);
     set_event_flag(args->wake, EF_WAKE_MANAGER);
+    log_info("[packet_handler_thread] thread exit with errors");
     return process_return;
 }
 
@@ -1414,14 +1482,14 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     // there is no point to receive a file of 0 bytes, I mean we don't transfer metadata, so I guess there is no point
     if (fwd->file_size == 0) {
         ret = 1;
+        log_error("[create_server_session] file size is 0 | return %d", ret);
         goto cleanup;
     }
     memcpy(&(rdev.peer_pk), fwd->id, crypto_sign_PUBLICKEYBYTES);
     ret = dev_tree->search(dev_tree, &rdev);
-    if (ret) {
-        // we didnt find them
-        ret = 1;
-        goto cleanup;
+    if (ret == 0) {
+        log_warn("[create_server_session] peer not found in device tree. Can not create session");
+        return INDIGO_ERROR_INVALID_PEER_PARAM;
     }
 
     // necessary allocations
@@ -1429,6 +1497,8 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     session = malloc(sizeof(session_t));
     if (!session || !packet) {
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        log_error("[create_server_session] malloc failed allocating packet %dB and session %dB | return %d",
+            sizeof(struct udp_packet_t),sizeof(session_t), ret);
         goto cleanup;
     }
 
@@ -1450,6 +1520,8 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
         chdir(initial_cwd);
         g_free(initial_cwd);
         ret = INDIGO_ERROR_CAN_NOT_OPEN_FILE;
+        log_error("[create_server_session] failed opening file %s for receiving | return %d |errno %d ",
+            file_name, ret, errno);
         goto cleanup;
     }
     chdir(initial_cwd);
@@ -1469,11 +1541,13 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     build_packet(packet, MSG_FILE_SENDING_RESPONSE, pk, nonce, &file_sending_response_data);
     ret = encrypt_packet(packet, rdev.server_tk, nonce);
     if (ret) {
+        log_error("[create_server_session] encrypt packet failed | return %d", ret);
         goto cleanup;
     }
 
-    ret = send_packet(htons(PORT), fwd->addr, sockets, packet, flag);
+    ret = send_packet(PORT, fwd->addr, sockets, packet, flag);
     if (ret) {
+        log_error("[create_server_session] send_packet failed sending file sending response| return %d", ret);
         goto cleanup; // it's up to the caller to handle these errors, we cant do anything
     }
 
@@ -1491,6 +1565,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
 
     ret = xfp_tree->insert(xfp_tree, &xfp);
     if (ret) {
+        log_error("[create_server_session] xfp insert failed");
         goto cleanup;
     }
 
@@ -1503,6 +1578,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
 
     ret = session_tree->insert(session_tree, session);
     if (ret) {
+        log_error("[create_server_session] session insert failed");
         goto cleanup;
     }
 
@@ -1528,7 +1604,7 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
 
     // check if the peer is in the device tree (if they are not, we shouldn't create a session)
     ret = dev_tree->search(dev_tree, &rdev);
-    if (ret)
+    if (ret == 0)
         goto cleanup;
 
     // add an expected file packet (xfp) for this session
@@ -1541,13 +1617,17 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
      */
     // if the session id is not found, then the returned serial is not valid, and the session is rejected
     ret = xfp_tree->search(xfp_tree, &xfp);
-    if (ret)
+    if (ret == 0) {
+        ret = INDIGO_ERROR_PEER_NOT_FOUND;
+        log_warn("[create_client_session] peer not found in expected files tree. Can not create client session");
         goto cleanup;
+    }
 
     // if they sent us a serial of a file we are receiving then we reject.
     //(an attacker or a badly writen mod, either way me not happy).
     if (xfp.packet_count != XFP_CLIENT_FILE) {
         // we don't goto cleanup here. we don't want to remove an active file
+        log_warn("[create_client_session] peer not found in expected files tree. Can not create client session");
         return INDIGO_ERROR_INVALID_PEER_PARAM;
     }
 
@@ -1556,6 +1636,8 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
     session = malloc(sizeof(session_t));
     if (!session || !tmp_active_file) {
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        log_error("[create_client_session] malloc failed allocating %d+%dB for active file and session | return %d",
+            sizeof(active_file_t),sizeof(session_t), ret);
         goto cleanup;
     }
 
@@ -1567,8 +1649,10 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
     session->ip = packet_info->address.sin_addr.s_addr;
 
     ret = session_tree->insert(session_tree, session);
-    if (ret)
+    if (ret) {
+        log_error("[create_client_session] session insert failed | return %d", ret);
         goto cleanup;
+    }
 
     tmp_active_file->fd = xfp.file; // todo xfp should contain a file descriptor, as for now it is not initialized
     tmp_active_file->counter = 0;
@@ -1577,8 +1661,10 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
     tmp_active_file->session_id.serial = ((file_sending_response_data_t *)(packet->data))->serial;
 
     ret = queue_push(send_queue, tmp_active_file, QET_SEND_FILE);
-    if (ret != 0)
+    if (ret != 0) {
+        log_error("[create_client_session] queue_push failed pushing active file to send queue | return %d", ret);
         goto cleanup;
+    }
 
     xfp_tree->remove(xfp_tree, &xfp);
     return 0;

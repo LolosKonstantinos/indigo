@@ -39,9 +39,13 @@ SOFTWARE.
 #include <string.h>
 #include <unistd.h>
 #include <wctype.h>
+#include <errno.h>
+#include <log.h>
+
 #ifdef _WIN32
 #define sleep(t) (Sleep(1000 * t))
 #endif
+
 int verify_user(void **master_key)
 {
     int ret = 0;
@@ -51,6 +55,8 @@ int verify_user(void **master_key)
         if (!psw_salt_exists()) {
             ret = create_psw_salt(0);
             if (ret != INDIGO_SUCCESS) {
+                curs_set(1);
+                log_error("[verify_user] create_psw_salt() failed | return %d", ret);
                 return ret;
             }
         }
@@ -68,6 +74,8 @@ int verify_user(void **master_key)
             sleep(1);
             ret = create_key_derivation_settings();
             if (ret != INDIGO_SUCCESS) {
+                curs_set(1);
+                log_error("[verify_user] create_key_derivation_settings() failed | return %d", ret);
                 return ret;
             }
             clear();
@@ -84,13 +92,13 @@ int verify_user(void **master_key)
     }
     ret = verify_password(master_key);
     if (ret) {
-        fprintf(stderr, "error in verify_password() called inside verify_user");
+        log_error("[verify_user] verify_password() failed | return %d", ret);
         return ret;
     }
 
     if (!signing_key_pair_exists()) {
         ret = create_signing_key_pair(*master_key);
-        printf("did not crash %p", *master_key);
+        if (ret) log_error("[verify_user] create_signing_key_pair() failed | return %d", ret);
     }
     return ret;
 }
@@ -111,8 +119,9 @@ int verify_password(void **master_key)
 
     psw = sodium_malloc(MAX_PSW_LEN + 1);
     if (psw == NULL) {
-        fprintf(stderr, "\nerror:memory allocation failed.\n");
-        return -1;
+        log_error("[verify_password] sodium_malloc() failed allocating %d bytes for plaintext password | return %d",
+            MAX_PSW_LEN + 1, INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
+        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
     sodium_memzero(psw, MAX_PSW_LEN + 1);
 
@@ -147,7 +156,7 @@ int verify_password(void **master_key)
             }
             else if (mch > 127 || !(iswalnum(mch) || iswspecialchar(mch))) {
                 move(20, 0); // todo check this to be bellow the password window
-                printw("use ONLY alpharithmetics and !@#$%%^&*_");
+                printw("[verify_password] use ONLY alpharithmetics and !@#$%%^&*_");
                 refresh();
                 wmove(password_window, 1, 1 + ((psw_len >= 62) ? 61 : psw_len));
                 wrefresh(password_window);
@@ -175,7 +184,7 @@ int verify_password(void **master_key)
             sodium_memzero(psw, MAX_PSW_LEN);
             sodium_free(psw);
             delwin(password_window);
-
+            log_error("[verify_password] wget_wch() returned error");
             return INDIGO_ERROR;
         }
 
@@ -225,9 +234,10 @@ int verify_password(void **master_key)
         delwin(password_window);
         clear();
         refresh();
-        printf("derive master key return: %d\n", ret);
+        log_error("[verify_password] derive_master_key() failed | return %d", ret);
         return ret;
     }
+
     sodium_memzero(psw, MAX_PSW_LEN);
     sodium_free(psw);
     delwin(password_window);
@@ -274,11 +284,15 @@ int create_new_password()
     noecho();
     psw_1 = sodium_malloc(MAX_PSW_LEN + 1);
     if (!psw_1) {
-        return 1;
+        log_error("[create_new_password] sodium_malloc() failed allocating %d bytes for password plaintext | return %d",
+            MAX_PSW_LEN + 1, INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
+        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
     psw_2 = sodium_malloc(MAX_PSW_LEN + 1);
     if (!psw_2) {
         sodium_free(psw_1);
+        log_error("[create_new_password] sodium_malloc() failed allocating %d bytes for password plaintext | return %d",
+            MAX_PSW_LEN + 1, INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         return 1;
     }
     sodium_memzero(psw_1, MAX_PSW_LEN + 1);
@@ -483,6 +497,7 @@ int create_new_password()
         sodium_free(psw_2);
         delwin(psw_win_1);
         delwin(psw_win_2);
+        log_error("[create_new_password] save_password_hash() failed | return %d", res);
         return res;
     }
     sodium_memzero(psw_1, MAX_PSW_LEN);
@@ -557,7 +572,7 @@ int get_user_input(WINDOW *win, utf8_char_t *input)
     *input = 0;
     ret = wget_wch(win, &c);
     if (ret == OK) {
-        wctomb((char *)input, c);
+        wctomb((char *)input, (wchar_t)c);
         return OK;
     }
     else if (ret == KEY_CODE_YES) {
@@ -571,10 +586,7 @@ int get_user_input(WINDOW *win, utf8_char_t *input)
 int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, QUEUE *ph_queue, QUEUE *send_queue)
 {
     tree_iterator_t *dev_iter;
-    WINDOW *notification_win;
     WINDOW *device_pad;
-    // WINDOW *devinfo_pad;
-    // WINDOW *text_input_win;
 
     int maxx;
     int maxy;
@@ -600,10 +612,10 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
 
     char selected_path[PATH_MAX];
 
-    unsigned char **request_list;
-    int request_count;
-    unsigned char **file_list;
-    int file_count;
+    unsigned char **request_list = NULL;
+    int request_count = 0;
+    unsigned char **file_list = NULL;
+    int file_count = 0;
 
     int file_last_row = 0;
     char file_last_level = 0;
@@ -613,14 +625,22 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
 
     int ret;
 
-    if (!dev_tree || !file_tree || !ui_queue || !ph_queue || !send_queue)
+    if (!dev_tree || !file_tree || !ui_queue || !ph_queue || !send_queue) {
+        log_error("[create_main_interface] null parameter(s) | return %d", INDIGO_ERROR_INVALID_PARAM);
         return INDIGO_ERROR_INVALID_PARAM;
+    }
 
     ret = new_tree(&known_key_tree, key_cmp, sizeof(known_key_t), BINARY_TREE_FLAG_AVL);
     if (ret) {
+        log_error("[create_main_interface] new_tree() for known_keys failed | return %d", ret);
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
-    load_known_keys(known_key_tree);
+    ret = load_known_keys(known_key_tree);
+    if (ret != INDIGO_SUCCESS && ret != INDIGO_ERROR_FILE_NOT_FOUND) {
+        free_tree(known_key_tree);
+        log_error("[create_main_interface] load_known_keys() failed | return %d", ret);
+        return ret;
+    }
 
     memset(last_id, 0, crypto_sign_PUBLICKEYBYTES);
 
@@ -634,9 +654,6 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
     halfdelay(10);
 
     pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy, maxx);
-    // pnoutrefresh(devinfo_pad, devinfo_top_row, 0, 3, 0, maxy - 5, maxx - (int)(maxx * 0.3));
-
-    // wnoutrefresh(text_input_win);
 
     // the main loop
     while (1) {
@@ -788,74 +805,81 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
             if (ch == '\n' || ch == '\r') {
                 // select the action
                 if (context == 0) {
-                    context = 1;
+                    if (id_count > 0)context = 1;
                     print_device_files(device_pad, last_id, dev_tree, file_tree, &request_list, &request_count,
                                        &file_list, &file_count, &file_last_row, &file_last_level);
                     doupdate();
                     continue;
                 }
-                else {
-                    if (file_last_level == 0) {
-                        if (file_last_row == 0) {
-                            // send a file
-                            ret = pathfinder(selected_path);
-                            if (ret == -1) {
-                                // it is probably a memory error
-                                //  TODO: handle all errors
-                                break;
+                if (file_last_level == 0) {
+                    if (file_last_row == 0) {
+                        // send a file
+                        ret = pathfinder(selected_path);
+                        if (ret == -1) {
+                            // it is probably a memory error
+                            //  TODO: handle all errors
+                            log_error("pathfinder() failed | return -1");
+                            goto cleanup;
+                        }
+                        if (ret == 1)
+                            continue;
+                        if (ret == 0) {
+                            // send this to the queue
+                            send_node = malloc(sizeof(Q_SEND_FILE));
+                            if (!send_node) {
+                                ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                log_error("malloc() failed allocating %d bytes for queue node data Q_SENd_FILE "
+                                          "| return %d", sizeof(Q_SEND_FILE), ret);
+                                goto cleanup;
                             }
-                            if (ret == 1)
-                                continue;
-                            if (ret == 0) {
-                                // send this to the queue
-                                send_node = malloc(sizeof(Q_SEND_FILE));
-                                if (!send_node) {
-                                    break;
-                                }
 
-                                memcpy(rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);
-                                ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&rdev_p);
-                                send_node->ip = rdev.ip;
-                                send_node->tk = rdev.client_tk;
-                                send_node->session_id.serial = ++(rdev.last_fid);
-                                dev_tree->search_release(dev_tree);
-                                send_node->counter = 0;
-                                send_node->port = PORT;
-                                send_node->next = NULL;
-                                memcpy(send_node->session_id.pk, last_id, crypto_sign_PUBLICKEYBYTES);
-                                randombytes(send_node->nonce, 24);
+                            memcpy(rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);
 
-                                ret = queue_push(send_queue, send_node, QET_SEND_FILE);
-                                if (ret) {
-                                    // TODO: error is memory error, handle it
-                                    free(send_node);
-                                    send_node = NULL;
-                                    break;
-                                }
+                            ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&rdev_p);
+                            if (ret == 1) {
+                                send_node->ip = rdev_p->ip;
+                                send_node->tk = rdev_p->client_tk;
+                                send_node->session_id.serial = ++(rdev_p->last_fid);
+                            }
+                            dev_tree->search_release(dev_tree);
+
+                            send_node->counter = 0;
+                            send_node->port = PORT;
+                            send_node->next = NULL;
+                            memcpy(send_node->session_id.pk, last_id, crypto_sign_PUBLICKEYBYTES);
+                            randombytes(send_node->nonce, 24);
+
+                            ret = queue_push(send_queue, send_node, QET_SEND_FILE);
+                            if (ret) {
+                                free(send_node);
                                 send_node = NULL;
+                                log_error("queue_push() failed | return %d", ret);
+                                goto cleanup;
                             }
-                        }
-                        else {
-                            // set the trust status
-                            switch (file_last_row) {
-                                case 1:
-                                    status = KNOWN_KEY_STATUS_TOO_GOOD;
-                                    break;
-                                case 2:
-                                    status = KNOWN_KEY_STATUS_GOOD;
-                                    break;
-                                case 3:
-                                    status = KNOWN_KEY_STATUS_BAD;
-                                    break;
-                                default:
-                                    status = KNOWN_KEY_STATUS_UNKOWN;
-                                    break;
-                            }
-                            edit_known_key(known_key_tree, last_id, status);
+                            send_node = NULL;
                         }
                     }
-                    else if (file_last_level == 1) {
+                    else {
+                        // set the trust status
+                        switch (file_last_row) {
+                            case 1:
+                                status = KNOWN_KEY_STATUS_TOO_GOOD;
+                                break;
+                            case 2:
+                                status = KNOWN_KEY_STATUS_GOOD;
+                                break;
+                            case 3:
+                                status = KNOWN_KEY_STATUS_BAD;
+                                break;
+                            default:
+                                status = KNOWN_KEY_STATUS_UNKOWN;
+                                break;
+                        }
+                        edit_known_key(known_key_tree, last_id, status);
                     }
+                }
+                // TODO: HUGE TODO
+                else if (file_last_level == 1) {
                 }
             }
             else if (ch == ' ' && context == 1 && file_last_level == 2) {
@@ -865,27 +889,36 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
 
         // update the ui
         if (context == 0) {
-            for (int i = 0; i < id_count; ++i) {
-                free(dev_IDs[i]);
+            if (dev_IDs != NULL){
+                for (int i = 0; i < id_count; ++i) {
+                    free(dev_IDs[i]);
+                }
+                free(dev_IDs);
+                dev_IDs = NULL;
             }
-            free(dev_IDs);
-            dev_IDs = NULL;
             werase(device_pad);
             print_devices(device_pad, dev_tree, &dev_IDs, &id_count, last_id, &last_id_row);
+            if (id_count == 0) {
+                mvwprintw(device_pad,0,0, "There are currently no devices in the local network.");
+            }
             pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy, maxx);
         }
         else {
-            for (int i = 0; i < request_count; ++i) {
-                free(request_list[i]);
+            if (request_list != NULL) {
+                for (int i = 0; i < request_count; ++i) {
+                    free(request_list[i]);
+                }
+                free(request_list);
+                request_list = NULL;
             }
-            free(request_list);
-            request_list = NULL;
 
-            for (int i = 0; i < file_count; ++i) {
-                free(file_list[i]);
+            if (file_list != NULL) {
+                for (int i = 0; i < file_count; ++i) {
+                    free(file_list[i]);
+                }
+                free(file_list);
+                file_list = NULL;
             }
-            free(file_list);
-            file_list = NULL;
 
             werase(device_pad);
             print_device_files(device_pad, last_id, dev_tree, file_tree, &request_list, &request_count, &file_list,
@@ -894,12 +927,35 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
         }
         doupdate();
     }
-    delwin(notification_win);
+
+    free_tree(known_key_tree);
     delwin(device_pad);
-    // delwin(devinfo_pad);
-    // delwin(text_input_win);
     return 0;
+
+    cleanup:
+    if (dev_IDs != NULL) {
+        for (int i = 0; i < id_count; ++i) {
+            free(dev_IDs[i]);
+        }
+        free(dev_IDs);
+    }
+    if (file_list != NULL) {
+        for (int i = 0; i < file_count; ++i) {
+            free(file_list[i]);
+        }
+        free(file_list);
+    }
+    if (request_list != NULL) {
+        for (int i = 0; i < request_count; ++i) {
+            free(request_list[i]);
+        }
+        free(request_list);
+    }
+    free_tree(known_key_tree);
+    delwin(device_pad);
+    return ret;
 }
+
 int pathfinder(char path[PATH_MAX])
 {
     utf8_char_t in_char;
@@ -909,6 +965,7 @@ int pathfinder(char path[PATH_MAX])
     char *initial_cwd = NULL;
     int in_path_len = 0;
     int ret = 0;
+    int64_t lret = 0;
     GDir *curr_dir = NULL;
     GError *err = NULL;
     GStatBuf stat_buf;
@@ -970,9 +1027,10 @@ int pathfinder(char path[PATH_MAX])
 
     curr_dir = g_dir_open(".", 0, &err);
     if (err) {
-        // TODO: check error codes, we don't want to print plain errors. error handle bbetter
-        g_printerr("%s", err->message);
+        // TODO: check error codes
+        log_warn("g_dir_open failed: %s", err->message);
         g_clear_error(&err);
+        return -1;
     }
     // print the current directory
 
@@ -987,6 +1045,7 @@ int pathfinder(char path[PATH_MAX])
             delwin(win);
             delwin(win_frame);
             delwin(win_text);
+            log_error("g_canonicalize_filename() failed | return -1");
             return -1;
         }
         ret = g_file_test(cpath, G_FILE_TEST_EXISTS);
@@ -1048,6 +1107,7 @@ int pathfinder(char path[PATH_MAX])
                     delwin(win);
                     delwin(win_frame);
                     delwin(win_text);
+                    log_error("g_canonicalize_filename() failed | return -1");
                     return -1;
                 }
 
@@ -1138,6 +1198,7 @@ int pathfinder(char path[PATH_MAX])
                     delwin(win);
                     delwin(win_frame);
                     delwin(win_text);
+                    log_error("g_get_current_dir() failed | return -1");
                     return -1;
                 }
                 wattron(win, COLOR_PAIR(5));
@@ -1209,9 +1270,9 @@ int pathfinder(char path[PATH_MAX])
                 werase(win_text);
                 box(win_text, 0, 0);
 
-                ret = g_utf8_strlen(in_path, PATH_MAX - 1);
-                if (ret > (win_c - 2))
-                    mvwprintw(win_text, 1, 1, "%s", g_utf8_offset_to_pointer(in_path, ret - win_c + 2));
+                lret = g_utf8_strlen(in_path, PATH_MAX - 1);
+                if (lret > (win_c - 2))
+                    mvwprintw(win_text, 1, 1, "%s", g_utf8_offset_to_pointer(in_path, lret - win_c + 2));
                 else
                     mvwprintw(win_text, 1, 1, "%s", in_path);
                 wnoutrefresh(win_text);
@@ -1225,9 +1286,9 @@ int pathfinder(char path[PATH_MAX])
                     --in_path_len;
                     werase(win_text);
                     box(win_text, 0, 0);
-                    ret = g_utf8_strlen(in_path, PATH_MAX - 1);
-                    if (ret > (win_c - 2))
-                        mvwprintw(win_text, 1, 1, "%s", g_utf8_offset_to_pointer(in_path, ret - win_c + 2));
+                    lret = g_utf8_strlen(in_path, PATH_MAX - 1);
+                    if (lret > (win_c - 2))
+                        mvwprintw(win_text, 1, 1, "%s", g_utf8_offset_to_pointer(in_path, lret - win_c + 2));
                     else
                         mvwprintw(win_text, 1, 1, "%s", in_path);
                     wnoutrefresh(win_text);
@@ -1299,8 +1360,9 @@ int pathfinder(char path[PATH_MAX])
                     curr_dir = g_dir_open(".", 0, &err);
                     if (err) {
                         // TODO: check error codes, we don't want to print plain errors. error handle bbetter
-                        g_printerr("%s", err->message);
+                        log_warn("g_dir_open failed: %s | return -1", err->message);
                         g_clear_error(&err);
+                        return -1;
                     }
                     // print the current directory
 
@@ -1325,12 +1387,16 @@ int pathfinder(char path[PATH_MAX])
                         ret = g_file_test(cpath, G_FILE_TEST_IS_DIR);
                         if (ret) {
                             // if it is a directory print it in blue
+                            wattron(win, COLOR_PAIR(6) | A_BOLD);
                             mvwprintw(win, y, x, "%s", dir_entry);
+                            wattroff(win, COLOR_PAIR(6) | A_BOLD);
                             ++y;
                         }
                         else {
                             // if it is a file or symlink print it in green
+                            wattron(win, COLOR_PAIR(4) | A_BOLD);
                             mvwprintw(win, y, x, "%s", dir_entry);
+                            wattroff(win, COLOR_PAIR(4) | A_BOLD);
                             ++y;
                         }
                         g_free(cpath);
@@ -1339,9 +1405,9 @@ int pathfinder(char path[PATH_MAX])
                     }
                     g_dir_close(curr_dir);
                     pnoutrefresh(win, win_origin_y, win_origin_x, 1, 1, maxy - 5, maxx - 2);
-                    ret = g_utf8_strlen(in_path, PATH_MAX - 1);
+                    lret = g_utf8_strlen(in_path, PATH_MAX - 1);
                     if (ret > (win_c - 2))
-                        mvwprintw(win_text, 1, 1, "%s", g_utf8_offset_to_pointer(in_path, ret - win_c + 2));
+                        mvwprintw(win_text, 1, 1, "%s", g_utf8_offset_to_pointer(in_path, lret - win_c + 2));
                     else
                         mvwprintw(win_text, 1, 1, "%s", in_path);
                     wnoutrefresh(win_text);
@@ -1367,8 +1433,7 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
                   unsigned char last_id[crypto_sign_PUBLICKEYBYTES], int *last_row)
 {
     int ret;
-    int y = 0;
-    uint64_t count = 0;
+    int count = 0;
     tree_iterator_t *iter;
     remote_device_t *rdev;
     remote_device_t *found_rdev;
@@ -1380,94 +1445,97 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
     void *temp;
 
     if (!dev_IDs || !dev_tree || !win || !last_id || !last_row) {
+        log_error("null argument(s) | return -1");
         return -1;
     }
 
     memcpy(s_rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);
     // searches the tree and does not unlock it
-    if (dev_tree->search_pin(dev_tree, &s_rdev, (void **)&found_rdev)) {
-        found = 1;
-    }
-    else {
-        found = 0;
-    }
+    found = (char)dev_tree->search_pin(dev_tree, &s_rdev, (void **)&found_rdev);
+
     ret = new_tree_iterator(dev_tree, &iter);
     while (tree_has_next(iter)) {
         if (found && (memcmp(last_id, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES) == 0)) {
-            // ignore the the device that was last highlighed
+            // ignore the device that was last highlighted
             // it will be printed on the same line it was before
             continue;
         }
-        if (y == *last_row && found) {
-            // print the last highlighed device on the row it was before
+        if (count == *last_row && found) {
+            // print the last highlighted device on the row it was before
             print_device(win, found_rdev, count, 1);
-            ++y;
             ++count;
             // add the device to the id array
-            temp = reallocarray(id_array, count + 1, sizeof(unsigned char));
+            temp = reallocarray(id_array, count, sizeof(unsigned char));
             if (!temp) {
                 tree_unlock(dev_tree);
+                log_error("reallocarray() failed re-allocating %d bytes for id array | return -1", count * sizeof(unsigned char));
                 return -1;
             }
             id_array = temp;
             temp = malloc(crypto_sign_PUBLICKEYBYTES);
             if (!temp) {
                 tree_unlock(dev_tree);
+                log_error("malloc() failed allocating %d bytes for device id | return -1", crypto_sign_PUBLICKEYBYTES);
                 return -1;
             }
-            id_array[count] = temp;
+            id_array[count-1] = temp;
             memcpy(temp, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES);
             continue;
         }
-        else if (y == *last_row && found == 0)
+        else if (count == *last_row && found == 0)
             highlight = 1;
 
         tree_next(iter, (void **)&rdev);
 
         print_device(win, rdev, count, highlight);
-        ++y;
         ++count;
 
         highlight = 0;
 
         // add the device to the id array
-        temp = reallocarray(id_array, count + 1, sizeof(unsigned char));
+        temp = reallocarray(id_array, count, sizeof(unsigned char));
         if (!temp) {
             tree_unlock(dev_tree);
+            log_error("reallocarray() failed re-allocating %d bytes for id array | return -1",
+                count * sizeof(unsigned char));
             return -1;
         }
         id_array = temp;
         temp = malloc(crypto_sign_PUBLICKEYBYTES);
         if (!temp) {
             tree_unlock(dev_tree);
+            log_error("malloc() failed allocating %d bytes for device id | return -1", crypto_sign_PUBLICKEYBYTES);
             return -1;
         }
-        id_array[count] = temp;
+        id_array[count-1] = temp;
         memcpy(temp, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES);
     }
     if (found && count < *last_row) {
-        // some devises got removed, so we print the our device at the end
+        // some devises got removed, so we print our device at the end
         print_device(win, found_rdev, count, 1);
         ++count;
         *last_row = count;
 
         // add the device to the id array
-        temp = reallocarray(id_array, count + 1, sizeof(unsigned char));
+        temp = reallocarray(id_array, count, sizeof(unsigned char));
         if (!temp) {
             tree_unlock(dev_tree);
+            log_error("reallocarray() failed re-allocating %d bytes for id array | return -1",
+                count * sizeof(unsigned char));
             return -1;
         }
         id_array = temp;
         temp = malloc(crypto_sign_PUBLICKEYBYTES);
         if (!temp) {
             tree_unlock(dev_tree);
+            log_error("malloc() failed allocating %d bytes for device id | return -1", crypto_sign_PUBLICKEYBYTES);
             return -1;
         }
-        id_array[count] = temp;
+        id_array[count-1] = temp;
         memcpy(temp, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES);
     }
     else if (!found && count < *last_row) {
-        // if we havent highlighed any device yet, we highlight the last one
+        // if we haven't highlighted any device yet, we highlight the last one
         // that is because we have less devises than before and the last one is not there
         // so the lowest device above the last device is the last one printed
         wmove(win, count, 0);
@@ -1478,13 +1546,13 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
 
     tree_unlock(dev_tree);
 
-    *id_count = count + 1;
+    *id_count = count;
     *dev_IDs = id_array;
 
     return 0;
 }
 
-int print_device(WINDOW *win, remote_device_t *rdev, uint64_t count, char highlight)
+int print_device(WINDOW *win, remote_device_t *rdev, int row, char highlight)
 {
     char *username;
     uint8_t *ip_bytes;
@@ -1493,14 +1561,16 @@ int print_device(WINDOW *win, remote_device_t *rdev, uint64_t count, char highli
         return -1;
 
     username = g_utf8_make_valid(rdev->username, MAX_USERNAME_LEN * sizeof(uint32_t));
-    if (!username)
+    if (!username) {
+        log_error("g_utf8_make_valid() failed | return -1");
         return -1;
+    }
     if (g_utf8_strlen(username, -1) > MAX_USERNAME_LEN) {
         *(g_utf8_offset_to_pointer(username, MAX_USERNAME_LEN)) = '\0';
     }
 
-    wmove(win, count, 0);
-    wprintw(win, "dev%lu ", count);
+    wmove(win, row, 0);
+    wprintw(win, "dev%u ", row);
     wattron(win, COLOR_PAIR(5));
     wprintw(win, "%s ", username);
     wattroff(win, COLOR_PAIR(5));
@@ -1521,7 +1591,7 @@ int print_device(WINDOW *win, remote_device_t *rdev, uint64_t count, char highli
     }
     else if (rdev->dev_state_flag & KNOWN_KEY_STATUS_UNKOWN) {
         wattron(win, COLOR_PAIR(3));
-        wprintw(win, "[UNKOWN]");
+        wprintw(win, "[UNKNOWN]");
         wattroff(win, COLOR_PAIR(3));
     }
     else if (rdev->dev_state_flag & KNOWN_KEY_STATUS_BAD) {
@@ -1542,10 +1612,10 @@ int print_device(WINDOW *win, remote_device_t *rdev, uint64_t count, char highli
     g_free(username);
 
     if (highlight) {
-        wmove(win, count, 0);
+        wmove(win, row, 0);
         wchgat(win, 3, A_REVERSE, 0, NULL);
     }
-    return -1;
+    return 0;
 }
 
 int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree_t *active_files,
@@ -1579,12 +1649,14 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
         // the device was not found
         // we return with an error
         tree_unlock(dev_tree);
+        log_warn("device not found | return 1");
         return 1;
     }
 
     username = g_utf8_make_valid(rdev.username, MAX_USERNAME_LEN * sizeof(uint32_t));
     if (!username) {
         tree_unlock(dev_tree);
+        log_error("g_utf8_make_valid() failed");
         return -1;
     }
     if (g_utf8_strlen(username, -1) > MAX_USERNAME_LEN) {
@@ -1596,7 +1668,7 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
     wprintw(win, "%s", username);
     g_free(username);
     wmove(win, ++y, 0);
-    for (int i = 0; i < 32; ++i) {
+    for (i = 0; i < 32; ++i) {
         wprintw(win, "%02x", id[i]);
     }
 
@@ -1643,7 +1715,7 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
         temp = reallocarray(requests_list, count, sizeof(unsigned char));
         if (!temp) {
             tree_unlock(dev_tree);
-            for (int i = 0; i < count - 1; ++i) {
+            for (i = 0; i < count - 1; ++i) {
                 free(requests_list[i]);
             }
             free(requests_list);
@@ -1651,21 +1723,23 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
             *file_list = NULL;
             *request_count = 0;
             *file_count = 0;
-
+            log_error("reallocarray() failed allocating %lld bytes for request list | return -1",
+                count * sizeof(unsigned char));
             return -1;
         }
         requests_list = temp;
         temp = malloc(crypto_sign_PUBLICKEYBYTES);
         if (!temp) {
             tree_unlock(dev_tree);
-            for (int i = 0; i < count - 1; ++i) {
-                free(requests_list[i]);
+            for (int j = 0; j < count - 1; ++j) {
+                free(requests_list[j]);
             }
             free(requests_list);
             *requests_list = NULL;
             *file_list = NULL;
             *request_count = 0;
             *file_count = 0;
+            log_error("malloc failed allocating %d bytes for device id | return -1", crypto_sign_PUBLICKEYBYTES);
             return -1;
         }
         requests_list[count] = temp;
@@ -1703,24 +1777,27 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
             temp = reallocarray(file_list, count, sizeof(unsigned char));
             if (!temp) {
                 tree_unlock(active_files);
-                for (int i = 0; i < count - 1; ++i) {
-                    free(file_list[i]);
+                for (int j = 0; j < count - 1; ++j) {
+                    free(file_list[j]);
                 }
                 free(file_list);
                 *file_list = NULL;
                 *file_count = 0;
+                log_error("reallocarray() failed allocating %lld bytes for request list | return -1",
+                count * sizeof(unsigned char));
                 return -1;
             }
             file_list = temp;
             temp = malloc(crypto_sign_PUBLICKEYBYTES);
             if (!temp) {
                 tree_unlock(active_files);
-                for (int i = 0; i < count - 1; ++i) {
-                    free(file_list[i]);
+                for (int j = 0; j < count - 1; ++j) {
+                    free(file_list[j]);
                 }
                 free(file_list);
                 *file_list = NULL;
                 *file_count = 0;
+                log_error("malloc failed allocating %d bytes for device id | return -1", crypto_sign_PUBLICKEYBYTES);
                 return -1;
             }
             file_list[count - 1] = temp;

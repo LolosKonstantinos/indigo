@@ -69,7 +69,7 @@ int test_binary_tree() {
     if (ret) return TEST_FAILED;
     if (tree == NULL) return TEST_FAILED;
     //test if all fields are initialized
-    if (!(tree->search && tree->search_pin && tree->search_release && tree->insert && tree->remove && tree->priv))
+    if ((tree->search && tree->search_pin && tree->search_release && tree->insert && tree->remove && tree->priv) == 0)
         return TEST_FAILED;
 
     //insert 1024 nodes

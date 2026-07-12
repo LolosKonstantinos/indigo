@@ -25,6 +25,7 @@ SOFTWARE.
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <log.h>
 
 #define FORCE_INLINE inline __attribute__((always_inline))
 #define TREE_RIGHT (1)
@@ -72,18 +73,21 @@ int new_tree(tree_t **t, const cmp_f cmp, const size_t data_size, const char typ
     tree_priv_t *priv;
 
     if (!t || !cmp || !data_size) {
+        log_error("null tree or null compare function or data size 0 | return -1");
         return -1;
     }
 
     temp = malloc(sizeof(tree_t));
     if (!temp) {
         *t = NULL;
+        log_error("malloc failed to allocate %lld bytes for tree_t | return 1", sizeof(tree_t));
         return 1;
     }
     priv = calloc(1, sizeof(tree_priv_t));
     if (!priv) {
         free(temp);
         *t = NULL;
+        log_error("calloc failed to allocate %lld bytes for tree_priv_t | return 1", sizeof(tree_priv_t));
         return 1;
     }
 
@@ -101,12 +105,13 @@ int new_tree(tree_t **t, const cmp_f cmp, const size_t data_size, const char typ
         temp->search_release = avl_search_release;
     }
     else if (type == BINARY_TREE_FLAG_RED_BLACK) {
-        printf("to be implemented");
+        log_warn("red black tree variant not implemented");
     }
     else {
         free(temp);
         free(priv);
         *t = NULL;
+        log_error("specified tree option not implemented to tree created | return 1");
         return 1;
     }
     *t = temp;
@@ -122,6 +127,8 @@ void free_tree(tree_t *t) {
 
     stack = malloc(sizeof(tree_node_t *) * (2 * priv->height + 2));
     if (!stack) {
+        log_error("malloc failed allocating %lld bytes for stack used to iterate through tree | return",
+            sizeof(tree_node_t *) * (2 * priv->height + 2));
         return;
     }
     top = stack - 1;
@@ -146,7 +153,10 @@ void free_tree(tree_t *t) {
 
 tree_node_t *new_node() {
     tree_node_t *node = calloc(1,sizeof(tree_node_t));
-    if(!node) return NULL;
+    if(!node) {
+        log_error("calloc failed allocating %lld bytes for tree_node_t | return NULL", sizeof(tree_node_t));
+        return NULL;
+    }
 
     //new nodes are inserted as leaves so their height is 1, 0 is not valid
     node->height = 1;
@@ -163,8 +173,14 @@ int avl_insert(tree_t* t, void* data) {
     tree_node_t **top;
     int cmp_res;
 
-    if (!t) return -1;
-    if (!(t->priv)) return -1;
+    if (!t) {
+        log_error("null tree | return -1");
+        return -1;
+    }
+    if (!(t->priv)) {
+        log_error("no private part | return -1");
+        return -1;
+    }
 
     pthread_mutex_lock(&(t->priv->mutex));
     priv = t->priv;
@@ -172,6 +188,7 @@ int avl_insert(tree_t* t, void* data) {
     node = new_node();
     if (!node) {
         pthread_mutex_unlock(&(priv->mutex));
+        log_error("new_node() failed | return 1");
         return 1;
     }
 
@@ -179,6 +196,7 @@ int avl_insert(tree_t* t, void* data) {
     if (!stack) {
         pthread_mutex_unlock(&(priv->mutex));
         free(node);
+        log_error("malloc failed allocating %lld bytes for stack | return 1", sizeof(tree_node_t *) * (priv->height + 2));
         return 1;
     }
     top = stack - 1;
@@ -239,8 +257,14 @@ int avl_insert_copy(tree_t *t, void* data) {
     tree_node_t **top;
     int cmp_res;
 
-    if (!t) return -1;
-    if (!(t->priv)) return -1;
+    if (!t) {
+        log_error("null tree | return -1");
+        return -1;
+    }
+    if (!(t->priv)) {
+        log_error("no private part | return -1");
+        return -1;
+    }
 
     pthread_mutex_lock(&(t->priv->mutex));
     priv = t->priv;
@@ -249,6 +273,7 @@ int avl_insert_copy(tree_t *t, void* data) {
     node = new_node();
     if (!node) {
         pthread_mutex_unlock(&(priv->mutex));
+        log_error("new_node() failed | return 1");
         return 1;
     }
 
@@ -257,6 +282,7 @@ int avl_insert_copy(tree_t *t, void* data) {
     if (!node->data) {
         pthread_mutex_unlock(&(priv->mutex));
         free(node);
+        log_error("calloc failed allocating %lld bytes for data part of node | return 1", priv->data_size);
         return 1;
     }
     //copy the data to the node
@@ -268,6 +294,7 @@ int avl_insert_copy(tree_t *t, void* data) {
         pthread_mutex_unlock(&(priv->mutex));
         free(node->data);
         free(node);
+        log_error("malloc failed allocating %lld bytes for stack | return 1", sizeof(tree_node_t *) * (priv->height + 2));
         return 1;
     }
     top = stack - 1;
@@ -332,14 +359,21 @@ int avl_insert_copy_unlocked(tree_t *t, void* data) {
     tree_node_t **top;
     int cmp_res;
 
-    if (!t) return -1;
-    if (!(t->priv)) return -1;
+    if (!t) {
+        log_error("null tree | return -1");
+        return -1;
+    }
+    if (!(t->priv)) {
+        log_error("no private part | return -1");
+        return -1;
+    }
 
     priv = t->priv;
 
     //create the node we will insert
     node = new_node();
     if (!node) {
+        log_error("new_node() failed | return 1");
         return 1;
     }
 
@@ -347,6 +381,7 @@ int avl_insert_copy_unlocked(tree_t *t, void* data) {
     node->data = calloc(1,priv->data_size);
     if (!node->data) {
         free(node);
+        log_error("calloc failed allocting %lld bytes for data part of node | return 1", priv->data_size);
         return 1;
     }
     //copy the data to the node
@@ -357,6 +392,7 @@ int avl_insert_copy_unlocked(tree_t *t, void* data) {
     if (!stack) {
         free(node->data);
         free(node);
+        log_error("malloc failed allocating %lld bytes for stack | return 1", sizeof(tree_node_t *) * (priv->height + 2));
         return 1;
     }
     top = stack - 1;
@@ -424,7 +460,10 @@ int avl_delete(tree_t *t, void* data) {
     int cmp_res;
     cmp_f cmp;
 
-    if (!(t && data)) return -1;
+    if (!(t && data)) {
+        log_error("null tree or no data | return -1");
+        return -1;
+    }
 
     pthread_mutex_lock(&(t->priv->mutex));
     priv = t->priv;
@@ -434,6 +473,7 @@ int avl_delete(tree_t *t, void* data) {
     stack = malloc(priv->height * sizeof(tree_node_t *));
     if (!stack) {
         pthread_mutex_unlock(&(priv->mutex));
+        log_error("malloc failed allocating %lld bytes for stack | return -1", priv->height * sizeof(tree_node_t *));
         return -1;
     }
     top = stack - 1; //so, when we push for the first time the top pointer points to the top element and not above it
@@ -597,7 +637,10 @@ int avl_delete_unlocked(tree_t *t, void* data) {
     int cmp_res;
     cmp_f cmp;
 
-    if (!(t && data)) return -1;
+    if (!(t && data)) {
+        log_error("null tree or no data | return -1");
+        return -1;
+    }
 
     priv = t->priv;
     node = priv->root;
@@ -605,6 +648,7 @@ int avl_delete_unlocked(tree_t *t, void* data) {
 
     stack = malloc(priv->height * sizeof(tree_node_t *));
     if (!stack) {
+        log_error("malloc failed allocating %lld bytes for stack | return -1", priv->height * sizeof(tree_node_t *));
         return -1;
     }
     top = stack - 1; //so, when we push for the first time the top pointer points to the top element and not above it
@@ -753,14 +797,17 @@ int avl_delete_unlocked(tree_t *t, void* data) {
 
     return 0;
 }
-
+//returns boolean value
 int avl_search(tree_t* t, void* data) {
     tree_node_t *node;
     tree_node_t *turn_node = NULL;
     int cmp_res;
     cmp_f cmp;
 
-    if (!(t && data)) return -1;
+    if (!(t && data)) {
+        log_error("null tree or data | return -1");
+        return -1;
+    }
 
     pthread_mutex_lock(&(t->priv->mutex));
     node = t->priv->root;
@@ -777,24 +824,28 @@ int avl_search(tree_t* t, void* data) {
     }
     if (!turn_node) {
         pthread_mutex_unlock(&(t->priv->mutex));
-        return 1;
+        return 0;
     }
     if (cmp(data, turn_node->data) == 0) {
         memcpy(data, turn_node->data, t->priv->data_size);
         pthread_mutex_unlock(&(t->priv->mutex));
-        return 0;
+        return 1;
     }
     pthread_mutex_unlock(&(t->priv->mutex));
-    return 1;
+    return 0;
 }
 
+//returns boolean value
 int avl_search_unlocked(tree_t *t, void* data) {
     tree_node_t *node;
     tree_node_t *turn_node = NULL;
     int cmp_res;
     cmp_f cmp;
 
-    if (!(t && data)) return -1;
+    if (!(t && data)) {
+        log_error("null tree or no data | return -1");
+        return -1;
+    }
 
     node = t->priv->root;
     cmp = t->priv->cmp;
@@ -809,22 +860,26 @@ int avl_search_unlocked(tree_t *t, void* data) {
         }
     }
     if (!turn_node) {
-        return 1;
+        return 0;
     }
     if (cmp(data, turn_node->data) == 0) {
         memcpy(data, turn_node->data, t->priv->data_size);
-        return 0;
+        return 1;
     }
-    return 1;
+    return 0;
 }
 
+//returns boolean value
 int avl_search_pin(tree_t *t, void* data, void** ret_data) {
     tree_node_t *node;
     tree_node_t *turn_node = NULL;
     int cmp_res;
     cmp_f cmp;
 
-    if (!t || !data || !ret_data) return -1;
+    if (!t || !data || !ret_data) {
+        log_error("null tree or no data | return -1");
+        return -1;
+    }
     pthread_mutex_lock(&(t->priv->mutex));
     node = t->priv->root;
     cmp = t->priv->cmp;
@@ -841,15 +896,21 @@ int avl_search_pin(tree_t *t, void* data, void** ret_data) {
     if (turn_node) {
         if (cmp(data, turn_node->data) == 0) {
             *ret_data = turn_node->data;
-            return 0;
+            return 1;
         }
     }
     *ret_data = NULL;
-    return 1;
+    return 0;
 }
 int avl_search_release(tree_t *t) {
-    if (!t) return -1;
-    if (!t->priv) return -1;
+    if (!t) {
+        log_error("null tree | return -1");
+        return -1;
+    }
+    if (!t->priv) {
+        log_error("no private part | return -1");
+        return -1;
+    }
     return pthread_mutex_unlock(&t->priv->mutex);
 }
 
@@ -987,7 +1048,10 @@ tree_node_t** avl_balance(tree_node_t** stack, tree_node_t** top, tree_priv_t* t
     tree_node_t **node;
     tree_node_t **ret_node;
 
-    if (!stack || !top || !tree) return NULL;
+    if (!stack || !top || !tree) {
+        log_error("invalid arguments | return -1");
+        return NULL;
+    }
     if (!(tree->root)) return NULL;
 
     node = top;
@@ -1081,15 +1145,25 @@ void tree_unlock(tree_t *t) {
 int new_tree_iterator(tree_t *tree, tree_iterator_t **iterator) {
     tree_node_t **stack = NULL;
 
-    if (!tree) return 1;
-    if (!tree->priv) return 1;
-
-    *iterator = malloc(sizeof(tree_iterator_t));
-    if (!(*iterator)) return 1;
+    if (!tree) {
+        log_error("null tree | return -1");
+        return -1;
+    }
+    if (!tree->priv) {
+        log_error("no private part | return -1");
+        return -1;
+    }
 
     if (!tree->priv->root) {
         *iterator = NULL;
         return 0;
+    }
+
+    *iterator = malloc(sizeof(tree_iterator_t));
+    if (!(*iterator)) {
+        *iterator = NULL;
+        log_error("malloc failed allocating %lld bytes for tree_iterator_t| return 1", sizeof(tree_iterator_t));
+        return 1;
     }
 
     stack = malloc(sizeof(tree_node_t *) * ((2 * tree->priv->height) + 2));
@@ -1097,6 +1171,8 @@ int new_tree_iterator(tree_t *tree, tree_iterator_t **iterator) {
         free(*iterator);
         *iterator = NULL;
         free(stack);
+        log_error("malloc failed allocating %lld bytes for iteration stack| return 1",
+            sizeof(tree_node_t *) * ((2 * tree->priv->height) + 2));
         return 1;
     }
 
@@ -1120,7 +1196,10 @@ int tree_next(tree_iterator_t *iterator, void **data) {
     tree_node_t **stack;
     tree_node_t **top;
 
-    if (!iterator || !data) return -1;
+    if (!iterator || !data) {
+        log_error("invalid parameter | return -1");
+        return -1;
+    }
 
     stack = iterator->stack;
     top = iterator->top;

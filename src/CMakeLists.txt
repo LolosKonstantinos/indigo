@@ -13,4 +13,7 @@ target_link_libraries(${PROJECT_NAME}_tui PRIVATE indigo_core
                                                   tui
                                                   ncursesw
                                                   sodium
+                                                  logger
+                                                  tp_logger
+                                                  config
 )

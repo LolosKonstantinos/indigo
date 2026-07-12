@@ -107,6 +107,16 @@ void destroy_queue(QUEUE *queue);
 QNODE *create_qnode();
 void destroy_qnode(QNODE *node);
 
+// lock and unlock the queue
+void queue_lock(QUEUE *queue);
+void queue_unlock(QUEUE *queue);
+
+// thread unsafe functions
+uint8_t queue_push_tu(QUEUE *queue, void *data, QET type);
+QNODE *queue_pop_tu(QUEUE *queue, QOPT option);
+QNODE *queue_peek_tu(QUEUE *queue);
+void queue_remove_front_tu(QUEUE *queue);
+
 // add and get from the queue
 uint8_t queue_push(QUEUE *queue, void *data, QET type);
 QNODE *queue_pop(QUEUE *queue, QOPT option);

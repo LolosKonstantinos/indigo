@@ -23,9 +23,13 @@ SOFTWARE.
 #include "binary_tree.h"
 #include "indigo_errors.h"
 #include "Queue.h"
+#include "config.h"
 #include "indigo_core/net_io.h"
 #include "indigo_types.h"
+#include "logger.h"
 #include "manager.h"
+#include <log.h>
+
 #include <locale.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -59,10 +63,21 @@ int main(int argc, char *argv[])
     QUEUE *ph_queue = NULL;
     // the send queue
     QUEUE *send_queue = NULL;
+    // the manager queue
+    QUEUE *manager_queue = NULL;
 
     MANAGER_ARGS *manager_args;
     pthread_t manager_tid;
     void *master_key;
+
+    FILE *log_file = NULL;
+
+    logger_init();
+    log_file = load_log_file();
+    if (log_file == NULL) {
+        return -1;
+    }
+    log_add_fp(log_file, LOG_TRACE);
 
 #ifdef _WIN32
     ret = WSAStartup(MAKEWORD(2, 2), &wsaData);
@@ -74,6 +89,8 @@ int main(int argc, char *argv[])
 
     if (sodium_init() == -1)
         return INDIGO_ERROR_SODIUM_ERROR;
+
+
 
     setlocale(LC_ALL, "");
     initscr();
@@ -115,7 +132,7 @@ int main(int argc, char *argv[])
         goto cleanup;
     }
     send_queue = malloc(sizeof(QUEUE));
-    if (ui_queue == NULL) {
+    if (send_queue == NULL) {
         fprintf(stderr, "malloc failed\n");
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
@@ -137,12 +154,24 @@ int main(int argc, char *argv[])
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
+    manager_queue = malloc(sizeof(QUEUE));
+    if (manager_queue == NULL) {
+        fprintf(stderr, "malloc failed\n");
+        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        goto cleanup;
+    }
+    ret = init_queue(manager_queue);
+    if (ret) {
+        fprintf(stderr, "init_queue failed\n");
+        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        goto cleanup;
+    }
 
     inet_pton(AF_INET, MULTICAST_ADDR, &multicast_addr);
     port = PORT;
 
-    ret = create_thread_manager_thread(&manager_args, port, multicast_addr, device_tree, ui_queue, ph_queue, send_queue,
-                                       &manager_tid);
+    ret = create_thread_manager_thread(&manager_args, master_key, port, multicast_addr, device_tree, ui_queue, ph_queue,
+                                       send_queue, manager_queue, &manager_tid);
     if (ret != INDIGO_SUCCESS) {
         fprintf(stderr, "Error creating thread_manager thread\n");
         goto cleanup;

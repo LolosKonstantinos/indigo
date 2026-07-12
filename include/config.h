@@ -31,10 +31,10 @@ SOFTWARE.
 /*THIS LIBRARY CONTAINS ALL FUNCTIONS AND TYPES CONCERNING USER AND PROGRAM DATA MANAGEMENT*/
 
 /*USERNAME FUNCTIONS*/
-int load_username(char username[(MAX_USERNAME_LEN + 1) * sizeof(uint32_t)]);
-int set_username(char username[(MAX_USERNAME_LEN + 1) * sizeof(uint32_t)]);
-int validate_username(char username[(MAX_USERNAME_LEN + 1) * sizeof(uint32_t)]);
-int sanitize_username(char username[(MAX_USERNAME_LEN + 1) * sizeof(uint32_t)]);
+int load_username(char username[MAX_USERNAME_LEN  * sizeof(uint32_t) + 1]);
+int set_username(char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1]);
+int validate_username(char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1]);
+int sanitize_username(char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1]);
 
 /*SETTINGS STRUCTURES AND DEFINITIONS*/
 typedef struct settings_t {
@@ -65,4 +65,5 @@ static FORCE_INLINE int key_cmp(void *k1, void *k2)
 /*PATH UTILS*/
 int get_source_dir(char path[PATH_MAX]);
 int move_to_downloads(char path[PATH_MAX], char new_file_name[NAME_MAX]);
+FILE *load_log_file();
 #endif // INDIGO_CONFIG_H

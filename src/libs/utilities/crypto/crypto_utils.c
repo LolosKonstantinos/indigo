@@ -24,20 +24,23 @@ SOFTWARE.
 #include "indigo_errors.h"
 #include "indigo_types.h"
 #include <glib-2.0/glib.h>
-#include <linux/limits.h>
-#include <linux/sysinfo.h>
 #include <stdint.h>
 #include <time.h>
 #include <math.h>
+#include <sodium.h>
+#include <unistd.h>
+#include <errno.h>
+#include <log.h>
 #ifdef _WIN32
 #include <profileapi.h>
 #include <sysinfoapi.h>
 #else
 #include <sys/sysinfo.h>
+#include <linux/limits.h>
+#include <linux/sysinfo.h>
 #endif
 
-#include <sodium.h>
-#include <unistd.h>
+
 
 struct PSW_HASH_SETTINGS {
     unsigned char mem_cost;
@@ -53,12 +56,15 @@ int derive_master_key(const char *psw, const uint64_t psw_len, void **master_key
     PSW_HASH_SETTINGS psw_settings;
     int ret;
 
-    if (psw == NULL || master_key == NULL)
+    if (psw == NULL || master_key == NULL) {
+        log_error("psw or master key is NULL | return 2");
         return 2;
+    }
 
     ret = load_key_derivation_settings(&psw_settings);
     if (ret != 0) {
         *master_key = NULL;
+        log_error("load_key_derivation_settings() failed with %d | return %d", ret, INDIGO_ERROR_INCOMPATIBLE_FILE);
         return INDIGO_ERROR_INCOMPATIBLE_FILE; // possible file changed to
                                                // incompatible values
     }
@@ -69,20 +75,24 @@ int derive_master_key(const char *psw, const uint64_t psw_len, void **master_key
     ret = load_psw_salt(&salt);
     if (ret == -3) {
         *master_key = NULL;
+        log_error("load_psw_salt() failed with %d | return %d", ret, INDIGO_ERROR_INCOMPATIBLE_FILE);
         return INDIGO_ERROR_INCOMPATIBLE_FILE; // possible file changed to
                                                // incompatible values
     }
     if (ret == INDIGO_ERROR_FILE_NOT_FOUND) {
         *master_key = NULL;
+        log_error("load_key_derivation_settings() failed with %d | return %d", ret, INDIGO_ERROR_INCOMPATIBLE_FILE);
         return INDIGO_ERROR_FILE_NOT_FOUND;
     }
 
     if (psw_len <= crypto_pwhash_PASSWD_MIN || psw_len >= crypto_pwhash_PASSWD_MAX) {
+        log_error("password length is not compatible %d | return -1", psw_len);
         goto cleanup;
     }
 
     out_key = sodium_malloc(crypto_secretbox_KEYBYTES);
     if (!out_key) {
+        log_error("sodium_malloc() failed allocating %lld bytes for master key | return -1", crypto_secretbox_KEYBYTES);
         goto cleanup;
     }
     // printf("DEBUG: %p %lld %p %u %lld\n",psw, psw_len, salt, time_cost,
@@ -91,6 +101,7 @@ int derive_master_key(const char *psw, const uint64_t psw_len, void **master_key
     ret = crypto_pwhash(out_key, crypto_secretbox_KEYBYTES, psw, psw_len, salt, time_cost, 1 << mem_cost,
                         crypto_pwhash_ALG_ARGON2ID13);
     if (ret == -1) {
+        log_error("crypto_pwhash() failed | return -1");
         goto cleanup;
     }
 
@@ -118,24 +129,28 @@ int create_psw_salt(const char overwrite)
     char *init_cwd;
     char xpath[PATH_MAX];
 
-    if (get_source_dir(xpath))
+    if (get_source_dir(xpath)) {
+        log_error("get_source_dir() failed | return %d" ,INDIGO_ERROR);
         return INDIGO_ERROR;
+    }
     init_cwd = g_get_current_dir();
     chdir(xpath);
 
-    file_name = malloc(strlen(INDIGO_PSW_DIR) + strlen("salt.dat") + 1);
+    file_name = malloc(strlen(INDIGO_PSW_DIR) + strlen("/salt.dat") + 1);
     if (file_name == NULL) {
         chdir(init_cwd);
         g_free(init_cwd);
+        log_error("malloc failed allocating %lld bytes for salt file name",strlen(INDIGO_PSW_DIR) + strlen("/salt.dat") + 1 );
         return 1;
     }
     strcpy(file_name, INDIGO_PSW_DIR);
-    strcat(file_name, "salt.dat");
+    strcat(file_name, "/salt.dat");
 
     if (overwrite == 0 && access(file_name, F_OK) == 0) {
         chdir(init_cwd);
         g_free(init_cwd);
         free(file_name);
+        log_error("file %s does not exist | return %d | errno", file_name, INDIGO_ERROR_FILE_NOT_FOUND, errno);
         return INDIGO_ERROR_FILE_NOT_FOUND;
     }
 
@@ -146,6 +161,7 @@ int create_psw_salt(const char overwrite)
         chdir(init_cwd);
         g_free(init_cwd);
         free(file_name);
+        log_error("failed to open file %s | return 1 | errno %d", file_name, errno);
         return 1;
     }
 
@@ -155,7 +171,9 @@ int create_psw_salt(const char overwrite)
         g_free(init_cwd);
         free(file_name);
         fclose(fp_salt);
-        return 1;
+        log_error("malloc failed allocating %lld bytes for salt | return %d",
+            crypto_pwhash_SALTBYTES,INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
+        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
 
     randombytes_buf(salt, crypto_pwhash_SALTBYTES);
@@ -176,19 +194,25 @@ int load_psw_salt(unsigned char **salt)
     FILE *fp_salt;
     uint32_t salt_len;
 
-    if (salt == NULL)
+    if (salt == NULL) {
+        log_error("salt is null");
         return INDIGO_ERROR_INVALID_PARAM;
+    }
 
-    file_name = malloc(strlen(INDIGO_PSW_DIR) + strlen("salt.dat") + 1);
+    file_name = malloc(strlen(INDIGO_PSW_DIR) + strlen("/salt.dat") + 1);
     if (file_name == NULL) {
+        log_error("malloc failed allocating %lld bytes for salt file name | return %d",
+            strlen(INDIGO_PSW_DIR) + strlen("/salt.dat") + 1,INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
     strcpy(file_name, INDIGO_PSW_DIR);
-    strcat(file_name, "salt.dat");
+    strcat(file_name, "/salt.dat");
 
     if (access(file_name, F_OK) != 0) {
         free(file_name);
         *salt = NULL;
+        log_error("file %s does not exist | return %d | errno %d",
+            file_name, INDIGO_ERROR_FILE_NOT_FOUND, errno);
         return INDIGO_ERROR_FILE_NOT_FOUND;
     }
 
@@ -197,7 +221,9 @@ int load_psw_salt(unsigned char **salt)
         free(file_name);
         // todo check errno and return the right error
         *salt = NULL;
-        return INDIGO_ERROR_SYS_FAIL;
+        log_error("error opening file %s | return %d | errno %d",
+            file_name, INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
+        return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
     }
 
     fseek(fp_salt, 0, SEEK_END);
@@ -207,6 +233,7 @@ int load_psw_salt(unsigned char **salt)
     if (salt_len != crypto_pwhash_SALTBYTES) {
         free(file_name);
         fclose(fp_salt);
+        log_error("salt length %d is not %d bytes thus incompatible | return -3", salt_len, crypto_pwhash_SALTBYTES);
         return -3;
     }
 
@@ -214,6 +241,7 @@ int load_psw_salt(unsigned char **salt)
     if (*salt == NULL) {
         free(file_name);
         fclose(fp_salt);
+        log_error("malloc failed allocating %lld for salt | return 1", salt_len);
         return 1;
     }
 
@@ -226,9 +254,8 @@ int load_psw_salt(unsigned char **salt)
 
 int psw_salt_exists()
 {
-    char file_name[32] = {0};
-    strcpy(file_name, INDIGO_PSW_DIR);
-    strcat(file_name, "salt.dat");
+    char file_name[32] = INDIGO_PSW_DIR;
+    strcat(file_name, "/salt.dat");
 
     if (access(file_name, F_OK) == 0) {
         return 1;
@@ -350,6 +377,9 @@ int create_key_derivation_settings()
         max_mem_cost = 30;
     }
     if (max_mem_cost < 13) {
+        log_error("total available memory (%lld bytes) bellow minimum (%lld bytes)"
+                  " hashing requirements for hashing | return %d",
+            available_pages * page_size, 1 << 13, max_mem_cost);
         return -max_mem_cost;
     }
     mem_cost = max_mem_cost;
@@ -363,6 +393,7 @@ int create_key_derivation_settings()
 
             clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end);
             if (ret == -1) {
+                log_error("crypto_pwhash failed | return -2");
                 return -2;
             }
             elapsed_time = ((end.tv_sec - start.tv_sec) * 1000000000) + (end.tv_nsec - start.tv_nsec);
@@ -398,6 +429,7 @@ int create_key_derivation_settings()
 
     init_cwd = g_get_current_dir();
     if (get_source_dir(xpath)) {
+        log_error("get_source_dir failed | return %d", INDIGO_ERROR);
         return INDIGO_ERROR;
     }
     chdir(xpath);
@@ -408,12 +440,14 @@ int create_key_derivation_settings()
     // printf("debug: memcost-> 1<<%lld, timecost->  %lld, mean_elapsed->%lf
     // \n",mem_cost,time_cost, mean_elapsed);
     strcpy(filename, INDIGO_PSW_DIR);
+    strcat(filename, "/");
     strcat(filename, INDIGO_PSW_HASH_SETTINGS_FILE);
     fp = fopen(filename, "wb");
     if (fp == NULL) {
         chdir(init_cwd);
         g_free(init_cwd);
-        return -5;
+        log_error("failed to open file %s | return %d | errno %d", filename, INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
+        return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
     }
     fwrite(&settings, sizeof(PSW_HASH_SETTINGS), 1, fp);
 
@@ -425,18 +459,19 @@ int create_key_derivation_settings()
 
 int save_key_derivation_settings(uint8_t mem_cost, uint8_t time_cost)
 {
-    char filename[48];
+    char filename[48] = INDIGO_PSW_DIR;
     PSW_HASH_SETTINGS settings;
     char *init_cwd;
     char xpath[PATH_MAX];
 
     init_cwd = g_get_current_dir();
     if (get_source_dir(xpath)) {
+        log_error("get_source_dir failed | return %d", INDIGO_ERROR);
         return INDIGO_ERROR;
     }
     chdir(xpath);
 
-    strcpy(filename, INDIGO_PSW_DIR);
+    strcat(filename, "/");
     strcat(filename, INDIGO_PSW_HASH_SETTINGS_FILE);
     settings.mem_cost = mem_cost;
     settings.time_cost = time_cost;
@@ -447,7 +482,8 @@ int save_key_derivation_settings(uint8_t mem_cost, uint8_t time_cost)
     if (fp == NULL) {
         chdir(init_cwd);
         g_free(init_cwd);
-        return 1;
+        log_error("failed to open file %s | return %d | errno %d", filename, INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
+        return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
     }
     fwrite(&settings, sizeof(PSW_HASH_SETTINGS), 1, fp);
 
@@ -459,16 +495,17 @@ int save_key_derivation_settings(uint8_t mem_cost, uint8_t time_cost)
 
 int load_key_derivation_settings(PSW_HASH_SETTINGS *settings)
 {
-    char filename[48];
+    char filename[48] = INDIGO_PSW_DIR;
     FILE *fp;
     size_t len;
 
-    strcpy(filename, INDIGO_PSW_DIR);
+    strcat(filename, "/");
     strcat(filename, INDIGO_PSW_HASH_SETTINGS_FILE);
 
     fp = fopen(filename, "rb");
     if (fp == NULL) {
-        return INDIGO_ERROR_FILE_NOT_FOUND;
+        log_error("can not open file %s for hash settings | return %d | errno %d", filename, INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
+        return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
     } // todo but check errno to be sure
 
     fseek(fp, 0, SEEK_END);
@@ -476,18 +513,25 @@ int load_key_derivation_settings(PSW_HASH_SETTINGS *settings)
     fseek(fp, 0, SEEK_SET);
     if (len != sizeof(PSW_HASH_SETTINGS)) {
         fclose(fp);
+        log_error("hash settings file has incompatible length %d | return %d", len, INDIGO_ERROR_INCOMPATIBLE_FILE);
         return INDIGO_ERROR_INCOMPATIBLE_FILE;
     }
 
     fread(settings, 1, sizeof(PSW_HASH_SETTINGS), fp);
     fclose(fp);
     if (settings->mem_cost < 13) {
+        log_error("saved memory cost bellow minimum requirements %d < 13| return %d",
+            settings->mem_cost, INDIGO_ERROR_INCOMPATIBLE_FILE);
         return INDIGO_ERROR_INCOMPATIBLE_FILE;
     }
     if (settings->mem_cost > 30) {
+        log_error("saved memory cost above maximum requirements %d > 30| return %d",
+            settings->mem_cost, INDIGO_ERROR_INCOMPATIBLE_FILE);
         return INDIGO_ERROR_INCOMPATIBLE_FILE;
     }
     if (settings->time_cost < crypto_pwhash_OPSLIMIT_MIN) {
+        log_error("saved time cost bellow minimum requirements %d < %d| return %d",
+            settings->time_cost, crypto_pwhash_OPSLIMIT_MIN, INDIGO_ERROR_INCOMPATIBLE_FILE);
         return INDIGO_ERROR_INCOMPATIBLE_FILE;
     }
     // if (settings->time_cost > crypto_pwhash_OPSLIMIT_MAX) {return
@@ -497,8 +541,8 @@ int load_key_derivation_settings(PSW_HASH_SETTINGS *settings)
 
 int key_derivation_settings_exist()
 {
-    char file_name[48] = {0};
-    strcpy(file_name, INDIGO_PSW_DIR);
+    char file_name[48] = INDIGO_PSW_DIR;
+    strcat(file_name, "/");
     strcat(file_name, INDIGO_PSW_HASH_SETTINGS_FILE);
 
     if (access(file_name, F_OK) == 0)
@@ -519,11 +563,14 @@ int save_password_hash(const char *password, const uint64_t psw_len)
     char xpath[PATH_MAX];
 
     if (password == NULL || psw_len == 0) {
+        log_error("null password or 0 password length | return %d", INDIGO_ERROR_INVALID_PARAM);
         return INDIGO_ERROR_INVALID_PARAM;
     }
 
     psw_hash = (char *)malloc(crypto_pwhash_STRBYTES + 1);
     if (psw_hash == NULL) {
+        log_error("malloc failed allocating %lld bytes for password hash | return %d",
+            crypto_pwhash_STRBYTES + 1, INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
 
@@ -531,7 +578,8 @@ int save_password_hash(const char *password, const uint64_t psw_len)
     if (ret != INDIGO_SUCCESS) {
         free(psw_hash);
         // possible file changed to incompatible values
-        return INDIGO_ERROR_INCOMPATIBLE_FILE;
+        log_error("load_key_derivation_settings() failed | return %d", ret);
+        return ret;
     }
 
     mem_cost = psw_settings.mem_cost;
@@ -539,6 +587,8 @@ int save_password_hash(const char *password, const uint64_t psw_len)
 
     if (psw_len <= crypto_pwhash_PASSWD_MIN || psw_len >= crypto_pwhash_PASSWD_MAX) {
         free(psw_hash);
+        log_error("password length (%d) not in valid range [%d,%d] | return %d",
+            psw_len,crypto_pwhash_PASSWD_MIN, crypto_pwhash_PASSWD_MAX, INDIGO_ERROR_INVALID_PARAM );
         return INDIGO_ERROR_INVALID_PARAM;
     }
 
@@ -546,25 +596,32 @@ int save_password_hash(const char *password, const uint64_t psw_len)
 
     if (ret == -1) {
         free(psw_hash);
+        log_error("crypto_pwhash_str() failed | return %d", INDIGO_ERROR_SODIUM_ERROR);
         return INDIGO_ERROR_SODIUM_ERROR;
     }
 
-    file_name = malloc(strlen(INDIGO_PSW_DIR) + strlen(INDIGO_PSW_HASH_FILE_NAME) + 1);
+    file_name = malloc(strlen(INDIGO_PSW_DIR) + strlen(INDIGO_PSW_HASH_FILE_NAME) + 2);
     if (file_name == NULL) {
         free(psw_hash);
+        log_error("malloc failed allocating %lld bytes for password hash file name | return %d",
+            strlen(INDIGO_PSW_DIR) + strlen(INDIGO_PSW_HASH_FILE_NAME) + 2,  INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
     strcpy(file_name, INDIGO_PSW_DIR);
+    strcat(file_name, "/");
     strcat(file_name, INDIGO_PSW_HASH_FILE_NAME);
 
     init_cwd = g_get_current_dir();
     if (get_source_dir(xpath)) {
         free(psw_hash);
-        return INDIGO_ERROR;
+        free(file_name);
+        log_error("g_get_current_dir() failed possibly not enough memory | return %d",
+            INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
+        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
     chdir(xpath);
 
-    g_mkdir_with_parents(INDIGO_PSW_DIR, 755);
+    g_mkdir_with_parents(INDIGO_PSW_DIR, 0755);
 
     fp = fopen(file_name, "w");
     if (fp == NULL) {
@@ -572,6 +629,7 @@ int save_password_hash(const char *password, const uint64_t psw_len)
         g_free(init_cwd);
         free(psw_hash);
         free(file_name);
+        log_error("failed opening file %s | return %d | errno %d", file_name, INDIGO_ERROR_FILE_NOT_FOUND, errno);
         return INDIGO_ERROR_FILE_NOT_FOUND; // todo check errno
     }
 
@@ -589,21 +647,25 @@ int load_password_hash(char **hash)
 {
     char *file_name = NULL;
     char *psw_hash = NULL;
-    int hash_len = 0;
+    size_t hash_len = 0;
     FILE *fp = NULL;
 
-    file_name = malloc(strlen(INDIGO_PSW_DIR) + strlen(INDIGO_PSW_HASH_FILE_NAME) + 1);
+    file_name = malloc(strlen(INDIGO_PSW_DIR) + strlen(INDIGO_PSW_HASH_FILE_NAME) + 2);
     if (file_name == NULL) {
         *hash = NULL;
+        log_error("malloc failed allocating %lld bytes for password hash file name | return %d ",
+            strlen(INDIGO_PSW_DIR) + strlen(INDIGO_PSW_HASH_FILE_NAME) + 2,  INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR );
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
     strcpy(file_name, INDIGO_PSW_DIR);
+    strcat(file_name, "/");
     strcat(file_name, INDIGO_PSW_HASH_FILE_NAME);
 
     fp = fopen(file_name, "r");
     if (fp == NULL) {
         free(file_name);
         *hash = NULL;
+        log_error("failed opening file %s | return %d | errno %d", file_name, INDIGO_ERROR_FILE_NOT_FOUND, errno);
         return INDIGO_ERROR_FILE_NOT_FOUND; // todo check errno
     }
 
@@ -611,13 +673,15 @@ int load_password_hash(char **hash)
     hash_len = ftell(fp);
     fseek(fp, 0, SEEK_SET);
 
-    if (hash_len >= crypto_pwhash_STRBYTES + 1) {
-        printf("psw_hash incompatible lenght");
+    if (hash_len > crypto_pwhash_STRBYTES) {
+        printf("psw_hash incompatible length");
         fflush(stdout);
         free(psw_hash);
         free(file_name);
         fclose(fp);
         *hash = NULL;
+        log_error("password hash has incompatible length %d while max length %d | return %d",
+            hash_len, crypto_pwhash_STRBYTES ,INDIGO_ERROR_INCOMPATIBLE_FILE);
         return INDIGO_ERROR_INCOMPATIBLE_FILE;
     }
 
@@ -627,6 +691,8 @@ int load_password_hash(char **hash)
         fclose(fp);
         free(file_name);
         *hash = NULL;
+        log_error("malloc failed allocating %lld bytes for password hash | return %d",
+            crypto_pwhash_STRBYTES + 1, INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
 
@@ -651,6 +717,7 @@ int cmp_password_hash(const char *psw, const uint64_t psw_len)
 
     ret = load_password_hash(&stored_hash);
     if (ret != 0) {
+        log_error("load_password_hash() failed | return -1");
         return -1;
     }
 
@@ -658,6 +725,7 @@ int cmp_password_hash(const char *psw, const uint64_t psw_len)
 
     if (ret != 0) {
         free(stored_hash);
+        log_info("incorrect password or crypto_pwhash_str_verify() fail");
         return 1;
     }
 
@@ -667,8 +735,8 @@ int cmp_password_hash(const char *psw, const uint64_t psw_len)
 
 int password_hash_exists()
 {
-    char file_name[32] = {0};
-    strcpy(file_name, INDIGO_PSW_DIR);
+    char file_name[32] = INDIGO_PSW_DIR;
+    strcat(file_name, "/");
     strcat(file_name, INDIGO_PSW_HASH_FILE_NAME);
     // returns 0 on success
     if (access(file_name, F_OK) == 0)
@@ -687,16 +755,23 @@ int create_signing_key_pair(void *master_key)
     char xpath[PATH_MAX];
     int ret;
 
-    if (master_key == NULL)
+    if (master_key == NULL) {
+        log_error("master key is null | return 1");
         return 1;
+    }
 
     cipher = (unsigned char *)malloc(crypto_secretbox_MACBYTES + sizeof(signing_key_pair_t));
-    if (cipher == NULL)
+    if (cipher == NULL) {
+        log_error("malloc failed allocating %lld bytes for generated key ciphertext | return %d",
+            crypto_secretbox_MACBYTES + sizeof(signing_key_pair_t), INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+    }
 
     nonce = (unsigned char *)malloc(crypto_secretbox_NONCEBYTES);
     if (!nonce) {
         free(cipher);
+        log_error("malloc failed allocating %lld bytes for generated key nonce | return %d",
+            crypto_secretbox_NONCEBYTES, INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
     randombytes_buf(nonce, crypto_secretbox_NONCEBYTES);
@@ -704,6 +779,7 @@ int create_signing_key_pair(void *master_key)
     if (crypto_sign_keypair(key_pair.public, key_pair.secret) != 0) {
         free(nonce);
         free(cipher);
+        log_error("crypto_sign_keypair() failed generating keys | retunr %d", INDIGO_ERROR_SODIUM_ERROR);
         return INDIGO_ERROR_SODIUM_ERROR;
     }
 
@@ -712,13 +788,16 @@ int create_signing_key_pair(void *master_key)
     if (ret != 0) {
         free(cipher);
         free(nonce);
+        log_error("crypto_secretbox_easy() failed encrypting generated key pair | return" ,INDIGO_ERROR_SODIUM_ERROR);
         return INDIGO_ERROR_SODIUM_ERROR;
     }
 
-    file_name = malloc(strlen(INDIGO_KEY_DIR) + strlen(INDIGO_SIGN_KEY_FILE_NAME) + 1);
+    file_name = malloc(strlen(INDIGO_KEY_DIR) + strlen(INDIGO_SIGN_KEY_FILE_NAME) + 2);
     if (file_name == NULL) {
         free(cipher);
         free(nonce);
+        log_error("malloc failed allocating %lld bytes for signing keypair file name | return %d",
+            strlen(INDIGO_KEY_DIR) + strlen(INDIGO_SIGN_KEY_FILE_NAME) + 2, INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
 
@@ -727,12 +806,15 @@ int create_signing_key_pair(void *master_key)
     if (ret) {
         free(cipher);
         free(nonce);
+        free(file_name);
+        log_error("get_source_dir() failed | return %d", INDIGO_ERROR);
         return INDIGO_ERROR;
     }
 
-    g_mkdir_with_parents(INDIGO_KEY_DIR, 755);
+    g_mkdir_with_parents(INDIGO_KEY_DIR, 0755);
 
     strcpy(file_name, INDIGO_KEY_DIR);
+    strcat(file_name, "/");
     strcat(file_name, INDIGO_SIGN_KEY_FILE_NAME);
 
     fp = fopen(file_name, "wb");
@@ -742,11 +824,14 @@ int create_signing_key_pair(void *master_key)
         free(file_name);
         free(cipher);
         free(nonce);
+        log_error("failed opening file %s | return %d | errno %d", file_name, INDIGO_ERROR_FILE_NOT_FOUND, errno);
         return INDIGO_ERROR_FILE_NOT_FOUND;
     }
 
     fwrite(nonce, 1, crypto_secretbox_NONCEBYTES, fp);
     fwrite(cipher, 1, crypto_secretbox_MACBYTES + sizeof(signing_key_pair_t), fp);
+
+    sodium_memzero(&key_pair, sizeof(key_pair));
 
     chdir(init_cwd);
     g_free(init_cwd);
@@ -766,16 +851,20 @@ int load_signing_key_pair(signing_key_pair_t *key_pair, const unsigned char *mas
     unsigned char *nonce = NULL;
     int ret = 0;
 
-    file_name = malloc(strlen(INDIGO_KEY_DIR) + strlen(INDIGO_SIGN_KEY_FILE_NAME) + 1);
+    file_name = malloc(strlen(INDIGO_KEY_DIR) + strlen(INDIGO_SIGN_KEY_FILE_NAME) + 2);
     if (file_name == NULL) {
+        log_error("malloc failed allocating %lld bytes for signing keypair file name | return %d",
+            strlen(INDIGO_KEY_DIR) + strlen(INDIGO_SIGN_KEY_FILE_NAME) + 2, INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
-    strcpy(file_name, INDIGO_PSW_DIR);
+    strcpy(file_name, INDIGO_KEY_DIR);
+    strcat(file_name, "/");
     strcat(file_name, INDIGO_SIGN_KEY_FILE_NAME);
 
     fp = fopen(file_name, "rb");
     if (fp == NULL) {
         free(file_name);
+        log_error("failed opening file %s | return %d | errno %d", file_name, INDIGO_ERROR_FILE_NOT_FOUND, errno);
         return INDIGO_ERROR_FILE_NOT_FOUND;
     }
     free(file_name);
@@ -784,33 +873,42 @@ int load_signing_key_pair(signing_key_pair_t *key_pair, const unsigned char *mas
     file_len = ftell(fp);
     fseek(fp, 0, SEEK_SET);
 
-    if (file_len != crypto_secretbox_KEYBYTES + sizeof(signing_key_pair_t) + crypto_secretbox_NONCEBYTES) {
+    if (file_len != crypto_secretbox_MACBYTES + sizeof(signing_key_pair_t) + crypto_secretbox_NONCEBYTES) {
         fclose(fp);
+        log_error("sign keypair file length found incompatible %d where is should be %d | return $d",
+            file_len, crypto_secretbox_MACBYTES + sizeof(signing_key_pair_t) + crypto_secretbox_NONCEBYTES,
+            INDIGO_ERROR_INCOMPATIBLE_FILE);
         return INDIGO_ERROR_INCOMPATIBLE_FILE;
     }
 
-    cipher = (unsigned char *)malloc(crypto_secretbox_KEYBYTES + sizeof(signing_key_pair_t));
+    cipher = (unsigned char *)malloc(crypto_secretbox_MACBYTES + sizeof(signing_key_pair_t));
     if (cipher == NULL) {
         fclose(fp);
+        log_error("malloc failed allocating %lld bytes for keypair ciphertext | return %d",
+            crypto_secretbox_MACBYTES + sizeof(signing_key_pair_t), INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
     nonce = (unsigned char *)malloc(crypto_secretbox_NONCEBYTES);
     if (nonce == NULL) {
         fclose(fp);
         free(cipher);
+        log_error("malloc failed allocating %lld bytes for keypair nonce | return %d",
+            crypto_secretbox_NONCEBYTES, INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
 
     fread(nonce, 1, crypto_secretbox_NONCEBYTES, fp);
-    fread(cipher, 1, crypto_secretbox_KEYBYTES + sizeof(signing_key_pair_t), fp);
+    fread(cipher, 1, crypto_secretbox_MACBYTES + sizeof(signing_key_pair_t), fp);
 
     ret = crypto_secretbox_open_easy((unsigned char *)key_pair, cipher,
-                                     crypto_secretbox_KEYBYTES + sizeof(signing_key_pair_t), nonce, master_key);
+                                     crypto_secretbox_MACBYTES + sizeof(signing_key_pair_t), nonce, master_key);
 
     if (ret != 0) {
         fclose(fp);
         free(nonce);
         free(cipher);
+        log_error("crypto_secretbox_open_easy() failed to decrypt the signing keys | return %d",
+            INDIGO_ERROR_FALSE_KEY);
         return INDIGO_ERROR_FALSE_KEY;
     }
 
@@ -862,6 +960,7 @@ int encrypt_packet(packet_t *packet, unsigned char tk[crypto_kx_SESSIONKEYBYTES]
                                                      PAC_ENCRYPT_BYTES, (unsigned char *)packet, PAC_ENCRYPT_OFFSET,
                                                      NULL, packet->nonce, tk);
     if (ret != 0) {
+        log_error("crypto_aead_xchacha20poly1305_ietf_encryp() failed | return %d",INDIGO_ERROR_INVALID_PARAM);
         return INDIGO_ERROR_INVALID_PARAM;
     }
     sodium_memzero(&(packet->zero), PAC_ENCRYPT_BYTES);
@@ -888,8 +987,11 @@ int decrypt_packet(packet_t *packet, unsigned char rk[crypto_kx_SESSIONKEYBYTES]
                        PAC_ENCRYPT_BYTES + crypto_aead_xchacha20poly1305_ietf_ABYTES - decrypted_len);
         return INDIGO_SUCCESS;
     }
-    if (ret == -1)
+    if (ret == -1) {
+        log_warn("attempt to decrypt invalid packet | return %d ",INDIGO_ERROR_INVALID_PACKET);
         return INDIGO_ERROR_INVALID_PACKET;
+    }
+    log_error("unknown error in decrypt packet | return %d", INDIGO_ERROR);
     return INDIGO_ERROR;
 }
 
@@ -899,10 +1001,12 @@ int nonce_increment(unsigned char *nonce, size_t nonce_len, uint64_t increment)
 
     incr_bytes = calloc(1, nonce_len);
     if (!incr_bytes) {
+        log_error("calloc() failed allocating %d bytes used for temporary nonce buffer | return %d",
+            nonce_len, INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
 
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < CHAR_BIT; i++) {
         incr_bytes[i] = (increment >> (i << 3)) & 0xFF;
     }
 

@@ -38,6 +38,7 @@ int verify_password(void **master_key);
 
 WINDOW *create_welcome_screen();
 int create_new_password();
+// TODO: remove this (allow all characters (utf8) if they entered it once they can do it again)
 int iswspecialchar(wint_t ch);
 int get_user_input(WINDOW *win, utf8_char_t *input);
 
@@ -45,7 +46,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
 int pathfinder(char path[PATH_MAX]);
 int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_t *id_count,
                   unsigned char last_id[crypto_sign_PUBLICKEYBYTES], int *last_row);
-int print_device(WINDOW *win, remote_device_t *rdev, uint64_t count, char highlight);
+int print_device(WINDOW *win, remote_device_t *rdev, int row, char highlight);
 int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree_t *active_files,
                        unsigned char ***requests_list, int *request_count, unsigned char ***file_list, int *file_count,
                        int *last_row, char *level);

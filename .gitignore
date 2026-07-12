@@ -9,3 +9,4 @@ todo.txt
 indigo.sublime-project
 out
 .clangd
+compile_commands.json

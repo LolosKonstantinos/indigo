@@ -37,6 +37,14 @@ SOFTWARE.
 #include <stdlib.h>
 #include <string.h>
 
+#include "config.h"
+#include "event_flags.h"
+#include "lht.h"
+#include "mempool.h"
+#include "net_monitor.h"
+#include <log.h>
+#include <errno.h>
+
 #ifdef __linux__
 #include <netinet/in.h>
 #include <sys/epoll.h>
@@ -45,11 +53,7 @@ SOFTWARE.
 #include <unistd.h>
 #endif
 
-#include "config.h"
-#include "event_flags.h"
-#include "lht.h"
-#include "mempool.h"
-#include "net_monitor.h"
+
 
 //////////////////////////////////////////////////////
 ///                                                ///
@@ -668,17 +672,20 @@ int register_single_event(int epoll_fd, int fd, struct epoll_event event)
 {
     event.data.fd = fd;
     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &event) == -1) {
+        log_error("[register_single_event] epoll_ctl() failed | return %d | errno %d", INDIGO_ERROR, errno);
         return INDIGO_ERROR;
     }
     return INDIGO_SUCCESS;
 }
-int register_multiple_receivers(int epoll_fd, socket_ll *sockets, size_t *event_count)
+int register_multiple_receivers(int epoll_fd, socket_ll *sockets, int *event_count)
 {
     struct epoll_event *recv_events;
-    size_t count;
+    int count = 0;
 
-    if (!event_count || !event_count)
+    if (!sockets || !event_count) {
+        log_error("[register_multiple_receivers] null parameter");
         return INDIGO_ERROR_INVALID_PARAM;
+    }
 
     pthread_mutex_lock(&(sockets->mutex));
 
@@ -688,6 +695,8 @@ int register_multiple_receivers(int epoll_fd, socket_ll *sockets, size_t *event_
     recv_events = calloc(count, sizeof(struct epoll_event));
     if (!recv_events) {
         pthread_mutex_unlock(&(sockets->mutex));
+        log_error("[register_multiple_receivers] calloc() failed allocating %d bytes for epoll event | return %d",
+            sizeof(struct epoll_event), INDIGO_ERROR);
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
 
@@ -702,6 +711,7 @@ int register_multiple_receivers(int epoll_fd, socket_ll *sockets, size_t *event_
         if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, sn->sock, &(recv_events[count])) == -1) {
             pthread_mutex_unlock(&(sockets->mutex));
             free(recv_events);
+            log_error("[register_multiple_receivers] epoll_ctl() failed adding socket | return %d | errno %d", INDIGO_ERROR, errno);
             return INDIGO_ERROR;
         }
         ++count;
@@ -715,14 +725,14 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, socket
                            const uint32_t pCount, const int32_t msec, signing_key_pair_t *sign_key_pair,
                            char username[(MAX_USERNAME_LEN + 1) * sizeof(uint32_t)])
 {
-    int ret;
+    ssize_t ret;
     time_t curr_time;
     packet_t packet;
     struct sockaddr_in s_addr = {0};
     init_packet_data_t packet_data;
 
     s_addr.sin_addr.s_addr = multicast_addr;
-    s_addr.sin_port = PORT;
+    s_addr.sin_port = port;
     s_addr.sin_family = AF_INET;
 
     build_packet(&packet, MSG_INIT_PACKET, sign_key_pair->public, NULL, NULL);
@@ -737,6 +747,9 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, socket
             ret = sendto(s->sock, &packet, sizeof(packet_t), 0, (struct sockaddr *)&s_addr, sizeof(struct sockaddr_in));
             if (ret == -1) {
                 // TODO: handle errors
+                pthread_mutex_unlock(&(sockets->mutex));
+                log_error("[send_discovery_packets] sendto() failed to send discovery packet | return %d | errno %d", INDIGO_ERROR, errno);
+                return INDIGO_ERROR;
             }
         }
         g_usleep(1000 * msec);
@@ -749,7 +762,7 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, socket
 int send_packet(const int port, const uint32_t addr, socket_ll *sockets, const packet_t *const packet, EFLAG *flag)
 {
 
-    int ret = 0;
+    ssize_t ret = 0;
     int sock;
     struct sockaddr_in s_addr = {0};
 
@@ -757,7 +770,7 @@ int send_packet(const int port, const uint32_t addr, socket_ll *sockets, const p
         return INDIGO_ERROR_INVALID_PARAM;
 
     s_addr.sin_addr.s_addr = addr;
-    s_addr.sin_port = PORT;
+    s_addr.sin_port = port;
     s_addr.sin_family = AF_INET;
 
     pthread_mutex_lock(&sockets->mutex);
@@ -766,8 +779,11 @@ int send_packet(const int port, const uint32_t addr, socket_ll *sockets, const p
     ret = sendto(sock, packet, sizeof(packet_t), 0, (struct sockaddr *)&s_addr, sizeof(struct sockaddr_in));
     pthread_mutex_unlock(&sockets->mutex);
     if (ret == -1) {
+        log_error("[send_packet] sendto() failed to send packet | return %d | errno %d", INDIGO_ERROR, errno);
         switch (errno) {
             // TODO: handle the errors.
+            default:
+                break;
         }
         return 1;
     }
@@ -782,7 +798,7 @@ int send_next_file_packet(active_file_t *file, const unsigned char *const pk, so
     int ret;
 
     if (!file) {
-        fprintf(stderr, "send_next_file_packet(): wrong parameters\n");
+        log_error("[send_next_file_packet] invalid null parameter");
         return INDIGO_ERROR_INVALID_PARAM;
     }
     if (!(file->fd)) {
@@ -794,7 +810,7 @@ int send_next_file_packet(active_file_t *file, const unsigned char *const pk, so
     memcpy(nonce, file->nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
     ret = nonce_increment(nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES, file->counter);
     if (ret) {
-        fprintf(stderr, "nonce_increment() failed in send_next_file_packet()\n");
+        log_error("[send_next_file_packet] nonce_increment() failed | return %d", ret);
         return ret;
     }
 
@@ -803,7 +819,7 @@ int send_next_file_packet(active_file_t *file, const unsigned char *const pk, so
     if (read_ret != 0) {
         ret = feof(file->fd);
         if (ret != 0) {
-            fprintf(stderr, "fread() failed in send_next_file_packet()\n");
+            log_error("[send_next_file_packet] fread() failed to read from file for outgoing file packet | return -1 | errno %d", errno);
             return -1;
         }
         fclose(file->fd);
@@ -812,12 +828,12 @@ int send_next_file_packet(active_file_t *file, const unsigned char *const pk, so
 
     ret = encrypt_packet(&packet, file->tk, nonce);
     if (ret) {
-        fprintf(stderr, "encrypt_packet() failed in send_next_file_packet()\n");
+        log_error("[send_next_file_packet] encrypt_packet() failed | return %d", ret);
         return ret;
     }
     ret = send_packet(file->port, file->ip, sockets, &packet, flag);
     if (ret != 0) {
-        fprintf(stderr, "send_packet() failed in send_next_file_packet()\n");
+        log_error("[send_next_file_packet] send_packet() failed | return %d", ret);
         return ret;
     }
     file->counter++;
@@ -834,7 +850,7 @@ int send_file_packet(active_file_t *file, uint64_t counter, const unsigned char 
     int ret;
 
     if (!file) {
-        fprintf(stderr, "send_next_file_packet(): wrong parameters\n");
+        log_error("[send_file_packet] file is null | return %d", INDIGO_ERROR_INVALID_PARAM);
         return INDIGO_ERROR_INVALID_PARAM;
     }
     if (!(file->fd)) {
@@ -846,7 +862,7 @@ int send_file_packet(active_file_t *file, uint64_t counter, const unsigned char 
     memcpy(nonce, file->nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
     ret = nonce_increment(nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES, counter);
     if (ret) {
-        fprintf(stderr, "nonce_increment() failed in send_next_file_packet()\n");
+        log_error( "[send_file_packet] nonce_increment() failed | return %d", ret);
         return ret;
     }
 
@@ -855,7 +871,7 @@ int send_file_packet(active_file_t *file, uint64_t counter, const unsigned char 
     if (read_ret != 0) {
         ret = feof(file->fd);
         if (ret != 0) {
-            fprintf(stderr, "fread() failed in send_next_file_packet()\n");
+            log_error("[send_file_packet] fread() failed to read from file for file packet | return %d | errno %d", ret, errno);
             return -1;
         }
         fclose(file->fd);
@@ -864,12 +880,12 @@ int send_file_packet(active_file_t *file, uint64_t counter, const unsigned char 
 
     ret = encrypt_packet(&packet, file->tk, nonce);
     if (ret) {
-        fprintf(stderr, "encrypt_packet() failed in send_next_file_packet()\n");
+        log_error("[send_file_packet] encrypt_packet() failed | return %d", ret);
         return ret;
     }
     ret = send_packet(file->port, file->ip, sockets, &packet, flag);
     if (ret != 0) {
-        fprintf(stderr, "send_packet() failed in send_next_file_packet()\n");
+        log_error("[send_file_packet] send_packet() failed | return %d", ret);
         return ret;
     }
     return INDIGO_SUCCESS;
@@ -1504,7 +1520,7 @@ int *recv_thread(RECV_ARGS *args)
     int epoll_fd = 0;
     struct epoll_event *recv_events = NULL;
     struct epoll_event tmp_event;
-    size_t recv_event_count;
+    int recv_event_count;
 
     struct sockaddr_in recv_addr = {0};
     socklen_t recv_addr_len = 0;
@@ -1524,6 +1540,7 @@ int *recv_thread(RECV_ARGS *args)
     if (process_return == NULL) {
         set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
+        log_fatal("[recv_thread] malloc failed allocating %d bytes for thread return value | return NULL", sizeof(int));
         return NULL;
     }
     *process_return = 0;
@@ -1534,6 +1551,7 @@ int *recv_thread(RECV_ARGS *args)
     epoll_fd = epoll_create1(0);
     if (epoll_fd == -1) {
         *process_return = INDIGO_ERROR_SYS_FAIL;
+        log_fatal("[recv_thread] epoll_create1() failed | return %d | errno %d", INDIGO_ERROR_SYS_FAIL, errno);
         return process_return;
     }
 
@@ -1543,21 +1561,17 @@ int *recv_thread(RECV_ARGS *args)
         set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
         *process_return = ret;
+        log_fatal("[recv_thread] register_multiple_receivers() failed trying initialize receiving | return %d", ret);
         return process_return;
     }
-    // TODO: i have zero idea why we check the flag bellow, please check it and remove if necessary
-    if (ret == -1) {
-        flag_val = get_event_flag(args->flag);
-        if (flag_val & EF_TERMINATION) {
-            *process_return = 0;
-            return process_return;
-        }
-    }
+
     // we will register 2 more events, the wake event and the termination event
     recv_event_count += 2;
     recv_events = calloc(recv_event_count, sizeof(struct epoll_event));
     if (!recv_events) {
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        log_fatal("[recv_thread] calloc() failed allocating %lld bytes for epoll events | return %d",
+            sizeof(struct epoll_event) * recv_event_count, INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         return process_return;
     }
     tmp_event.events = EPOLLIN;
@@ -1566,7 +1580,7 @@ int *recv_thread(RECV_ARGS *args)
     register_single_event(epoll_fd, args->termination_fd, tmp_event);
     tmp_event.data.fd = args->wake_fd;
     tmp_event.data.u32 = 2;
-    register_single_event(epoll_fd, args->termination_fd, tmp_event);
+    register_single_event(epoll_fd, args->wake_fd, tmp_event);
     memset(&tmp_event, 0, sizeof(struct epoll_event));
 
     while (!termination_is_on(args->flag)) {
@@ -1582,6 +1596,7 @@ int *recv_thread(RECV_ARGS *args)
             if (epoll_fd == -1) {
                 free(recv_events);
                 *process_return = INDIGO_ERROR_SYS_FAIL;
+                log_fatal("[recv_thread] epoll_create1() failed | return %d | errno %d", INDIGO_ERROR_SYS_FAIL, errno);
                 return process_return;
             }
             free(recv_events);
@@ -1593,14 +1608,18 @@ int *recv_thread(RECV_ARGS *args)
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
                 *process_return = ret;
+
+                log_fatal("[recv_thread] register_multiple_receivers() failed trying renew receiving | return %d", ret);
                 return process_return;
             }
             reset_single_event(args->flag, EF_OVERRIDE_IO);
-            // make toom for the termination event
+            // make room for the termination event
             recv_event_count += 2;
             recv_events = calloc(recv_event_count, sizeof(struct epoll_event));
             if (!recv_events) {
                 *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                log_fatal("[recv_thread] calloc() failed allocating %lld bytes for epoll events | return %d",
+                    recv_event_count * sizeof(struct epoll_event), INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
                 return process_return;
             }
             tmp_event.events = EPOLLIN;
@@ -1614,7 +1633,8 @@ int *recv_thread(RECV_ARGS *args)
         }
         else if (flag_val & EF_TERMINATION) {
             free(recv_events);
-            *process_return = 0;
+            *process_return = INDIGO_SUCCESS;
+            log_info("[recv_thread] receive thread successful exit | return %d", INDIGO_SUCCESS);
             return process_return;
         }
 
@@ -1628,6 +1648,8 @@ int *recv_thread(RECV_ARGS *args)
         else if (ret == -1) {
             free(recv_events);
             *process_return = INDIGO_ERROR;
+            log_fatal("[recv_thread] epoll_wait() failed while waiting on receiving sockets | return %d | errno %d",
+                INDIGO_ERROR, errno);
             return process_return;
         }
 
@@ -1645,6 +1667,7 @@ int *recv_thread(RECV_ARGS *args)
                     continue;
                 free(recv_events);
                 *process_return = INDIGO_SUCCESS;
+                log_info("[recv_thread] receive thread successful exit | return %d", INDIGO_SUCCESS);
                 return process_return;
             }
             else if (event_type == 2) {
@@ -1688,6 +1711,8 @@ int *recv_thread(RECV_ARGS *args)
                     free(recv_events);
                     mempool->free(mempool, recv_buffer);
                     *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                    log_fatal("[recv_thread] queue_push() failed trying to push packet to manager | return %d",
+                        INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
                     return process_return;
                 }
                 set_event_flag(args->flag, EF_NEW_PACKET);
@@ -1696,7 +1721,8 @@ int *recv_thread(RECV_ARGS *args)
         }
     }
     free(recv_events);
-    *process_return = 0;
+    *process_return = INDIGO_SUCCESS;
+    log_info("[recv_thread] receive thread successful exit | return %d", INDIGO_SUCCESS);
     return process_return;
 }
 #endif
@@ -1719,6 +1745,7 @@ int *send_thread(SEND_ARGS *args)
     if (process_return == NULL) {
         set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
+        log_fatal("[send_thread] malloc failed allocating %d bytes for thread return value | return NULL", sizeof(int));
         return NULL;
     }
     *process_return = 0;
@@ -1728,13 +1755,12 @@ int *send_thread(SEND_ARGS *args)
         set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        log_fatal("[send_thread] new_lht() failed creating linked hash table for active files | return %d | errno %d",
+            INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR, errno);
         return process_return;
     }
 
-    ret = load_username(username);
-    if (ret) {
-        memcpy(username, "remote_device", strlen("remote_device") + 1);
-    }
+    load_username(username);
 
     // the main loop
     while (!termination_is_on(args->flag)) {
@@ -1754,47 +1780,53 @@ int *send_thread(SEND_ARGS *args)
 
             ret = send_discovery_packets(args->port, args->multicast_addr, args->sockets, args->flag, 3, 150,
                                          args->sign_keys, username);
-            if (ret > 0) {
+            if (ret != INDIGO_SUCCESS) {
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
                 delete_lht(active_files);
                 *process_return = ret;
+                log_fatal("[send_thread] send_discovery_packets() failed while sending multiple packets on request | return %d", ret);
                 return process_return;
-            }
-            // returns -1 when we get an override execution or termination event
-            if (ret == -1) {
-                flag_val = get_event_flag(args->flag);
-                if (flag_val & EF_TERMINATION) {
-                    delete_lht(active_files);
-                    *process_return = 0;
-                    return process_return;
-                }
             }
         }
         else if (flag_val & EF_SEND_NEW_FILE) {
-            node = queue_pop(args->queue, QOPT_NON_BLOCK);
+            queue_lock(args->queue);
+            node = queue_peek_tu(args->queue);
 
-            if (node == NULL)
+            if (node == NULL) {
+                queue_unlock(args->queue);
                 continue;
+            }
 
             if (node->type == QET_SEND_FILE) {
+                queue_remove_front_tu(args->queue);
+                queue_unlock(args->queue);
                 ret = active_files->insert(active_files, &(((active_file_t *)node->data)->session_id), node->data);
                 if (ret) {
                     // todo: do something
                 }
                 free(node->data);
             }
+            else {
+                queue_unlock(args->queue);
+            }
             destroy_qnode(node);
             node = NULL;
         }
         // todo: there is a queue node with the info needed, check it and help your self
         else if (flag_val & EF_RESEND_FILE_CHUNK) {
-            node = queue_pop(args->queue, QOPT_NON_BLOCK);
-            if (node == NULL)
+            queue_lock(args->queue);
+            node = queue_peek_tu(args->queue);
+            if (node == NULL) {
+                queue_unlock(args->queue);
                 continue;
+            }
+
             if (node->type == QET_RESEND_FILE_CHUNK) {
+                queue_remove_front_tu(args->queue);
+                queue_unlock(args->queue);
                 active_file_t *af;
-                transmission_control_data_t *data = &((Q_RESEND_FILE_CHUNK *)(node->data))->control;
+                transmission_control_data_t data = ((Q_RESEND_FILE_CHUNK *)(node->data))->control;
 
                 af = lht_search(active_files, &(((Q_RESEND_FILE_CHUNK *)(node->data))->session_id));
                 if (!af) {
@@ -1804,7 +1836,7 @@ int *send_thread(SEND_ARGS *args)
                     continue;
                 }
 
-                for (size_t i = data->range.start; i < data->range.end + 1; i++) {
+                for (size_t i = data.range.start; i < data.range.end + 1; i++) {
                     ret = send_file_packet(af, i, args->sign_keys->public, args->sockets, args->flag);
                     if (ret) { // todo: are all errors non recoverable? check it please
                         free(node->data);
@@ -1814,9 +1846,13 @@ int *send_thread(SEND_ARGS *args)
                         set_event_flag(args->wake, EF_WAKE_MANAGER);
                         delete_lht(active_files);
                         *process_return = ret;
+                        log_fatal("[send_thread] send_file_packet() failed while re-sending file chunk | return %d", ret);
                         return process_return;
                     }
                 }
+            }
+            else {
+                queue_unlock(args->queue);
             }
 
             free(node->data);
@@ -1824,33 +1860,58 @@ int *send_thread(SEND_ARGS *args)
             node = NULL;
         }
         else if (flag_val & EF_STOP_FILE_TRANSMISSION) {
-            node = queue_peek(args->queue);
-            if (node == NULL)
+            queue_lock(args->queue);
+            node = queue_peek_tu(args->queue);
+            if (node == NULL) {
+                queue_unlock(args->queue);
                 continue;
+            }
             if (node->type == QET_STOP_FILE_TRANSMISSION) {
-                queue_remove_front(args->queue);
+                queue_remove_front_tu(args->queue);
+                queue_unlock(args->queue);
+            }
+            else {
+                queue_unlock(args->queue);
             }
             // TODO: find and remove the active file
             free(node->data);
             destroy_qnode(node);
         }
         else if (flag_val & EF_CONTINUE_FILE_TRANSMISSION) {
-            node = queue_peek(args->queue);
-            if (node == NULL)
+            queue_lock(args->queue);
+            node = queue_peek_tu(args->queue);
+
+            if (node == NULL) {
+                queue_unlock(args->queue);
                 continue;
+            }
+
             if (node->type == QET_CONTINUE_FILE_TRANSMISSION) {
-                queue_remove_front(args->queue);
+                queue_remove_front_tu(args->queue);
+                queue_unlock(args->queue);
+            }
+            else {
+                queue_unlock(args->queue);
             }
             // TODO: find and continue the active file
             free(node->data);
             destroy_qnode(node);
         }
         else if (flag_val & EF_PAUSE_FILE_TRANSMISSION) {
-            node = queue_peek(args->queue);
-            if (node == NULL)
+            queue_lock(args->queue);
+            node = queue_peek_tu(args->queue);
+
+            if (node == NULL) {
+                queue_unlock(args->queue);
                 continue;
+            }
+
             if (node->type == QET_PAUSE_FILE_TRANSMISSION) {
-                queue_remove_front(args->queue);
+                queue_remove_front_tu(args->queue);
+                queue_unlock(args->queue);
+            }
+            else {
+                queue_unlock(args->queue);
             }
             // TODO: find and pause the active file
             free(node->data);
@@ -1865,8 +1926,8 @@ int *send_thread(SEND_ARGS *args)
 
         // get the list
         ret = lht_list(active_files, &list);
-
-        curr_af = list->data;
+        if (ret == 0 && list)curr_af = list->data;
+        else curr_af = NULL;
 
         while (curr_af) { // for every active file send a packet, in circular way
             ret = send_next_file_packet(curr_af, args->sign_keys->public, args->sockets, args->flag);
@@ -1875,6 +1936,7 @@ int *send_thread(SEND_ARGS *args)
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
                 delete_lht(active_files);
                 *process_return = ret;
+                log_fatal("[send_thread] send_next_file_packet() failed | return %d", ret);
                 return process_return;
             }
             // if a file descriptor is null then the file has been transferred
@@ -1904,25 +1966,17 @@ int *send_thread(SEND_ARGS *args)
             curr_af = list->data;
         }
 
-        // todo: remove username field if the username is in a file
         ret = send_discovery_packets(args->port, args->multicast_addr, args->sockets, args->flag, 1, 0, args->sign_keys,
                                      username);
-        if (ret > 0) {
+        if (ret != INDIGO_SUCCESS) {
             set_event_flag(args->flag, EF_TERMINATION);
             set_event_flag(args->wake, EF_WAKE_MANAGER);
             delete_lht(active_files);
             *process_return = ret;
+            log_fatal("[send_thread] send_discovery_packets() failed while sending scheduled discovery packets | return %d", ret);
             return process_return;
         }
-        // returns -1 when we get an override execution or termination event
-        if (ret == -1) {
-            flag_val = get_event_flag(args->flag);
-            if (flag_val & EF_TERMINATION) {
-                delete_lht(active_files);
-                *process_return = 0;
-                return process_return;
-            }
-        }
+
         // set next deadline
         clock_gettime(CLOCK_REALTIME, &deadline_ts);
         deadline_ts.tv_sec += DISCOVERY_SEND_PERIOD_SEC;
@@ -1938,6 +1992,7 @@ int *send_thread(SEND_ARGS *args)
             *process_return = 0;
             break;
         }
+
         lht_list(active_files, &list);
         ret = 0;
         // while there are no more files to send, and we didn't time out and the termination or new file flag is risen
@@ -1945,19 +2000,21 @@ int *send_thread(SEND_ARGS *args)
             ret = pthread_cond_timedwait(&(args->flag->cond), &(args->flag->mutex), &deadline_ts);
 
             if ((ret != ETIMEDOUT) && (ret != 0)) {
-                fprintf(stderr, "pthread_cond_timedwait() failed in device_discovery_sending\n");
+                fprintf(stderr, "[send_thread] pthread_cond_timedwait() failed in device_discovery_sending\n");
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
                 pthread_mutex_unlock(&(args->flag->mutex));
                 delete_lht(active_files);
                 *process_return = INDIGO_ERROR_INVALID_STATE;
+                log_fatal("[send_thread] pthread_cond_timedwait() failed | return %d | errno %d", *process_return, errno);
                 return process_return;
             }
             if (ret == 0) {
                 if (args->flag->event_flag & EF_TERMINATION) {
                     pthread_mutex_unlock(&(args->flag->mutex));
                     delete_lht(active_files);
-                    *process_return = 0;
+                    *process_return = INDIGO_SUCCESS;
+                    log_info("[send_thread] send thread successful exit | return %d", *process_return);
                     return process_return;
                 }
             }
@@ -1966,6 +2023,7 @@ int *send_thread(SEND_ARGS *args)
     }
 
     delete_lht(active_files);
+    log_info("[send_thread] send thread successful exit | return %d", *process_return);
     return process_return;
 }
 /////////////////////////////////////////////////////////////////

@@ -59,8 +59,9 @@ int *thread_manager_thread(MANAGER_ARGS *args);
 
 int cancel_device_discovery(pthread_t tid, EFLAG *flag);
 
-int create_thread_manager_thread(MANAGER_ARGS **args, int port, uint32_t multicast_address, tree_t *dev_tree,
-                                 QUEUE *ui_queue, QUEUE *ph_queue, QUEUE *send_queue, pthread_t *tid);
+int create_thread_manager_thread(MANAGER_ARGS **args, void *master_key, int port, uint32_t multicast_address,
+                                 tree_t *dev_tree, QUEUE *ui_queue, QUEUE *ph_queue, QUEUE *send_queue,
+                                 QUEUE *manager_queue, pthread_t *tid);
 
 int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, socket_ll *sockets, EFLAG *wake_mngr,
                           QUEUE *queue, const void *master_key, pthread_t *tid);

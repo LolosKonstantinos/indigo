@@ -24,6 +24,8 @@ SOFTWARE.
 #include <indigo_errors.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <log.h>
+#include <errno.h>
 
 #ifdef __linux__
 #include <sys/eventfd.h>
@@ -93,17 +95,19 @@ int *thread_manager_thread(MANAGER_ARGS *args)
     if (process_return == NULL) {
         set_event_flag(args->flag, EF_TERMINATION);
         free(args);
+        log_fatal("[thread_manager_thread] malloc failed allocating %d bytes for thread return value | return NULL", sizeof(int));
         return NULL;
     }
-    *process_return = 0;
+    *process_return = INDIGO_SUCCESS;
 
     // prepare to create the threads
 
     // create the sockets
     sockets = malloc(sizeof(socket_ll));
     if (sockets == NULL) {
-        fprintf(stderr, "malloc() failed in discovery_manager_thread\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        log_fatal("[thread_manager_thread] malloc failed allocating %d bytes for socket linked list | return %d",
+            sizeof(socket_ll), INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         goto cleanup;
     }
     pthread_mutex_init(&sockets->mutex, NULL);
@@ -112,7 +116,7 @@ int *thread_manager_thread(MANAGER_ARGS *args)
 
     temp = get_discovery_sockets(args->port, args->multicast_addr);
     if (temp == NULL) {
-        fprintf(stderr, "Error in get_discovery_sockets\n");
+        log_error("[thread_manager_thread] get_discovery_sockets() failed");
         goto cleanup;
     }
     sockets->head = temp;
@@ -127,23 +131,25 @@ int *thread_manager_thread(MANAGER_ARGS *args)
     // the initial mempool is about 1MiB, it may be extended automatically if needed
     mempool = new_mempool(1 << 10, sizeof(packet_t) + sizeof(packet_info_t), &pool_attr);
     if (!mempool) {
-        fprintf(stderr, "Failed to create mempool\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        log_fatal("[thread_manager_thread] failed to create new memory pool of %lld bytes | return %d",
+            (1<<10) * (sizeof(packet_t) + sizeof(packet_info_t)), INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         goto cleanup;
     }
 
     // load the signing keys
     signing_key_pair = sodium_malloc(sizeof(signing_key_pair_t));
     if (signing_key_pair == NULL) {
-        fprintf(stderr, "Failed to load signing key pair\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        log_fatal("[thread_manager_thread] sodium_malloc() failed allocating %d bytes for sign keypair | return %d",
+            sizeof(signing_key_pair_t), INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         goto cleanup;
     }
 
     ret_val = load_signing_key_pair(signing_key_pair, args->master_key);
     if (ret_val != INDIGO_SUCCESS) {
-        fprintf(stderr, "Failed to load signing key pair\n");
         *process_return = ret_val;
+        log_fatal("[thread_manager_thread] failed loading sign key pair | return %d", ret_val);
         goto cleanup;
     }
     sodium_mprotect_readonly(signing_key_pair);
@@ -155,22 +161,22 @@ int *thread_manager_thread(MANAGER_ARGS *args)
     // create threads
     if (create_sending_thread(&send_args, args->port, args->multicast_addr, sockets, args->flag, send_queue,
                               args->master_key, &tid_send)) {
-        fprintf(stderr, "create_sending_thread failed\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        log_error("[thread_manager_thread] send thread creation failed | return %d", INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         goto cleanup;
     }
 
     if (create_packet_handler_thread(&handler_args, args->flag, packet_queue, args->ui_queue, send_queue,
                                      send_args->flag, mempool, args->device_tree, args->master_key, sockets,
                                      &tid_handler)) {
-        fprintf(stderr, "create_packet_handler_thread failed\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        log_error("[thread_manager_thread] packet handler thread creation failed | return %d", INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         goto cleanup;
     }
 
     if (create_receiving_thread(&recv_args, sockets, packet_queue, mempool, args->flag, &tid_receive)) {
-        fprintf(stderr, "create_discovery_receiving_thread failed\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        log_error("[thread_manager_thread] receive thread creation failed | return %d", INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         goto cleanup;
     }
 
@@ -180,8 +186,8 @@ int *thread_manager_thread(MANAGER_ARGS *args)
 
     if (create_interface_updater_thread(&update_args, args->port, args->multicast_addr, args->flag, override_flags,
                                         sockets, &tid_update)) {
-        fprintf(stderr, "create_interface_updater_thread failed\n");
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        log_error("[thread_manager_thread] interface update thread creation failed | return %d", INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         goto cleanup;
     }
 
@@ -206,6 +212,7 @@ int *thread_manager_thread(MANAGER_ARGS *args)
         flag_val = get_event_flag(update_args->flag);
         if (flag_val & EF_TERMINATION) {
             // for now, we terminate the whole operation, later we may pause or continue as we are
+            log_info("[thread_manager_thread] interface update thread terminated");
             goto cleanup;
         }
 
@@ -213,6 +220,7 @@ int *thread_manager_thread(MANAGER_ARGS *args)
         flag_val = get_event_flag(send_args->flag);
         if (flag_val & EF_TERMINATION) {
             // for now, we terminate the whole operation, later we may pause or continue as we are
+            log_info("[thread_manager_thread] send thread terminated");
             goto cleanup;
         }
 
@@ -220,8 +228,17 @@ int *thread_manager_thread(MANAGER_ARGS *args)
         flag_val = get_event_flag(recv_args->flag);
         if (flag_val & EF_TERMINATION) {
             // for now, we terminate the whole operation, later we may pause or continue as we are
+            log_info("[thread_manager_thread] receive thread terminated");
             goto cleanup;
         }
+        //check the packet handler thread
+        flag_val = get_event_flag(handler_args->flag);
+        if (flag_val & EF_TERMINATION) {
+            // for now, we terminate the whole operation, later we may pause or continue as we are
+            log_info("[thread_manager_thread] packet handler thread terminated");
+            goto cleanup;
+        }
+
         // todo remove since the packet handler communicates directly with the receiver
         // in this case we just forward to the packet handler
         if (flag_val & EF_NEW_PACKET) {
@@ -229,18 +246,13 @@ int *thread_manager_thread(MANAGER_ARGS *args)
             if (qnode_pop != NULL) {
                 if (queue_push(packet_queue, qnode_pop->data, qnode_pop->type)) {
                     destroy_qnode(qnode_pop);
+                    log_error("[thread_manager_thread] failed to push packet event to paket handler queue");
+                    *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                     goto cleanup;
                 }
                 destroy_qnode(qnode_pop);
                 update_event_flag(handler_args->flag, EF_NEW_PACKET);
             }
-        }
-
-        // check the packet handler thread
-        flag_val = get_event_flag(handler_args->flag);
-        if (flag_val & EF_TERMINATION) {
-            // for now, we terminate the whole operation, later we may pause or continue as we are
-            goto cleanup;
         }
     }
 
@@ -316,9 +328,7 @@ int *thread_manager_thread(MANAGER_ARGS *args)
 #ifdef _WIN32
     WSACleanup();
 #endif
-    printf("DEBUG: manager thread exit\n");
-    fflush(stdout);
-
+    log_info("[thread_manager_thread] thread manager exited successfully with no errors");
     return process_return;
 
 /////////////////////////////////////////////////////
@@ -430,8 +440,7 @@ cleanup:
 #ifdef _WIN32
     WSACleanup();
 #endif
-    printf("DEBUG: manager thread exit\n");
-    fflush(stdout);
+    log_info("[thread_manager_thread] thread manager exited with errors");
     return process_return;
 }
 
@@ -451,8 +460,7 @@ int cancel_device_discovery(pthread_t tid, EFLAG *flag)
     if (pthread_equal(tid, pthread_self()) == 0) {
         pthread_join(tid, (void **)&ret);
     }
-    printf("DEBUG: manager thread joined\n");
-    fflush(stdout);
+    log_info("[cancel_device_discovery] thread manager joined main thread");
 
     if (ret == NULL)
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
@@ -460,25 +468,28 @@ int cancel_device_discovery(pthread_t tid, EFLAG *flag)
     free(ret);
     return val;
 }
-int create_thread_manager_thread(MANAGER_ARGS **args, int port, uint32_t multicast_address, tree_t *dev_tree,
-                                 QUEUE *ui_queue, QUEUE *ph_queue, QUEUE *send_queue, pthread_t *tid)
+int create_thread_manager_thread(MANAGER_ARGS **args, void *master_key, int port, uint32_t multicast_address,
+                                 tree_t *dev_tree, QUEUE *ui_queue, QUEUE *ph_queue, QUEUE *send_queue,
+                                 QUEUE *manager_queue, pthread_t *tid)
 {
     pthread_t thread;
 
     MANAGER_ARGS *manager_args = malloc(sizeof(MANAGER_ARGS));
     if (manager_args == NULL) {
-        fprintf(stderr, "Error allocating memory for MANAGER_ARGS\n");
+        log_error("[create_thread_manager_thread] malloc failed allocating %d bytes for thread manager arguments | return 1", sizeof(MANAGER_ARGS));
         return 1;
     }
     *args = manager_args;
 
     EFLAG *flag = create_event_flag();
     if (flag == NULL) {
-        fprintf(stderr, "create_event_flag() failed in create_sending_thread\n");
+        log_error("[create_thread_manager_thread] failed to create event flap | return 1");
         free(manager_args);
         return 1;
     }
 
+    manager_args->master_key = master_key;
+    manager_args->queue = manager_queue;
     manager_args->flag = flag;
     manager_args->port = port;
     manager_args->multicast_addr = multicast_address;
@@ -490,6 +501,7 @@ int create_thread_manager_thread(MANAGER_ARGS **args, int port, uint32_t multica
     if (pthread_create(&thread, NULL, (void *)(&thread_manager_thread), manager_args)) {
         free_event_flag(flag);
         free(*args);
+        log_error("[create_thread_manager_thread] pthread_create() failed to create thread manager thread | return 1 | errno %d", errno);
         return 1;
     }
 
@@ -505,26 +517,26 @@ int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address
 
     SEND_ARGS *send_args = malloc(sizeof(SEND_ARGS));
     if (send_args == NULL) {
-        fprintf(stderr, "malloc() failed in create_sending_thread\n");
+        log_error("[create_sending_thread] malloc() failed allocating %d bytes for sending thread arguments | return 1", sizeof(SEND_ARGS));
         return 1;
     }
     *args = send_args;
 
     EFLAG *flag = create_event_flag();
     if (flag == NULL) {
-        fprintf(stderr, "create_event_flag() failed in create_sending_thread\n");
+        log_error( "[create_sending_thread] create_event_flag() failed | return 1");
         free(send_args);
         return 1;
     }
     send_args->sign_keys = sodium_malloc(sizeof(signing_key_pair_t));
     if (!send_args->sign_keys) {
-        fprintf(stderr, "malloc() failed in create_sending_thread\n");
+        log_error( "[create_sending_thread] sodium_malloc() failed allocating %d bytes for signing key pair | return 1", sizeof(signing_key_pair_t));
         free(send_args);
         return 1;
     }
 
     if (load_signing_key_pair(send_args->sign_keys, master_key) != INDIGO_SUCCESS) {
-        fprintf(stderr, "load_signing_key_pair() failed in create_sending_thread\n");
+        log_error( "[create_sending_thread] load_signing_key_pair() failed | return 1");
         free(send_args);
         return 1;
     }
@@ -539,6 +551,7 @@ int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address
     if (pthread_create(&thread, NULL, (void *)(&send_thread), send_args)) {
         free_event_flag(flag);
         free(send_args);
+        log_error("[create_sending_thread] pthread_create() failed to create send thread | return 1 | errno %d", errno);
         return 1;
     }
 
@@ -555,14 +568,14 @@ int create_receiving_thread(RECV_ARGS **args, socket_ll *sockets, QUEUE *queue, 
 
     RECV_ARGS *recv_args = malloc(sizeof(RECV_ARGS));
     if (recv_args == NULL) {
-        fprintf(stderr, "malloc() failed in create_receiving_thread\n");
+        log_error("[create_receiving_thread] malloc() failed allocating %d bytes for receiving thread arguments | return 1", sizeof(RECV_ARGS));
         return 1;
     }
     *args = recv_args;
 
     EFLAG *flag = create_event_flag();
     if (flag == NULL) {
-        fprintf(stderr, "create_event_flag() failed in create_receiving_thread\n");
+        log_error( "[create_receiving_thread] create_event_flag() failed | return 1");
         free(recv_args);
         return 1;
     }
@@ -587,14 +600,14 @@ int create_receiving_thread(RECV_ARGS **args, socket_ll *sockets, QUEUE *queue, 
 #else
     recv_args->wake_fd = eventfd(0, EFD_NONBLOCK);
     if (recv_args->wake_fd == -1) {
-        fprintf(stderr, "eventfd was unable to cleate file descriptor in create_receiving_thread\n");
+        log_error("[create_receiving_thread] eventfd() failed to create wake event file descriptor | return 1 | errno %d", errno);
         free(recv_args);
         free_event_flag(flag);
         return 1;
     }
     recv_args->termination_fd = eventfd(0, EFD_NONBLOCK);
     if (recv_args->termination_fd == -1) {
-        fprintf(stderr, "eventfd was unable to cleate file descriptor in create_receiving_thread\n");
+        log_error("[create_receiving_thread] eventfd() failed to create termination event file descriptor | return 1 | errno %d", errno);
         close(recv_args->wake_fd);
         free(recv_args);
         free_event_flag(flag);
@@ -610,6 +623,7 @@ int create_receiving_thread(RECV_ARGS **args, socket_ll *sockets, QUEUE *queue, 
     if (pthread_create(&thread, NULL, (void *)(&recv_thread), recv_args)) {
         free_event_flag(flag);
         free(recv_args);
+        log_error("[create_receiving_thread] pthread_create() failed to create receive thread | return 1 | errno %d", errno);
         return 1;
     }
 
@@ -625,14 +639,15 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
 
     INTERFACE_UPDATE_ARGS *update_args = malloc(sizeof(INTERFACE_UPDATE_ARGS));
     if (update_args == NULL) {
-        fprintf(stderr, "malloc() failed in create_interface_updater_thread\n");
+        log_error("[create_interface_updater_thread] malloc() failed allocating %d bytes for updater thread arguments | return 1",
+            sizeof(INTERFACE_UPDATE_ARGS));
         return 1;
     }
     *args = update_args;
 
     EFLAG *flag = create_event_flag();
     if (flag == NULL) {
-        fprintf(stderr, "create_event_flag() failed in create_interface_updater_thread\n");
+        log_error("[create_interface_updater_thread] create_event_flag() failed | return 1");
         free(update_args);
         return 1;
     }
@@ -647,7 +662,7 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
 #else
     update_args->termination_fd = eventfd(0, EFD_NONBLOCK);
     if (update_args->termination_fd == -1) {
-        fprintf(stderr, "WSACreateEvent() failed in create_interface_updater_thread\n");
+        log_error("[create_interface_updater_thread] eventfd() failed to create termination event file descriptor | return 1 | errno %d", errno);
         free_event_flag(flag);
         free(update_args);
         return 1;
@@ -663,6 +678,7 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
     if (pthread_create(&thread, NULL, (void *)(&interface_updater_thread), update_args)) {
         free_event_flag(flag);
         free(update_args);
+        log_error("[create_interface_updater_thread] pthread_create() failed to create updater thread | return 1 | errno %d", errno);
         return 1;
     }
 
@@ -679,26 +695,27 @@ int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, Q
 
     PACKET_HANDLER_ARGS *handler_args = malloc(sizeof(PACKET_HANDLER_ARGS));
     if (handler_args == NULL) {
-        fprintf(stderr, "malloc() failed in create_interface_updater_thread\n");
+        log_error("[create_packet_handler_thread] malloc() failed allocating %d bytes for packet handler thread arguments | return 1",
+            sizeof(PACKET_HANDLER_ARGS));
         return 1;
     }
     *args = handler_args;
 
     EFLAG *flag = create_event_flag();
     if (flag == NULL) {
-        fprintf(stderr, "create_event_flag() failed in create_interface_updater_thread\n");
+        log_error("[create_packet_handler_thread] create_event_flag() failed | return 1");
         free(handler_args);
         return 1;
     }
     handler_args->signing_keys = sodium_malloc(sizeof(signing_key_pair_t));
     if (!(handler_args->signing_keys)) {
-        fprintf(stderr, "malloc() failed in create_interface_updater_thread\n");
+        log_error("[create_packet_handler_thread] sodium_malloc failed allocating %d bytes for sing keypair | return 1", sizeof(signing_key_pair_t));
         free(handler_args);
         return 1;
     }
 
     if (load_signing_key_pair(handler_args->signing_keys, master_key) != INDIGO_SUCCESS) {
-        fprintf(stderr, "load_signing_key_pair() failed in create_interface_updater_thread\n");
+        log_error("[create_packet_handler_thread] load_signing_key_pair() failed | return 1");
         free(handler_args);
         return 1;
     }
@@ -716,6 +733,7 @@ int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, Q
     if (pthread_create(&thread, NULL, (void *)(&packet_handler_thread), handler_args)) {
         free_event_flag(flag);
         free(handler_args);
+        log_error("[create_packet_handler_thread] pthread_create() failed to create packet handler thread | return 1 | errno %d", errno);
         return 1;
     }
 

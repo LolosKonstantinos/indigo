@@ -25,6 +25,8 @@ SOFTWARE.
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <log.h>
+#include <errno.h>
 #ifndef _WIN32
 #define INVALID_SOCKET (-1)
 #endif
@@ -357,12 +359,12 @@ socket_node *get_discovery_sockets(int port, uint32_t multicast_addr)
 
     err = get_compatible_interfaces(&p_ip_subnet, &addr_count);
     if (err != INDIGO_SUCCESS) {
-        fprintf(stderr, "get_compatible_interfaces failed in get_discovery_sockets\n");
+        log_error("[get_discovery_sockets] get_compatible_interfaces failed | return NULL");
         return NULL;
     }
 
     if (p_ip_subnet == NULL) {
-        fprintf(stderr, "NO VALID INTERFACE FOUND...\n");
+        log_warn( "[get_discovery_sockets] NO VALID INTERFACE FOUND...");
         return NULL;
     }
 
@@ -370,7 +372,7 @@ socket_node *get_discovery_sockets(int port, uint32_t multicast_addr)
         // create new node
         new_sock = create_discv_sock_node();
         if (new_sock == NULL) {
-            fprintf(stderr, "Failed to create disc node\n");
+            log_error( "[get_discovery_sockets] create_discv_sock_node() failed to create socket linked list node | return NULL");
             free_discv_sock_ll(first_sock);
             free(p_ip_subnet);
 
@@ -395,26 +397,26 @@ socket_node *get_discovery_sockets(int port, uint32_t multicast_addr)
 
         err = bind(new_sock->sock, (struct sockaddr *)(&server), sizeof(server));
         if (err) {
-            perror("Failed to bind disc node");
             free_discv_sock_ll(first_sock);
             free(p_ip_subnet);
+            log_error("[get_discovery_sockets] bind() failed to bind socket | return NULL | errno %d", errno);
             return NULL;
         }
 
         mreq.imr_interface.s_addr = server.sin_addr.s_addr;
         err = setsockopt(new_sock->sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq));
         if (err) {
-            perror("Failed to add membership");
             free_discv_sock_ll(first_sock);
             free(p_ip_subnet);
+            log_error("[get_discovery_sockets] setsockopt() failed to add multicast membership | return NULL | errno %d", errno);
             return NULL;
         }
 
         err = setsockopt(new_sock->sock, IPPROTO_IP, IP_MULTICAST_LOOP, (char *)&optval, sizeof(optval));
         if (err) {
-            perror("Failed to set multicast loop");
             free_discv_sock_ll(first_sock);
             free(p_ip_subnet);
+            log_error("[get_discovery_sockets] setsockopt() failed to turn off multicast packet loopback | return NULL | errno %d", errno);
             return NULL;
         }
     }
@@ -441,14 +443,16 @@ int get_compatible_interfaces(ip_subnet_t **ip_subnet, size_t *count)
 
     ret = getifaddrs(&ifap);
     if (ret) {
-        // TODO: there is an error, log it
+        log_error("[get_compatible_interfaces] getifaddrs() failed | return %d | errno %d", INDIGO_ERROR, errno);
         return INDIGO_ERROR;
     }
     if (ifap == NULL) {
+        log_error("[get_compatible_interfaces] no interface data linked list returned | return %d | errno %d",
+            INDIGO_ERROR_NO_ADDRESS_FOUND, errno);
         return INDIGO_ERROR_NO_ADDRESS_FOUND;
     }
     for (struct ifaddrs *i = ifap; i != NULL; i = i->ifa_next) {
-        if (i->ifa_addr == NULL)
+        if (i->ifa_addr == NULL || i->ifa_netmask == NULL)
             continue;
         flags = i->ifa_flags;
         family = i->ifa_addr->sa_family;
@@ -474,13 +478,16 @@ int get_compatible_interfaces(ip_subnet_t **ip_subnet, size_t *count)
             temp_ip_subnet.ip = ntohl(saddr->sin_addr.s_addr);
             saddr = (struct sockaddr_in *)i->ifa_netmask;
             temp_ip_subnet.mask = ntohl(saddr->sin_addr.s_addr);
+            temp_ip_subnet.interface_type = (int)interface_type;
 
             if (!ip_in_any_subnet(temp_ip_subnet, p_ip_subnet, addr_count)) {
                 // create more space for 1 more subnet
-                temp = realloc(p_ip_subnet, sizeof(ip_subnet) * (addr_count + 1));
+                temp = realloc(p_ip_subnet, sizeof(ip_subnet_t) * (addr_count + 1));
                 if (temp == NULL) {
-                    perror("Failed to reallocate memory for ip_subnet_t");
+                    log_error("[get_compatible_interfaces] Failed to reallocate memory for ip_subnet_t | return %d",
+                        INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
                     free(p_ip_subnet);
+                    freeifaddrs(ifap);
                     return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                 }
                 p_ip_subnet = temp;
@@ -494,39 +501,42 @@ int get_compatible_interfaces(ip_subnet_t **ip_subnet, size_t *count)
             else if (p_ip_subnet && ip_in_any_subnet(temp_ip_subnet, p_ip_subnet, addr_count) && interface_type == 0) {
                 // the p_ip_subnet condition is pointless, because ip_in_any_subnet would return 0 if p_ip_subnet is
                 // NULL put it there because clang cries, though is pintless
-                for (int i = 0; i < addr_count; i++) {
-                    if (p_ip_subnet[i].interface_type == 1) {
-                        if (ips_share_subnet(p_ip_subnet[i], temp_ip_subnet))
-                            p_ip_subnet[i] = temp_ip_subnet;
+                for (int j = 0; j < addr_count; j++) {
+                    if (p_ip_subnet[j].interface_type == 1) {
+                        if (ips_share_subnet(p_ip_subnet[j], temp_ip_subnet))
+                            p_ip_subnet[j] = temp_ip_subnet;
                     }
                 }
             }
         }
     }
+    *ip_subnet = p_ip_subnet;
+    *count = addr_count;
+    freeifaddrs(ifap);
     return 0;
 }
 
 socket_node *create_discv_sock_node()
 {
-    char optval = 1;
+    int optval = 1;
     int ttl = 1;
 
     socket_node *node = malloc(sizeof(socket_node));
     if (node == NULL) {
-        perror("Failed to allocate memory for DISCV_SOCK");
+        log_error("[create_discv_sock_node] malloc() failed allocating %d bytes for socket_node | return NULL", sizeof(socket_node));
         return NULL;
     }
 
     node->next = NULL;
     node->sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (node->sock == INVALID_SOCKET) {
-        printf("\nFailed to create socket: \n");
+        log_error("[create_discv_sock_node] socket() failed to create socket | return NULL | errno %d", errno);
         free(node);
         return NULL;
     }
 
     if (setsockopt(node->sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) != 0) {
-        perror("setsockopt() SO_REUSEADDR failed");
+        log_error("[create_discv_sock_node] setsockopt() SO_REUSEADDR failed | return NULL | errno %d", errno);
         close(node->sock);
         free(node);
         return NULL;
@@ -534,7 +544,7 @@ socket_node *create_discv_sock_node()
 
     // set time to live to 1 --> local network, cant be routed
     if (setsockopt(node->sock, IPPROTO_IP, IP_MULTICAST_TTL, (const char *)&ttl, sizeof(ttl)) != 0) {
-        perror("setsockopt() IP_MULTICAST_TTL failed");
+        log_error("[create_discv_sock_node] setsockopt() IP_MULTICAST_TTL failed | return NULL | errno %d", errno);
         close(node->sock);
         free(node);
         return NULL;
@@ -544,13 +554,12 @@ socket_node *create_discv_sock_node()
 }
 void free_discv_sock_ll(socket_node *firstnode)
 {
-    if (!firstnode)
-        return;
     socket_node *curr;
     socket_node *next;
 
-    if (firstnode == NULL)
+    if (!firstnode) {
         return;
+    }
 
     curr = firstnode;
     while (curr != NULL) {
@@ -815,15 +824,15 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args)
     if (process_return == NULL) {
         set_event_flag(args->flag, EF_TERMINATION | EF_ERROR);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
-        printf("DEBUG: update exit\n");
-        fflush(stdout);
+        log_fatal("[interface_updater_thread] malloc failed allocating %d bytes for process return | return NULL", sizeof(int));
         return NULL;
     }
-    *process_return = 0;
+    *process_return = INDIGO_SUCCESS;
 
     sock = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
     if (sock < 0) {
         *process_return = INDIGO_ERROR;
+        log_fatal("[interface_updater_thread] socket() failed opening netlink socket | return %d | errno %d", *process_return, errno);
         goto cleanup;
     }
 
@@ -833,11 +842,13 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args)
     ret = bind(sock, (struct sockaddr *)&sa, sizeof(sa));
     if (ret) {
         *process_return = INDIGO_ERROR;
+        log_fatal("[interface_updater_thread] bind() failed binding socket | return %d | errno %d", *process_return, errno);
         goto cleanup;
     }
     epoll_fd = epoll_create1(0);
     if (epoll_fd == -1) {
         *process_return = INDIGO_ERROR_SYS_FAIL;
+        log_fatal("[interface_updater_thread] epoll_create1() failed | return %d | errno %d", *process_return, errno);
         goto cleanup;
     }
 
@@ -846,6 +857,7 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args)
     event.data.u32 = 1;
     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, args->termination_fd, &event) == -1) {
         *process_return = INDIGO_ERROR;
+        log_fatal("[interface_updater_thread] epoll_ctl() failed adding termination file descriptor | return %d | errno %d", *process_return, errno);
         goto cleanup;
     }
     event.events = EPOLLIN;
@@ -853,6 +865,7 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args)
     event.data.u32 = 0;
     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, sock, &event) == -1) {
         *process_return = INDIGO_ERROR;
+        log_fatal("[interface_updater_thread] epoll_ctl() failed adding netlink socket | return %d | errno %d", *process_return, errno);
         goto cleanup;
     }
 
@@ -868,6 +881,8 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args)
                 size = recvmsg(sock, &msg, 0);
                 if (size < 0) {
                     *process_return = INDIGO_ERROR;
+                    log_fatal("[interface_updater_thread] recvmsg() failed receiving netlink update | return %d | errno %d",
+                        *process_return, errno);
                     goto cleanup;
                 }
                 for (nh = (struct nlmsghdr *)buf; NLMSG_OK(nh, size); nh = NLMSG_NEXT(nh, size)) {
@@ -875,7 +890,7 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args)
                         break;
                     }
                     if (nh->nlmsg_type == NLMSG_ERROR) {
-                        // idk do some error handiling
+                        // IDK do some error handling
                         continue;
                     }
                     ret = 1;
@@ -895,8 +910,7 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args)
                         set_event_flag(args->wake, EF_WAKE_MANAGER);
                         *process_return = INDIGO_ERROR_NO_ADDRESS_FOUND;
                         pthread_mutex_unlock(&(args->sockets->mutex));
-                        printf("DEBUG: update exit\n");
-                        fflush(stdout);
+                        log_fatal("[interface_updater_thread] get_discovery_sockets() failed | return %d", *process_return);
                         goto cleanup;
                     }
                     pthread_mutex_unlock(&(args->sockets->mutex));
@@ -905,24 +919,30 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args)
                         reset_single_event(args->override_flags[i], EF_OVERRIDE_IO);
                     }
                 }
+
             }
-            else if (ret == -1) {
-                // idk cleanup;
-                *process_return = INDIGO_ERROR;
-                goto cleanup;
-            }
-        }
-        else if (event.data.u32 == 1) {
-            // termination event
-            read(args->termination_fd, &termination_val, 8);
-            if (termination_val == 1) {
-                *process_return = 0;
-                goto cleanup;
+            else if (event.data.u32 == 1) {
+                // termination event
+                read(args->termination_fd, &termination_val, 8);
+                if (termination_val == 1) {
+                    *process_return = INDIGO_SUCCESS;
+                    log_info("[interface_updater_thread] interface updater thread successful exit | return %d", *process_return);
+                    goto cleanup;
+                }
             }
         }
+        else if (ret == -1) {
+            // idk cleanup;
+            *process_return = INDIGO_ERROR;
+            log_fatal("[interface_updater_thread] epoll_wait() failed while waiting for link updates | return %d | errno %d",
+                *process_return, errno);
+            goto cleanup;
+        }
+
     }
     close(sock);
     close(epoll_fd);
+    log_info("[interface_updater_thread] interface updater thread successful exit | return %d", *process_return);
     return process_return;
 cleanup:
     if (sock >= 0)
