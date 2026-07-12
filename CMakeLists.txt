@@ -12,9 +12,8 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0)
 
-pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET GLOBAL libsodium)
-include(CMakePrintHelpers)
-cmake_print_variables(SODIUM_STATIC_LIBRARY_DIRS)
+pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET libsodium)
+
 add_subdirectory(src)
 add_subdirectory(include)
 add_subdirectory(test)
