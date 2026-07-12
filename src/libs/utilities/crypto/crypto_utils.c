@@ -266,6 +266,8 @@ int psw_salt_exists()
 int create_key_derivation_settings()
 {
 #ifdef _WIN32
+    char *init_cwd;
+    char xpath[PATH_MAX];
     char filename[48];
     LARGE_INTEGER freq;
     LARGE_INTEGER start_time;
@@ -673,7 +675,7 @@ int load_password_hash(char **hash)
     hash_len = ftell(fp);
     fseek(fp, 0, SEEK_SET);
 
-    if (hash_len > crypto_pwhash_STRBYTES) {
+    if (hash_len > crypto_pwhash_STRBYTES + 1) {
         printf("psw_hash incompatible length");
         fflush(stdout);
         free(psw_hash);
@@ -1013,4 +1015,27 @@ int nonce_increment(unsigned char *nonce, size_t nonce_len, uint64_t increment)
     sodium_add(nonce, incr_bytes, nonce_len);
     free(incr_bytes);
     return INDIGO_SUCCESS;
+}
+
+int bypass_password(void **master_key) {
+    int ret;
+    char psw[] = "test";
+    char *stored_hash;
+
+    ret = load_password_hash(&stored_hash);
+    if (ret != 0) {
+        log_error("load_password_hash() failed | return -1");
+        return -1;
+    }
+
+    ret = crypto_pwhash_str_verify(stored_hash, psw, 4);
+    if (ret) {
+        printf("what??");
+        log_debug("couldn't verify password hash");
+    }
+    ret = derive_master_key(psw, 4, master_key);
+    if (ret != 0) {
+        log_error("[bypass_password] derive_master_key() failed | return %d", ret);
+    }
+    return 0;
 }

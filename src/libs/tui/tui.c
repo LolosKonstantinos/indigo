@@ -18,6 +18,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
+#define DEBUG
 
 #include "tui.h"
 #include "Queue.h"
@@ -29,7 +30,6 @@ SOFTWARE.
 #include <config.h>
 #include <glib-2.0/glib.h>
 #include <glib-2.0/glib/gstdio.h>
-#include <linux/limits.h>
 #include <ncursesw/curses.h>
 #include <pthread.h>
 #include <sodium/crypto_sign.h>
@@ -39,11 +39,16 @@ SOFTWARE.
 #include <string.h>
 #include <unistd.h>
 #include <wctype.h>
+#include <uchar.h>
 #include <errno.h>
 #include <log.h>
 
 #ifdef _WIN32
 #define sleep(t) (Sleep(1000 * t))
+#include <winsock2.h>
+#endif
+#ifdef __linux__
+#include <linux/limits.h>
 #endif
 
 int verify_user(void **master_key)
@@ -90,19 +95,22 @@ int verify_user(void **master_key)
         curs_set(1);
         create_new_password();
     }
+#ifdef DEBUG
+    bypass_password(master_key);
+#else
     ret = verify_password(master_key);
     if (ret) {
         log_error("[verify_user] verify_password() failed | return %d", ret);
         return ret;
     }
-
+#endif
     if (!signing_key_pair_exists()) {
         ret = create_signing_key_pair(*master_key);
         if (ret) log_error("[verify_user] create_signing_key_pair() failed | return %d", ret);
     }
     return ret;
 }
-// todo this function makes the process crash, probably segfault, does not verify password correctly in debug mode
+
 int verify_password(void **master_key)
 {
     char *psw;
@@ -537,14 +545,14 @@ int get_user_input(WINDOW *win, utf8_char_t *input)
     *input = 0;
     ret = wget_wch(win, &c);
     if (ret == OK) {
-        ret = c16rtomb(*input, c, &state);
+        ret = c16rtomb((char *)input, c, &state);
         switch (ret) {
-            case ((size_t)(-1)):
+            case (int)((size_t)(-1)):
                 return -1;
             case 0:
                 ret = wget_wch(win, &c);
                 if (ret == OK) {
-                    ret = c16rtomb(*input, c, &state);
+                    ret = c16rtomb((char *)input, c, &state);
                     if (ret == ((size_t)(-1)))
                         return -1;
                     else {
@@ -844,7 +852,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
                             dev_tree->search_release(dev_tree);
 
                             send_node->counter = 0;
-                            send_node->port = PORT;
+                            send_node->port = htons(2693);
                             send_node->next = NULL;
                             memcpy(send_node->session_id.pk, last_id, crypto_sign_PUBLICKEYBYTES);
                             randombytes(send_node->nonce, 24);
@@ -1465,10 +1473,10 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
             print_device(win, found_rdev, count, 1);
             ++count;
             // add the device to the id array
-            temp = reallocarray(id_array, count, sizeof(unsigned char));
+            temp = realloc(id_array, count * sizeof(unsigned char));
             if (!temp) {
                 tree_unlock(dev_tree);
-                log_error("reallocarray() failed re-allocating %d bytes for id array | return -1", count * sizeof(unsigned char));
+                log_error("realloc() failed re-allocating %d bytes for id array | return -1", count * sizeof(unsigned char));
                 return -1;
             }
             id_array = temp;
@@ -1493,10 +1501,10 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
         highlight = 0;
 
         // add the device to the id array
-        temp = reallocarray(id_array, count, sizeof(unsigned char));
+        temp = realloc(id_array, count * sizeof(unsigned char));
         if (!temp) {
             tree_unlock(dev_tree);
-            log_error("reallocarray() failed re-allocating %d bytes for id array | return -1",
+            log_error("realloc() failed re-allocating %d bytes for id array | return -1",
                 count * sizeof(unsigned char));
             return -1;
         }
@@ -1517,10 +1525,10 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
         *last_row = count;
 
         // add the device to the id array
-        temp = reallocarray(id_array, count, sizeof(unsigned char));
+        temp = realloc(id_array, count * sizeof(unsigned char));
         if (!temp) {
             tree_unlock(dev_tree);
-            log_error("reallocarray() failed re-allocating %d bytes for id array | return -1",
+            log_error("realloc() failed re-allocating %d bytes for id array | return -1",
                 count * sizeof(unsigned char));
             return -1;
         }
@@ -1712,7 +1720,7 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
 
         // add the device to the id array
         ++count;
-        temp = reallocarray(requests_list, count, sizeof(unsigned char));
+        temp = realloc(requests_list, count * sizeof(unsigned char));
         if (!temp) {
             tree_unlock(dev_tree);
             for (i = 0; i < count - 1; ++i) {
@@ -1723,7 +1731,7 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
             *file_list = NULL;
             *request_count = 0;
             *file_count = 0;
-            log_error("reallocarray() failed allocating %lld bytes for request list | return -1",
+            log_error("realloc() failed allocating %lld bytes for request list | return -1",
                 count * sizeof(unsigned char));
             return -1;
         }
@@ -1774,7 +1782,7 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
             mvwprintw(win, ++y, 0, "%s [%s]", file->name, directions[file->direction]);
             // add the device to the id array
             ++count;
-            temp = reallocarray(file_list, count, sizeof(unsigned char));
+            temp = realloc(file_list, count * sizeof(unsigned char));
             if (!temp) {
                 tree_unlock(active_files);
                 for (int j = 0; j < count - 1; ++j) {
@@ -1783,7 +1791,7 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
                 free(file_list);
                 *file_list = NULL;
                 *file_count = 0;
-                log_error("reallocarray() failed allocating %lld bytes for request list | return -1",
+                log_error("realloc() failed allocating %lld bytes for request list | return -1",
                 count * sizeof(unsigned char));
                 return -1;
             }

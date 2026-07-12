@@ -22,12 +22,14 @@ SOFTWARE.
 #ifndef INDIGO_TYPES_H
 #define INDIGO_TYPES_H
 
-#include <linux/limits.h>
+
 #include <sys/stat.h>
 #include <sys/types.h>
 #ifdef _WIN32
 #include <winsock2.h>
+#define NAME_MAX MAX_PATH
 #else
+#include <linux/limits.h>
 #include <netinet/ip.h>
 #include <string.h>
 #include <sys/socket.h>

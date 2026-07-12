@@ -23,14 +23,12 @@ SOFTWARE.
 #include "event_flags.h"
 #include "indigo_types.h"
 #include "net_io.h"
-#include <asm-generic/errno-base.h>
 #include <config.h>
 #include <Queue.h>
 #include <glib.h>
 #include <indigo_core/packet_handler.h>
 #include <indigo_errors.h>
 #include <limits.h>
-#include <linux/limits.h>
 #include <math.h>
 #include <sodium/crypto_kx.h>
 #include <stdint.h>
@@ -45,6 +43,9 @@ SOFTWARE.
 #define _FILE_OFFSET_BITS_64
 #define fseeko64 fseeko
 #include <errno.h>
+#endif
+#ifdef __linux__
+#include <linux/limits.h>
 #endif
 
 //////////////////////////////////////////////////////////

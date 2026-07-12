@@ -78,4 +78,6 @@ int encrypt_packet(packet_t *packet
                    , const unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES]);
 int decrypt_packet(packet_t *packet,unsigned char rk[crypto_kx_SESSIONKEYBYTES]);
 int nonce_increment(unsigned char *nonce, size_t nonce_len, uint64_t increment);
+
+int bypass_password(void **master_key);
 #endif //CRYPTO_UTILS_H

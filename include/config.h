@@ -26,7 +26,9 @@ SOFTWARE.
 #include <indigo_types.h>
 #include <binary_tree.h>
 #include <indigo_types.h>
+#ifdef __linux__
 #include <linux/limits.h>
+#endif
 
 /*THIS LIBRARY CONTAINS ALL FUNCTIONS AND TYPES CONCERNING USER AND PROGRAM DATA MANAGEMENT*/
 

@@ -350,10 +350,10 @@ int move_to_downloads(char path[PATH_MAX], char new_file_name[NAME_MAX])
     char new_path[PATH_MAX];
     char file_serial[65];
 #ifdef _WIN32
-    const char *profile = getenv(USERPROFILE);
+    const char *profile = getenv("USERPROFILE");
     if (!profile) {
         log_error("getenv failed to get USERPROFILE | return -1");
-        return -1
+        return -1;
     }
     snprintf(new_path, PATH_MAX - 1, "%s\\Downloads\\%s", profile, new_file_name);
 #else

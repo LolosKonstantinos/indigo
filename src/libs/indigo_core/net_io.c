@@ -63,9 +63,9 @@ SOFTWARE.
 
 // todo: OVERRIDE_IO is not handled correctly check implementation
 #ifdef _WIN32
-int send_discovery_packets(const int port, const uint32_t multicast_addr, socket_ll *sockets, EFLAG *flag,
-                           const uint32_t pCount, const int32_t msec, signing_key_pair_t *sign_key_pair,
-                           wchar_t username[MAX_USERNAME_LEN])
+int send_discovery_packets(int port, uint32_t multicast_addr, socket_ll *sockets, EFLAG *flag,
+                           uint32_t pCount, int32_t msec, signing_key_pair_t *sign_key_pair,
+                           char username[(MAX_USERNAME_LEN + 1) * sizeof(uint32_t)])
 {
 
     uint8_t restart = 0;
@@ -93,8 +93,7 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, socket
     build_packet(&packet, MSG_INIT_PACKET, sign_key_pair->public, NULL, NULL);
     // TODO: make this utf8 compatible
 
-    memcpy(username, packet_data.username, MAX_USERNAME_LEN * sizeof(wchar_t));
-    wcsncpy(username, username, MAX_USERNAME_LEN);
+    strcpy((char *)packet_data.username, (char *)username);
 
     while (1) {
         restart = 0;
