@@ -14,7 +14,7 @@ pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0)
 
 pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET GLOBAL libsodium)
 include(CMakePrintHelpers)
-cmake_print_variables(SODIUM_STATIC_LIBRARIES)
+cmake_print_variables(SODIUM_STATIC_LIBRARY_DIRS)
 add_subdirectory(src)
 add_subdirectory(include)
 add_subdirectory(test)
