@@ -18,7 +18,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
-#define DEBUG
 
 #include "tui.h"
 #include "Queue.h"
@@ -95,18 +94,15 @@ int verify_user(void **master_key)
         curs_set(1);
         create_new_password();
     }
-#ifdef DEBUG
-    bypass_password(master_key);
-#else
     ret = verify_password(master_key);
     if (ret) {
         log_error("[verify_user] verify_password() failed | return %d", ret);
         return ret;
     }
-#endif
     if (!signing_key_pair_exists()) {
         ret = create_signing_key_pair(*master_key);
-        if (ret) log_error("[verify_user] create_signing_key_pair() failed | return %d", ret);
+        if (ret)
+            log_error("[verify_user] create_signing_key_pair() failed | return %d", ret);
     }
     return ret;
 }
@@ -128,7 +124,7 @@ int verify_password(void **master_key)
     psw = sodium_malloc(MAX_PSW_LEN + 1);
     if (psw == NULL) {
         log_error("[verify_password] sodium_malloc() failed allocating %d bytes for plaintext password | return %d",
-            MAX_PSW_LEN + 1, INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
+                  MAX_PSW_LEN + 1, INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
     sodium_memzero(psw, MAX_PSW_LEN + 1);
@@ -293,14 +289,14 @@ int create_new_password()
     psw_1 = sodium_malloc(MAX_PSW_LEN + 1);
     if (!psw_1) {
         log_error("[create_new_password] sodium_malloc() failed allocating %d bytes for password plaintext | return %d",
-            MAX_PSW_LEN + 1, INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
+                  MAX_PSW_LEN + 1, INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
     psw_2 = sodium_malloc(MAX_PSW_LEN + 1);
     if (!psw_2) {
         sodium_free(psw_1);
         log_error("[create_new_password] sodium_malloc() failed allocating %d bytes for password plaintext | return %d",
-            MAX_PSW_LEN + 1, INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
+                  MAX_PSW_LEN + 1, INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         return 1;
     }
     sodium_memzero(psw_1, MAX_PSW_LEN + 1);
@@ -813,7 +809,8 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
             if (ch == '\n' || ch == '\r') {
                 // select the action
                 if (context == 0) {
-                    if (id_count > 0)context = 1;
+                    if (id_count > 0)
+                        context = 1;
                     print_device_files(device_pad, last_id, dev_tree, file_tree, &request_list, &request_count,
                                        &file_list, &file_count, &file_last_row, &file_last_level);
                     doupdate();
@@ -837,7 +834,8 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
                             if (!send_node) {
                                 ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                                 log_error("malloc() failed allocating %d bytes for queue node data Q_SENd_FILE "
-                                          "| return %d", sizeof(Q_SEND_FILE), ret);
+                                          "| return %d",
+                                          sizeof(Q_SEND_FILE), ret);
                                 goto cleanup;
                             }
 
@@ -897,7 +895,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
 
         // update the ui
         if (context == 0) {
-            if (dev_IDs != NULL){
+            if (dev_IDs != NULL) {
                 for (int i = 0; i < id_count; ++i) {
                     free(dev_IDs[i]);
                 }
@@ -907,7 +905,11 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
             werase(device_pad);
             print_devices(device_pad, dev_tree, &dev_IDs, &id_count, last_id, &last_id_row);
             if (id_count == 0) {
-                mvwprintw(device_pad,0,0, "There are currently no devices in the local network.");
+                mvwprintw(device_pad, 0, 0, "There are currently no devices in the local network.");
+                log_debug("no devices deteted from ui");
+            }
+            else {
+                log_debug("%d devices detected in ui", id_count);
             }
             pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy, maxx);
         }
@@ -940,7 +942,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
     delwin(device_pad);
     return 0;
 
-    cleanup:
+cleanup:
     if (dev_IDs != NULL) {
         for (int i = 0; i < id_count; ++i) {
             free(dev_IDs[i]);
@@ -1476,7 +1478,8 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
             temp = realloc(id_array, count * sizeof(unsigned char));
             if (!temp) {
                 tree_unlock(dev_tree);
-                log_error("realloc() failed re-allocating %d bytes for id array | return -1", count * sizeof(unsigned char));
+                log_error("realloc() failed re-allocating %d bytes for id array | return -1",
+                          count * sizeof(unsigned char));
                 return -1;
             }
             id_array = temp;
@@ -1486,7 +1489,7 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
                 log_error("malloc() failed allocating %d bytes for device id | return -1", crypto_sign_PUBLICKEYBYTES);
                 return -1;
             }
-            id_array[count-1] = temp;
+            id_array[count - 1] = temp;
             memcpy(temp, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES);
             continue;
         }
@@ -1505,7 +1508,7 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
         if (!temp) {
             tree_unlock(dev_tree);
             log_error("realloc() failed re-allocating %d bytes for id array | return -1",
-                count * sizeof(unsigned char));
+                      count * sizeof(unsigned char));
             return -1;
         }
         id_array = temp;
@@ -1515,7 +1518,7 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
             log_error("malloc() failed allocating %d bytes for device id | return -1", crypto_sign_PUBLICKEYBYTES);
             return -1;
         }
-        id_array[count-1] = temp;
+        id_array[count - 1] = temp;
         memcpy(temp, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES);
     }
     if (found && count < *last_row) {
@@ -1529,7 +1532,7 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
         if (!temp) {
             tree_unlock(dev_tree);
             log_error("realloc() failed re-allocating %d bytes for id array | return -1",
-                count * sizeof(unsigned char));
+                      count * sizeof(unsigned char));
             return -1;
         }
         id_array = temp;
@@ -1539,7 +1542,7 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
             log_error("malloc() failed allocating %d bytes for device id | return -1", crypto_sign_PUBLICKEYBYTES);
             return -1;
         }
-        id_array[count-1] = temp;
+        id_array[count - 1] = temp;
         memcpy(temp, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES);
     }
     else if (!found && count < *last_row) {
@@ -1732,7 +1735,7 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
             *request_count = 0;
             *file_count = 0;
             log_error("realloc() failed allocating %lld bytes for request list | return -1",
-                count * sizeof(unsigned char));
+                      count * sizeof(unsigned char));
             return -1;
         }
         requests_list = temp;
@@ -1792,7 +1795,7 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
                 *file_list = NULL;
                 *file_count = 0;
                 log_error("realloc() failed allocating %lld bytes for request list | return -1",
-                count * sizeof(unsigned char));
+                          count * sizeof(unsigned char));
                 return -1;
             }
             file_list = temp;
