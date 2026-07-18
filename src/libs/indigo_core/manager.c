@@ -130,7 +130,7 @@ int *thread_manager_thread(MANAGER_ARGS *args)
     if (!mempool) {
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_fatal("[thread_manager_thread] failed to create new memory pool of %lld bytes | return %d",
-            (1<<10) * (sizeof(packet_t) + sizeof(packet_info_t)), INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
+            (1<<10) * ((sizeof(packet_t) + sizeof(packet_info_t))), INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         goto cleanup;
     }
 

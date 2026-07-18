@@ -25,6 +25,9 @@ SOFTWARE.
 //       extensions have their own free list, pool has a free list of available extensions
 
 #include "mempool.h"
+
+#include "../../../../third_party/log.c/log.h"
+
 #include <pthread.h>
 #include <math.h>
 #include <stdint.h>
@@ -34,7 +37,7 @@ SOFTWARE.
 #define FORCE_INLINE inline __attribute__((always_inline))
 
 #ifdef _WIN32
-
+#include <malloc.h>
 #define aligned_alloc(alignment,size) (_aligned_malloc((size),(alignment)))
 #define aligned_free(ptr) _aligned_free(ptr)
 
@@ -90,11 +93,14 @@ memblock_t *new_block(mempool_t * const pool)
 
     //allocate the block
     block = malloc(sizeof(memblock_t));
-    if (block == NULL)
+    if (block == NULL) {
+        log_error("[new_block] malloc failed allocating %d bytes for new block struct", sizeof(memblock_t));
         return NULL;
+    }
     data = aligned_alloc(1<<alignment, 1<<alignment);
     if (block->data == NULL) {
         free(block);
+        log_error("[new_block] aligned_alloc failed allocating %lld bytes with alignment %lld", 1<<alignment, 1<<alignment);
         return NULL;
     }
     //write the address of the block at the start of the array
@@ -154,12 +160,18 @@ mempool_t *new_mempool_manual(const size_t cell_count, size_t cell_size, const i
     // allocate the pool struct and the pool's memory
 
     pool = malloc(sizeof(mempool_t));
-    if (pool == NULL)
+    if (pool == NULL) {
+        log_error("[new_mempool_manual] malloc failed allocating %d bytes for memory pool structure", sizeof(mempool_t));
         return NULL;
+    }
 
     //pad the cell size so that each cell is aligned to the data it holds
     cell_size = (cell_size + cell_alignment - 1) & (-cell_alignment);
     pool->alignment = (uint8_t)ceil(log2((double)(cell_count * cell_size  + sizeof(void *))));
+#ifdef _WIN32
+    //apparently windows has a maximum allocation size
+    if (1<<pool->alignment > _HEAP_MAXREQ) pool->alignment = (uint8_t)floor(log2(_HEAP_MAXREQ));
+#endif
     pool->cell_alignment = cell_alignment;
     pool->growth_rate = growth_rate;
 
