@@ -101,6 +101,8 @@ typedef struct RECV_ARGS {
     socket_ll *sockets;
     EFLAG *flag;
     EFLAG *wake;
+    uint32_t multicast_addr;
+    int port;
 #ifdef _WIN32
     HANDLE termination_handle;
     HANDLE wake_handle;

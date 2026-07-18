@@ -83,10 +83,10 @@ int test_thread_manager_thread();
 
 static test_t test_arr[] = {
     test_binary_tree, "binary tree",
+    test_mempool, "mempool",
     test_config, "config",
     test_crypto, "crypto",
     test_event_flags, "event flags",
-    test_mempool, "mempool",
     test_buffer, "buffer",
     test_queue, "queue"
 };

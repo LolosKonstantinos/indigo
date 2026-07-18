@@ -57,7 +57,6 @@ int *thread_manager_thread(MANAGER_ARGS *args)
 
     // the pool used for receiving
     mempool_t *mempool = NULL;
-    mempool_attr pool_attr;
 
     // the active session tree
     tree_t session_tree; // todo: write cmp_session function and create the tree
@@ -126,10 +125,8 @@ int *thread_manager_thread(MANAGER_ARGS *args)
     send_queue = args->send_queue;
 
     // create the memory pool
-    pool_attr.dynamic_pool = 1;
-    pool_attr.growth_factor = 1;
     // the initial mempool is about 1MiB, it may be extended automatically if needed
-    mempool = new_mempool(1 << 10, sizeof(packet_t) + sizeof(packet_info_t), &pool_attr);
+    mempool = new_mempool_manual(1 << 10, sizeof(packet_t) + sizeof(packet_info_t), PAC_ALIGNMENT, 0.5f);
     if (!mempool) {
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_fatal("[thread_manager_thread] failed to create new memory pool of %lld bytes | return %d",
@@ -174,7 +171,7 @@ int *thread_manager_thread(MANAGER_ARGS *args)
         goto cleanup;
     }
 
-    if (create_receiving_thread(&recv_args, sockets, packet_queue, mempool, args->flag, &tid_receive)) {
+    if (create_receiving_thread(&recv_args, sockets, packet_queue, mempool, args->flag, args->multicast_addr, args->port, &tid_receive)) {
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_error("[thread_manager_thread] receive thread creation failed | return %d", INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         goto cleanup;
@@ -223,19 +220,18 @@ int *thread_manager_thread(MANAGER_ARGS *args)
             log_info("[thread_manager_thread] send thread terminated");
             goto cleanup;
         }
-
-        // check the receiving thread
-        flag_val = get_event_flag(recv_args->flag);
-        if (flag_val & EF_TERMINATION) {
-            // for now, we terminate the whole operation, later we may pause or continue as we are
-            log_info("[thread_manager_thread] receive thread terminated");
-            goto cleanup;
-        }
         //check the packet handler thread
         flag_val = get_event_flag(handler_args->flag);
         if (flag_val & EF_TERMINATION) {
             // for now, we terminate the whole operation, later we may pause or continue as we are
             log_info("[thread_manager_thread] packet handler thread terminated");
+            goto cleanup;
+        }
+        // check the receiving thread
+        flag_val = get_event_flag(recv_args->flag);
+        if (flag_val & EF_TERMINATION) {
+            // for now, we terminate the whole operation, later we may pause or continue as we are
+            log_info("[thread_manager_thread] receive thread terminated");
             goto cleanup;
         }
 
@@ -253,6 +249,7 @@ int *thread_manager_thread(MANAGER_ARGS *args)
                 destroy_qnode(qnode_pop);
                 update_event_flag(handler_args->flag, EF_NEW_PACKET);
             }
+            reset_single_event(recv_args->flag, EF_NEW_PACKET);
         }
     }
 
@@ -561,7 +558,7 @@ int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address
 }
 
 int create_receiving_thread(RECV_ARGS **args, socket_ll *sockets, QUEUE *queue, mempool_t *mempool, EFLAG *wake_mngr,
-                            pthread_t *tid)
+                            uint32_t multicast_addr, int port, pthread_t *tid)
 {
 
     pthread_t thread;
@@ -618,6 +615,8 @@ int create_receiving_thread(RECV_ARGS **args, socket_ll *sockets, QUEUE *queue, 
     recv_args->mempool = mempool;
     recv_args->sockets = sockets;
     recv_args->wake = wake_mngr;
+    recv_args->multicast_addr = multicast_addr;
+    recv_args->port = port;
     recv_args->flag = flag;
 
     if (pthread_create(&thread, NULL, (void *)(&recv_thread), recv_args)) {

@@ -350,7 +350,7 @@ socket_node *get_discovery_sockets(int port, uint32_t multicast_addr)
     socket_node *temp_sock = NULL;
     ip_subnet_t *p_ip_subnet = NULL;
     size_t addr_count = 0;
-    struct sockaddr_in server; // TODO: find better name
+    struct sockaddr_in interface;
     struct ip_mreq mreq;       // the structure for the IP_ADD_MEMBERSHIP socket option
     int optval = 0;            // the optval for the IP_MULTICAST_LOOP
     // initialize the multicast address
@@ -390,12 +390,12 @@ socket_node *get_discovery_sockets(int port, uint32_t multicast_addr)
         memcpy(&(new_sock->ip_subnet), &(p_ip_subnet[i]), sizeof(ip_subnet_t));
 
         // bind the socket to the local address (one for every address found)
-        memset(&server, 0, sizeof(server));
-        server.sin_family = AF_INET;
-        server.sin_port = port;
-        server.sin_addr.s_addr = htonl(p_ip_subnet[i].ip);
-
-        err = bind(new_sock->sock, (struct sockaddr *)(&server), sizeof(server));
+        memset(&interface, 0, sizeof(interface));
+        interface.sin_family = AF_INET;
+        interface.sin_port = port;
+        interface.sin_addr.s_addr = htonl(p_ip_subnet[i].ip);
+        log_debug("[get_discovery_sockets] bound socket to %u",interface.sin_addr.s_addr);
+        err = bind(new_sock->sock, (struct sockaddr *)(&interface), sizeof(interface));
         if (err) {
             free_discv_sock_ll(first_sock);
             free(p_ip_subnet);
@@ -403,7 +403,7 @@ socket_node *get_discovery_sockets(int port, uint32_t multicast_addr)
             return NULL;
         }
 
-        mreq.imr_interface.s_addr = server.sin_addr.s_addr;
+        mreq.imr_interface.s_addr = interface.sin_addr.s_addr;
         err = setsockopt(new_sock->sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq));
         if (err) {
             free_discv_sock_ll(first_sock);
@@ -549,6 +549,7 @@ socket_node *create_discv_sock_node()
         free(node);
         return NULL;
     }
+    log_debug("[create_discv_sock_node] created socket %d", node->sock);
 
     return node;
 }
@@ -877,6 +878,7 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args)
         if (ret >= 1) {
             // if it is a netlink event
             if (event.data.u32 == 0) {
+                log_debug("[interface_updater_thread] interface update");
                 ret = 0;
                 size = recvmsg(sock, &msg, 0);
                 if (size < 0) {
@@ -932,7 +934,9 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args)
             }
         }
         else if (ret == -1) {
-            // idk cleanup;
+            // IDK cleanup;
+            //this is a debug statement as it fails on SIGSTOP that the debugger sends
+            if (errno == EINTR) continue;
             *process_return = INDIGO_ERROR;
             log_fatal("[interface_updater_thread] epoll_wait() failed while waiting for link updates | return %d | errno %d",
                 *process_return, errno);

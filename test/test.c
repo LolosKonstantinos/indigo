@@ -22,6 +22,8 @@ SOFTWARE.
 
 #include "test.h"
 
+#include "mempool.h"
+
 #include <binary_tree.h>
 #include <stdio.h>
 #include <string.h>
@@ -48,8 +50,8 @@ void run_tests(test_t *tests, const uint64_t count) {
 
         }
     }
-    printf("\n\nTests passed: %lld\n", passed);
-    printf("Tests failed: %lld\n", count - passed);
+    printf("\n\nTests passed: %lld\n", (long long)passed);
+    printf("Tests failed: %lld\n", (long long)(count - passed));
 }
 
 #define DATA_SIZE sizeof(uint64_t)
@@ -76,16 +78,25 @@ int test_binary_tree() {
     for (int i = 0; i < (1<<10) + 1; i++) {
         temp_data = i;
         ret = tree->insert(tree, &temp_data);
-        if (ret) return TEST_FAILED;
+        if (ret) {
+            return TEST_FAILED;
+        }
     }
-    if (!is_bts_avl(tree)) return TEST_FAILED;
+    if (!is_bts_avl(tree)) {
+        printf("1");
+        return TEST_FAILED;
+    }
 
     //check if bts property is preserved
     for (int i = 0; i < (1<<10) + 1; i++) {
         temp_data = i;
         ret = tree->search_pin(tree, &temp_data, (void **)&found_data);
-        if (ret) return TEST_FAILED;
-        if (*found_data != temp_data) return TEST_FAILED;
+        if (ret == 0) {
+            return TEST_FAILED;
+        }
+        if (*found_data != temp_data) {
+            return TEST_FAILED;
+        }
         tree->search_release(tree);
     }
     //remove the root
@@ -103,7 +114,7 @@ int test_binary_tree() {
         temp_data = j;
         ret = tree->search_pin(tree, &temp_data, (void **)&found_data);
         tree->search_release(tree);
-        if (ret) return TEST_FAILED;
+        if (ret == 0) return TEST_FAILED;
         if (*found_data != temp_data) return TEST_FAILED;
     }
 
@@ -121,13 +132,170 @@ int test_binary_tree() {
             temp_data = j;
             ret = tree->search_pin(tree, &temp_data, (void **)&found_data);
             tree->search_release(tree);
-            if (ret) return TEST_FAILED;
+            if (ret == 0) return TEST_FAILED;
             if (*found_data != temp_data) return TEST_FAILED;
         }
     }
     //test if all nodes are deleted
     if (tree_height(tree) != 0) return TEST_FAILED;
     free_tree(tree);
+    return TEST_PASSED;
+}
+
+int test_mempool()
+{
+    mempool_t *pool = NULL;
+    size_t cell_count;
+    void * blocks[4*(1<<10)] = {0};
+
+    //static pool tests
+    pool = new_mempool_manual(1 << 10, sizeof(uint64_t), alignof(uint64_t), 0);
+    if (!pool) return TEST_FAILED;
+
+    cell_count = get_mempool_cell_count(pool);
+
+    //allocate the whole pool
+    for (int i = 0; i < cell_count + 1; i++) {
+        blocks[i] = mempool_salloc(pool);
+        if (i < cell_count) {
+            if ( blocks[i] == NULL) {
+                return TEST_FAILED;
+            }
+        }
+        else {
+            if (blocks[i] != NULL){
+                return TEST_FAILED;
+            }
+
+        }
+        if (blocks[i]) {
+            *((uint64_t *)blocks[i]) = i ^ 0xabcdefabcdefabcd;
+        }
+    }
+
+    //test for data integrity
+    for (int i = 0; i < cell_count; i++) {
+        if (*((uint64_t *)blocks[i]) != (i ^ 0xabcdefabcdefabcd)) return TEST_FAILED;
+    }
+
+    //test for collisions
+    for (int i = 0; i < cell_count; i++) {
+        for (int j = 0; j < cell_count; j++) {
+            if (i == j) continue;
+            if (blocks[i] == blocks[j]) return TEST_FAILED;
+        }
+    }
+
+    //free the pool
+    for (int i = 0; i < cell_count; i++) {
+        mempool_free(pool, blocks[i]);
+    }
+
+
+    //go again to check if it still functions as intended
+    for (int i = 0; i < cell_count + 1; i++) {
+        blocks[i] = mempool_salloc(pool);
+        if (i < cell_count) {
+            if ( blocks[i] == NULL) {
+                return TEST_FAILED;
+            }
+        }
+        else {
+            if (blocks[i] != NULL) {
+                return TEST_FAILED;
+            }
+        }
+    }
+    //test for collisions
+    for (int i = 0; i < cell_count; i++) {
+        for (int j = 0; j < cell_count; j++) {
+            if (i == j) continue;
+            if (blocks[i] == blocks[j]) return TEST_FAILED;
+        }
+    }
+    //free every other block and go again
+    for (int i = 0; i < cell_count; i+=2) {
+        mempool_free(pool, blocks[i]);
+    }
+    //go again to check if it still functions as intended
+    for (int i = 0; i < cell_count + 2; i+=2) {
+        blocks[i] = mempool_salloc(pool);
+        if (i < cell_count) {
+            if ( blocks[i] == NULL) return TEST_FAILED;
+        }
+        else {
+            if (blocks[i] != NULL) return TEST_FAILED;
+        }
+    }
+    //test for collisions
+    for (int i = 0; i < cell_count; i++) {
+        for (int j = 0; j < cell_count; j++) {
+            if (i == j) continue;
+            if (blocks[i] == blocks[j]) return TEST_FAILED;
+        }
+    }
+    free_mempool(pool);
+
+    //test dynamic pool
+    pool = new_mempool_manual(1 << 10, sizeof(uint64_t), alignof(uint64_t), 0.5f);
+    if (!pool) return TEST_FAILED;
+    //allocate the whole pool
+    for (int i = 0; i < 4 * (1<<10); i++) {
+        blocks[i] = mempool_dalloc(pool);
+        if ( blocks[i] == NULL) return TEST_FAILED;
+        if (blocks[i]) {
+            *((uint64_t *)blocks[i]) = i ^ 0xabcdefabcdefabcd;
+        }
+    }
+
+    //test for data integrity
+    for (int i = 0; i < 4*(1<<10) ; i++) {
+        if (*((uint64_t *)blocks[i]) != (i ^ 0xabcdefabcdefabcd)) return TEST_FAILED;
+    }
+
+    //test for collisions
+    for (int i = 0; i < 4*(1<<10); i++) {
+        for (int j = 0; j < 4*(1<<10); j++) {
+            if (i == j) continue;
+            if (blocks[i] == blocks[j]) return TEST_FAILED;
+        }
+    }
+
+    //free the pool
+    for (int i = 0; i < 4*(1<<10); i++) {
+        mempool_free(pool, blocks[i]);
+    }
+
+    //go again to check if it still functions as intended
+    for (int i = 0; i < 4*(1<<10); i++) {
+        blocks[i] = mempool_dalloc(pool);
+        if ( blocks[i] == NULL) return TEST_FAILED;
+
+    }
+    //test for collisions
+    for (int i = 0; i < 4*(1<<10); i++) {
+        for (int j = 0; j < 4*(1<<10); j++) {
+            if (i == j) continue;
+            if (blocks[i] == blocks[j]) return TEST_FAILED;
+        }
+    }
+    //free every other block and go again
+    for (int i = 0; i < 4*(1<<10); i+=2) {
+        mempool_free(pool, blocks[i]);
+    }
+    //go again to check if it still functions as intended
+    for (int i = 0; i < 4*(1<<10); i+=2) {
+        blocks[i] = mempool_dalloc(pool);
+        if ( blocks[i] == NULL) return TEST_FAILED;
+    }
+    //test for collisions
+    for (int i = 0; i < 2*(1<<10); i++) {
+        for (int j = 0; j < 2*(1<<10); j++) {
+            if (i == j) continue;
+            if (blocks[i] == blocks[j]) return TEST_FAILED;
+        }
+    }
+
     return TEST_PASSED;
 }
 
@@ -141,9 +309,6 @@ int test_crypto() {
     return TEST_PASSED;
 }
 int test_event_flags() {
-    return TEST_PASSED;
-}
-int test_mempool() {
     return TEST_PASSED;
 }
 int test_queue() {

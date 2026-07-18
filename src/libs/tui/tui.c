@@ -878,7 +878,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
                                 status = KNOWN_KEY_STATUS_BAD;
                                 break;
                             default:
-                                status = KNOWN_KEY_STATUS_UNKOWN;
+                                status = KNOWN_KEY_STATUS_UNKNOWN;
                                 break;
                         }
                         edit_known_key(known_key_tree, last_id, status);
@@ -906,7 +906,6 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
             print_devices(device_pad, dev_tree, &dev_IDs, &id_count, last_id, &last_id_row);
             if (id_count == 0) {
                 mvwprintw(device_pad, 0, 0, "There are currently no devices in the local network.");
-                log_debug("no devices deteted from ui");
             }
             else {
                 log_debug("%d devices detected in ui", id_count);
@@ -1600,7 +1599,7 @@ int print_device(WINDOW *win, remote_device_t *rdev, int row, char highlight)
         wprintw(win, "[TRUSTED]");
         wattroff(win, COLOR_PAIR(4));
     }
-    else if (rdev->dev_state_flag & KNOWN_KEY_STATUS_UNKOWN) {
+    else if (rdev->dev_state_flag & KNOWN_KEY_STATUS_UNKNOWN) {
         wattron(win, COLOR_PAIR(3));
         wprintw(win, "[UNKNOWN]");
         wattroff(win, COLOR_PAIR(3));

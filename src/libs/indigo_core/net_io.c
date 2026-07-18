@@ -53,8 +53,6 @@ SOFTWARE.
 #include <unistd.h>
 #endif
 
-
-
 //////////////////////////////////////////////////////
 ///                                                ///
 ///                  IO_FUNCTIONS                  ///
@@ -63,8 +61,8 @@ SOFTWARE.
 
 // todo: OVERRIDE_IO is not handled correctly check implementation
 #ifdef _WIN32
-int send_discovery_packets(int port, uint32_t multicast_addr, socket_ll *sockets, EFLAG *flag,
-                           uint32_t pCount, int32_t msec, signing_key_pair_t *sign_key_pair,
+int send_discovery_packets(int port, uint32_t multicast_addr, socket_ll *sockets, EFLAG *flag, uint32_t pCount,
+                           int32_t msec, signing_key_pair_t *sign_key_pair,
                            char username[(MAX_USERNAME_LEN + 1) * sizeof(uint32_t)])
 {
 
@@ -678,7 +676,7 @@ int register_single_event(int epoll_fd, int fd, struct epoll_event event)
 }
 int register_multiple_receivers(int epoll_fd, socket_ll *sockets, int *event_count)
 {
-    struct epoll_event *recv_events;
+    struct epoll_event recv_events = {0};
     int count = 0;
 
     if (!sockets || !event_count) {
@@ -688,36 +686,23 @@ int register_multiple_receivers(int epoll_fd, socket_ll *sockets, int *event_cou
 
     pthread_mutex_lock(&(sockets->mutex));
 
-    // count how many sockets we have
-    for (socket_node *sn = sockets->head; sn != NULL; sn = sn->next)
-        ++count;
-    recv_events = calloc(count, sizeof(struct epoll_event));
-    if (!recv_events) {
-        pthread_mutex_unlock(&(sockets->mutex));
-        log_error("[register_multiple_receivers] calloc() failed allocating %d bytes for epoll event | return %d",
-            sizeof(struct epoll_event), INDIGO_ERROR);
-        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-    }
-
-    *event_count = count;
-
-    // count is now a counter
     // register the sockets one by one
     count = 0;
+    recv_events.events = EPOLLIN;
     for (socket_node *sn = sockets->head; sn != NULL; sn = sn->next) {
-        recv_events[count].events = EPOLLIN;
-        recv_events[count].data.fd = sn->sock;
-        if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, sn->sock, &(recv_events[count])) == -1) {
+        recv_events.data.fd = sn->sock;
+        if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, sn->sock, &recv_events) == -1) {
+            if (errno == EEXIST) continue;
             pthread_mutex_unlock(&(sockets->mutex));
-            free(recv_events);
-            log_error("[register_multiple_receivers] epoll_ctl() failed adding socket | return %d | errno %d", INDIGO_ERROR, errno);
+            log_error("[register_multiple_receivers] epoll_ctl() failed adding socket | return %d | errno %d",
+                      INDIGO_ERROR, errno);
             return INDIGO_ERROR;
         }
         ++count;
+        log_debug("[register_multiple_receivers] registered socket %d", sn->sock);
     }
-
+    *event_count = count;
     pthread_mutex_unlock(&(sockets->mutex));
-    free(recv_events);
     return INDIGO_SUCCESS;
 }
 int send_discovery_packets(const int port, const uint32_t multicast_addr, socket_ll *sockets, EFLAG *flag,
@@ -747,7 +732,8 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, socket
             if (ret == -1) {
                 // TODO: handle errors
                 pthread_mutex_unlock(&(sockets->mutex));
-                log_error("[send_discovery_packets] sendto() failed to send discovery packet | return %d | errno %d", INDIGO_ERROR, errno);
+                log_error("[send_discovery_packets] sendto() failed to send discovery packet | return %d | errno %d",
+                          INDIGO_ERROR, errno);
                 return INDIGO_ERROR;
             }
         }
@@ -818,7 +804,9 @@ int send_next_file_packet(active_file_t *file, const unsigned char *const pk, so
     if (read_ret != 0) {
         ret = feof(file->fd);
         if (ret != 0) {
-            log_error("[send_next_file_packet] fread() failed to read from file for outgoing file packet | return -1 | errno %d", errno);
+            log_error("[send_next_file_packet] fread() failed to read from file for outgoing file packet | return -1 | "
+                      "errno %d",
+                      errno);
             return -1;
         }
         fclose(file->fd);
@@ -861,7 +849,7 @@ int send_file_packet(active_file_t *file, uint64_t counter, const unsigned char 
     memcpy(nonce, file->nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
     ret = nonce_increment(nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES, counter);
     if (ret) {
-        log_error( "[send_file_packet] nonce_increment() failed | return %d", ret);
+        log_error("[send_file_packet] nonce_increment() failed | return %d", ret);
         return ret;
     }
 
@@ -870,7 +858,8 @@ int send_file_packet(active_file_t *file, uint64_t counter, const unsigned char 
     if (read_ret != 0) {
         ret = feof(file->fd);
         if (ret != 0) {
-            log_error("[send_file_packet] fread() failed to read from file for file packet | return %d | errno %d", ret, errno);
+            log_error("[send_file_packet] fread() failed to read from file for file packet | return %d | errno %d", ret,
+                      errno);
             return -1;
         }
         fclose(file->fd);
@@ -1520,6 +1509,7 @@ int *recv_thread(RECV_ARGS *args)
     struct epoll_event *recv_events = NULL;
     struct epoll_event tmp_event;
     int recv_event_count;
+    int signalled_event_count = 0;
 
     struct sockaddr_in recv_addr = {0};
     socklen_t recv_addr_len = 0;
@@ -1531,6 +1521,11 @@ int *recv_thread(RECV_ARGS *args)
     int ret;
     ssize_t lret;
     uint64_t signaled_event_val = 0;
+
+    int multicast_recv_socket = -1;
+    struct sockaddr_in local_addr;
+    struct ip_mreq mreq;
+    int optval = 1;
 
     int *process_return = NULL;
 
@@ -1547,39 +1542,80 @@ int *recv_thread(RECV_ARGS *args)
     mempool = args->mempool;
     queue = args->queue;
 
+    //create a socket used for receiving multicast packets
+    multicast_recv_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (multicast_recv_socket == -1) {
+        set_event_flag(args->flag, EF_TERMINATION);
+        set_event_flag(args->wake, EF_WAKE_MANAGER);
+        log_fatal("[recv_thread] could not open socket for receiving multicast traffic "
+                  "| return %d | errno %d", INDIGO_ERROR, errno);
+        *process_return = INDIGO_ERROR;
+        return process_return;
+    }
+
+    ret = setsockopt(multicast_recv_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+    if (ret != 0) {
+        log_fatal("[create_discv_sock_node] setsockopt() SO_REUSEADDR failed | return NULL | errno %d", errno);
+        *process_return = INDIGO_ERROR;
+        goto cleanup;
+    }
+
+    memset(&local_addr, 0, sizeof(local_addr));
+    local_addr.sin_family = AF_INET;
+    local_addr.sin_port = args->port;
+    local_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    log_debug("[recv_thread] bound socket to %u:%d",local_addr.sin_addr.s_addr, local_addr.sin_port);
+    ret = bind(multicast_recv_socket, (struct sockaddr *)(&local_addr), sizeof(local_addr));
+    if (ret) {
+        log_fatal("[recv_thread] bind() failed to bind socket | return NULL | errno %d", errno);
+        *process_return = INDIGO_ERROR_SYS_FAIL;
+        goto cleanup;
+    }
+
+    mreq.imr_multiaddr.s_addr = args->multicast_addr;
+    mreq.imr_interface.s_addr = local_addr.sin_addr.s_addr;
+    ret = setsockopt(multicast_recv_socket, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq));
+    if (ret) {
+        log_fatal("[recv_thread] setsockopt() failed to add multicast membership | return NULL | errno %d", errno);
+        *process_return = INDIGO_ERROR_SYS_FAIL;
+        goto cleanup;
+    }
+
     epoll_fd = epoll_create1(0);
     if (epoll_fd == -1) {
         *process_return = INDIGO_ERROR_SYS_FAIL;
         log_fatal("[recv_thread] epoll_create1() failed | return %d | errno %d", INDIGO_ERROR_SYS_FAIL, errno);
-        return process_return;
+        goto cleanup;
     }
 
     // register all the sockets for receiving
     ret = register_multiple_receivers(epoll_fd, args->sockets, &recv_event_count);
     if (ret != INDIGO_SUCCESS) {
-        set_event_flag(args->flag, EF_TERMINATION);
-        set_event_flag(args->wake, EF_WAKE_MANAGER);
         *process_return = ret;
         log_fatal("[recv_thread] register_multiple_receivers() failed trying initialize receiving | return %d", ret);
-        return process_return;
+        goto cleanup;
     }
 
     // we will register 2 more events, the wake event and the termination event
-    recv_event_count += 2;
+    recv_event_count += 3;
     recv_events = calloc(recv_event_count, sizeof(struct epoll_event));
     if (!recv_events) {
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_fatal("[recv_thread] calloc() failed allocating %lld bytes for epoll events | return %d",
-            sizeof(struct epoll_event) * recv_event_count, INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
-        return process_return;
+                  sizeof(struct epoll_event) * recv_event_count, INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
+        goto cleanup;
     }
     tmp_event.events = EPOLLIN;
+
     tmp_event.data.fd = args->termination_fd;
     tmp_event.data.u32 = 1;
     register_single_event(epoll_fd, args->termination_fd, tmp_event);
     tmp_event.data.fd = args->wake_fd;
     tmp_event.data.u32 = 2;
     register_single_event(epoll_fd, args->wake_fd, tmp_event);
+    tmp_event.data.fd = multicast_recv_socket;
+    tmp_event.data.u32 = 3;
+    register_single_event(epoll_fd, multicast_recv_socket, tmp_event);
     memset(&tmp_event, 0, sizeof(struct epoll_event));
 
     while (!termination_is_on(args->flag)) {
@@ -1593,10 +1629,9 @@ int *recv_thread(RECV_ARGS *args)
             close(epoll_fd);
             epoll_fd = epoll_create1(0);
             if (epoll_fd == -1) {
-                free(recv_events);
                 *process_return = INDIGO_ERROR_SYS_FAIL;
                 log_fatal("[recv_thread] epoll_create1() failed | return %d | errno %d", INDIGO_ERROR_SYS_FAIL, errno);
-                return process_return;
+                goto cleanup;
             }
             free(recv_events);
             recv_events = NULL;
@@ -1604,12 +1639,9 @@ int *recv_thread(RECV_ARGS *args)
             // register all the sockets for receiving
             ret = register_multiple_receivers(epoll_fd, args->sockets, &recv_event_count);
             if (ret != INDIGO_SUCCESS) {
-                set_event_flag(args->flag, EF_TERMINATION);
-                set_event_flag(args->wake, EF_WAKE_MANAGER);
                 *process_return = ret;
-
                 log_fatal("[recv_thread] register_multiple_receivers() failed trying renew receiving | return %d", ret);
-                return process_return;
+                goto cleanup;
             }
             reset_single_event(args->flag, EF_OVERRIDE_IO);
             // make room for the termination event
@@ -1618,8 +1650,8 @@ int *recv_thread(RECV_ARGS *args)
             if (!recv_events) {
                 *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                 log_fatal("[recv_thread] calloc() failed allocating %lld bytes for epoll events | return %d",
-                    recv_event_count * sizeof(struct epoll_event), INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
-                return process_return;
+                          recv_event_count * sizeof(struct epoll_event), INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
+                goto cleanup;
             }
             tmp_event.events = EPOLLIN;
             tmp_event.data.fd = args->termination_fd;
@@ -1631,25 +1663,23 @@ int *recv_thread(RECV_ARGS *args)
             memset(&tmp_event, 0, sizeof(struct epoll_event));
         }
         else if (flag_val & EF_TERMINATION) {
-            free(recv_events);
             *process_return = INDIGO_SUCCESS;
             log_info("[recv_thread] receive thread successful exit | return %d", INDIGO_SUCCESS);
-            return process_return;
+            goto cleanup;
         }
 
         ////////////////////////////////////
         ///  phase 2: wait for a packet  ///
         ////////////////////////////////////
-
-        ret = epoll_wait(epoll_fd, recv_events, recv_event_count, 1 << 20);
+        ret = epoll_wait(epoll_fd, recv_events, recv_event_count, 10000);
         if (ret == 0)
             continue;
-        else if (ret == -1) {
-            free(recv_events);
+        if (ret == -1) {
+            if (errno == EINTR) continue; //this is a debug statement (fails on SIGSTOP)
             *process_return = INDIGO_ERROR;
             log_fatal("[recv_thread] epoll_wait() failed while waiting on receiving sockets | return %d | errno %d",
-                INDIGO_ERROR, errno);
-            return process_return;
+                      INDIGO_ERROR, errno);
+            goto cleanup;
         }
 
         /////////////////////////////////////
@@ -1657,17 +1687,18 @@ int *recv_thread(RECV_ARGS *args)
         /////////////////////////////////////
 
         // check the epoll events one by one
-        for (size_t i = 0; i < recv_event_count; ++i) {
+        signalled_event_count = ret;
+        for (size_t i = 0; i < signalled_event_count; ++i) {
             event_type = recv_events[i].data.u32;
             if (event_type == 1) {
                 // we need to terminate
                 read(args->termination_fd, &signaled_event_val, 8);
                 if (signaled_event_val != 1)
                     continue;
-                free(recv_events);
+
                 *process_return = INDIGO_SUCCESS;
                 log_info("[recv_thread] receive thread successful exit | return %d", INDIGO_SUCCESS);
-                return process_return;
+                goto cleanup;
             }
             else if (event_type == 2) {
                 // we got a wake event, probably the sockets got updated
@@ -1679,7 +1710,15 @@ int *recv_thread(RECV_ARGS *args)
             }
             else {
                 // we got a socket ready
-                recv_buffer = mempool->alloc(mempool);
+                log_debug("[recv_thread] received packet | socket:%d ",recv_events[i].data.fd);
+                recv_buffer = mempool_dalloc(mempool);
+                log_debug("[recv_thread] mempool alloc finished");
+                if (recv_buffer == NULL) {
+                    log_fatal("[recv_thread] mempool alloc failed to allocate block for new packet");
+                    *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                    goto cleanup;
+                }
+
                 lret = recvfrom(recv_events[i].data.fd, recv_buffer, sizeof(packet_t) + sizeof(packet_info_t), 0,
                                 (struct sockaddr *)(&recv_addr), &recv_addr_len);
 
@@ -1688,16 +1727,16 @@ int *recv_thread(RECV_ARGS *args)
                         default:
                             break;
                     }
-                    mempool->free(mempool, recv_buffer);
+                    mempool_free(mempool, recv_buffer);
                     break;
                 }
                 if (lret > sizeof(packet_t) || lret < PAC_MIN_BYTES) {
-                    mempool->free(mempool, recv_buffer);
+                    mempool_free(mempool, recv_buffer);
                     continue;
                 }
                 memcpy(&pack_h, recv_buffer, sizeof(udp_packet_header_t));
-                if (pack_h.magic_number != MAGIC_NUMBER_1 || pack_h.magic_number != MAGIC_NUMBER_2) {
-                    mempool->free(mempool, recv_buffer);
+                if (pack_h.magic_number != MAGIC_NUMBER_1 && pack_h.magic_number != MAGIC_NUMBER_2) {
+                    mempool_free(mempool, recv_buffer);
                     continue;
                 }
 
@@ -1707,21 +1746,29 @@ int *recv_thread(RECV_ARGS *args)
                 ret = queue_push(queue, recv_buffer, QET_NEW_PACKET);
                 if (ret) {
                     // the only error is a not enough memory error, so we return an error
-                    free(recv_events);
-                    mempool->free(mempool, recv_buffer);
+                    mempool_free(mempool, recv_buffer);
                     *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                     log_fatal("[recv_thread] queue_push() failed trying to push packet to manager | return %d",
-                        INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
-                    return process_return;
+                              INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
+                    goto cleanup;
                 }
                 set_event_flag(args->flag, EF_NEW_PACKET);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
+                log_debug("[recv_thread] packet pushed to manager");
             }
         }
     }
     free(recv_events);
     *process_return = INDIGO_SUCCESS;
     log_info("[recv_thread] receive thread successful exit | return %d", INDIGO_SUCCESS);
+    return process_return;
+
+    cleanup:
+    set_event_flag(args->flag, EF_TERMINATION);
+    set_event_flag(args->wake, EF_WAKE_MANAGER);
+    free(recv_events);
+    close(epoll_fd);
+    close(multicast_recv_socket);
     return process_return;
 }
 #endif
@@ -1755,7 +1802,7 @@ int *send_thread(SEND_ARGS *args)
         set_event_flag(args->wake, EF_WAKE_MANAGER);
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_fatal("[send_thread] new_lht() failed creating linked hash table for active files | return %d | errno %d",
-            INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR, errno);
+                  INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR, errno);
         return process_return;
     }
 
@@ -1784,7 +1831,9 @@ int *send_thread(SEND_ARGS *args)
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
                 delete_lht(active_files);
                 *process_return = ret;
-                log_fatal("[send_thread] send_discovery_packets() failed while sending multiple packets on request | return %d", ret);
+                log_fatal("[send_thread] send_discovery_packets() failed while sending multiple packets on request | "
+                          "return %d",
+                          ret);
                 return process_return;
             }
         }
@@ -1845,7 +1894,8 @@ int *send_thread(SEND_ARGS *args)
                         set_event_flag(args->wake, EF_WAKE_MANAGER);
                         delete_lht(active_files);
                         *process_return = ret;
-                        log_fatal("[send_thread] send_file_packet() failed while re-sending file chunk | return %d", ret);
+                        log_fatal("[send_thread] send_file_packet() failed while re-sending file chunk | return %d",
+                                  ret);
                         return process_return;
                     }
                 }
@@ -1925,8 +1975,10 @@ int *send_thread(SEND_ARGS *args)
 
         // get the list
         ret = lht_list(active_files, &list);
-        if (ret == 0 && list)curr_af = list->data;
-        else curr_af = NULL;
+        if (ret == 0 && list)
+            curr_af = list->data;
+        else
+            curr_af = NULL;
 
         while (curr_af) { // for every active file send a packet, in circular way
             ret = send_next_file_packet(curr_af, args->sign_keys->public, args->sockets, args->flag);
@@ -1972,7 +2024,9 @@ int *send_thread(SEND_ARGS *args)
             set_event_flag(args->wake, EF_WAKE_MANAGER);
             delete_lht(active_files);
             *process_return = ret;
-            log_fatal("[send_thread] send_discovery_packets() failed while sending scheduled discovery packets | return %d", ret);
+            log_fatal(
+                "[send_thread] send_discovery_packets() failed while sending scheduled discovery packets | return %d",
+                ret);
             return process_return;
         }
 
@@ -2005,7 +2059,8 @@ int *send_thread(SEND_ARGS *args)
                 pthread_mutex_unlock(&(args->flag->mutex));
                 delete_lht(active_files);
                 *process_return = INDIGO_ERROR_INVALID_STATE;
-                log_fatal("[send_thread] pthread_cond_timedwait() failed | return %d | errno %d", *process_return, errno);
+                log_fatal("[send_thread] pthread_cond_timedwait() failed | return %d | errno %d", *process_return,
+                          errno);
                 return process_return;
             }
             if (ret == 0) {

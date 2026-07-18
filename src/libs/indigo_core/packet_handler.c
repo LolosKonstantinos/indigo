@@ -68,7 +68,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
     time_t curr_time = 0;
     struct timespec timespec;
-    time_t lowest_time = 0;
+    time_t lowest_time = 600;
     time_t time_diff = 0;
 
     unsigned char iterations_until_cleanup = 10;
@@ -193,6 +193,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
             break;
 
         if (flag_val & EF_NEW_PACKET) {
+            log_debug("[packet_handler_thread] new packet received");
             reset_single_event(args->flag, EF_NEW_PACKET);
 
             node = queue_pop(args->queue, QOPT_NON_BLOCK);
@@ -221,7 +222,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         // we cant decrypt a packet from a device we don't know
 
                         // we no longer need the packet
-                        args->mempool->free(args->mempool, packet);
+                        mempool_free(args->mempool, packet);
                         packet = NULL;
                         packet_info = NULL;
                         continue;
@@ -244,7 +245,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         ret = decrypt_packet(packet, rdev.client_rk);
                         if (ret) {
                             // we no longer need the packet
-                            args->mempool->free(args->mempool, packet);
+                            mempool_free(args->mempool, packet);
                             packet = NULL;
                             packet_info = NULL;
 
@@ -311,7 +312,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             rdev.dev_state_flag |= known_key.status;
                         }
                         else {
-                            rdev.dev_state_flag |= KNOWN_KEY_STATUS_UNKOWN;
+                            rdev.dev_state_flag |= KNOWN_KEY_STATUS_UNKNOWN;
                         }
 
                         ret = args->device_tree->insert(args->device_tree, &rdev);
@@ -490,7 +491,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 rdev.dev_state_flag |= known_key.status;
                             }
                             else {
-                                rdev.dev_state_flag |= KNOWN_KEY_STATUS_UNKOWN;
+                                rdev.dev_state_flag |= KNOWN_KEY_STATUS_UNKNOWN;
                             }
 
                             ret = args->device_tree->insert(args->device_tree, &rdev);
@@ -1240,7 +1241,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 }
 
                 // we no longer need the packet
-                args->mempool->free(args->mempool, packet);
+                mempool_free(args->mempool, packet);
                 packet = NULL;
                 packet_info = NULL;
             }

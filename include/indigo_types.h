@@ -73,7 +73,7 @@ SOFTWARE.
 // known key status values (can be used in the dev_state_flag)
 #define KNOWN_KEY_STATUS_TOO_GOOD 0x0004
 #define KNOWN_KEY_STATUS_GOOD 0x0008
-#define KNOWN_KEY_STATUS_UNKOWN 0x0010
+#define KNOWN_KEY_STATUS_UNKNOWN 0x0010
 #define KNOWN_KEY_STATUS_BAD 0x0020
 #define KNOWN_KEY_STATUS_EVIL_AND_SINISTER 0x0040
 
@@ -87,6 +87,7 @@ SOFTWARE.
 #define PAC_ENCRYPT_OFFSET (offsetof(packet_t, zero))
 #define PAC_ENCRYPT_BYTES (PAC_DATA_BYTES_USABLE + 4)
 #define PAC_MAX_BYTES (sizeof(packet_t))
+#define PAC_ALIGNMENT (8)
 
 // message types
 #define MSG_INIT_PACKET 0x01
