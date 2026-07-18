@@ -23,6 +23,7 @@ SOFTWARE.
 #define MEMPOOL_H
 
 #include <stdlib.h>
+#include <stdint.h>
 #include <stdalign.h>
 
 #define MEMPOOL_MAX_SIZE (1<<30) //limit pool size to 1 GiB

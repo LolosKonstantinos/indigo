@@ -1014,7 +1014,7 @@ int allocate_recv_info(RECV_INFO **info, mempool_t *mempool)
     tmp_rcv->buf = temp;
     tmp_rcv->buf->buf = NULL;
 
-    temp = mempool->alloc(mempool);
+    temp = mempool_dalloc(mempool);
     if (temp == NULL) {
         fprintf(stderr, "mempool alloc failed in allocate_recv_info()\n");
 
@@ -1033,7 +1033,7 @@ int allocate_recv_info(RECV_INFO **info, mempool_t *mempool)
     if (temp == NULL) {
         fprintf(stderr, "malloc() failed in allocate_recv_info()\n");
 
-        mempool->free(mempool, (*info)->buf->buf);
+        mempool_free(mempool, (*info)->buf->buf);
         free(tmp_rcv->buf);
         free(tmp_rcv->fromLen);
         free(tmp_rcv->source);
@@ -1048,7 +1048,7 @@ int allocate_recv_info(RECV_INFO **info, mempool_t *mempool)
         fprintf(stderr, "WSACreateEvent failed in allocate_recv_info()\n");
 
         free(tmp_rcv->overlapped);
-        mempool->free(mempool, tmp_rcv->buf->buf);
+        mempool_free(mempool, tmp_rcv->buf->buf);
         free(tmp_rcv->buf);
         free(tmp_rcv->fromLen);
         free(tmp_rcv->source);
@@ -1064,7 +1064,7 @@ int allocate_recv_info(RECV_INFO **info, mempool_t *mempool)
 
         WSACloseEvent(tmp_rcv->overlapped->hEvent);
         free(tmp_rcv->overlapped);
-        mempool->free(mempool, tmp_rcv->buf->buf);
+        mempool_free(mempool, tmp_rcv->buf->buf);
         free(tmp_rcv->buf);
         free(tmp_rcv->fromLen);
         free(tmp_rcv->source);
@@ -1082,7 +1082,7 @@ int allocate_recv_info(RECV_INFO **info, mempool_t *mempool)
         free(tmp_rcv->flags);
         WSACloseEvent((*info)->overlapped->hEvent);
         free(tmp_rcv->overlapped);
-        mempool->free(mempool, tmp_rcv->buf->buf);
+        mempool_free(mempool, tmp_rcv->buf->buf);
         free(tmp_rcv->buf);
         free(tmp_rcv->fromLen);
         free(tmp_rcv->source);
@@ -1135,7 +1135,7 @@ int allocate_recv_info_fields(RECV_INFO *info, mempool_t *mempool)
     info->buf = temp;
     info->buf->buf = NULL;
 
-    temp = mempool->alloc(mempool);
+    temp = mempool_dalloc(mempool);
     if (temp == NULL) {
         fprintf(stderr, "malloc() failed in allocate_recv_info()\n");
 
@@ -1152,7 +1152,7 @@ int allocate_recv_info_fields(RECV_INFO *info, mempool_t *mempool)
     if (temp == NULL) {
         fprintf(stderr, "malloc() failed in allocate_recv_info()\n");
 
-        mempool->free(mempool, info->buf->buf);
+        mempool_free(mempool, info->buf->buf);
         free(info->buf);
         free(info->fromLen);
         free(info->source);
@@ -1166,7 +1166,7 @@ int allocate_recv_info_fields(RECV_INFO *info, mempool_t *mempool)
         fprintf(stderr, "WSACreateEvent failed in allocate_recv_info()\n");
 
         free(info->overlapped);
-        mempool->free(mempool, info->buf->buf);
+        mempool_free(mempool, info->buf->buf);
         free(info->buf);
         free(info->fromLen);
         free(info->source);
@@ -1179,7 +1179,7 @@ int allocate_recv_info_fields(RECV_INFO *info, mempool_t *mempool)
 
         WSACloseEvent(info->overlapped->hEvent);
         free(info->overlapped);
-        mempool->free(mempool, info->buf->buf);
+        mempool_free(mempool, info->buf->buf);
         free(info->buf);
         free(info->fromLen);
         free(info->source);
@@ -1194,7 +1194,7 @@ int allocate_recv_info_fields(RECV_INFO *info, mempool_t *mempool)
         free(info->flags);
         WSACloseEvent(info->overlapped->hEvent);
         free(info->overlapped);
-        mempool->free(mempool, info->buf->buf);
+        mempool_free(mempool, info->buf->buf);
         free(info->buf);
         free(info->fromLen);
         free(info->source);
@@ -1215,7 +1215,7 @@ void free_recv_info(const RECV_INFO *info, mempool_t *mempool)
     }
 
     if (info->buf) {
-        mempool->free(mempool, info->buf->buf);
+        mempool_free(mempool, info->buf->buf);
         free(info->buf);
     }
     if (info->overlapped) {
@@ -1470,7 +1470,7 @@ int *recv_thread(RECV_ARGS *args)
                 WSAResetEvent(handles[i]);
 
                 // we need to allocate a new buffer for receiving from the pool
-                recv_info->buf->buf = args->mempool->alloc(args->mempool);
+                recv_info->buf->buf = mempool_dalloc(args->mempool);
                 if (recv_info->buf->buf == NULL) {
                     set_event_flag(args->flag, EF_TERMINATION);
                     set_event_flag(args->wake, EF_WAKE_MANAGER);
