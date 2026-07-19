@@ -7,3 +7,7 @@ find_library(MATH_LIB m)
 if(MATH_LIB)
   target_link_libraries(mempool PRIVATE ${MATH_LIB})
 endif()
+
+if(WIN32)
+  target_link_libraries(mempool PRIVATE onecore Kernel32)
+endif ()

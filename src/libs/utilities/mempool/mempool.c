@@ -37,19 +37,16 @@ SOFTWARE.
 #define FORCE_INLINE inline __attribute__((always_inline))
 
 #ifdef _WIN32
-#include <malloc.h>
-#define aligned_alloc(alignment,size) (_aligned_malloc((size),(alignment)))
-#define alingned_free(ptr) _aligned_free(ptr)
+#include <memoryapi.h>
+#include <errhandlingapi.h>
+#define aligned_alloc(alignment,size) (microslop_aligned_alloc(alignment,size))
+#define aligned_free(ptr) (microslop_aligned_free(ptr))
 
 #else
 
 #define aligned_free(ptr) free(ptr)
 
 #endif
-
-
-#define MEMPOOL_FLAG_LL 0x01
-#define MEMPOOL_FLAG_EMPTY_EXTENSION 0x02
 
 typedef struct memory_block_ll_node {
     void *data;
@@ -78,6 +75,34 @@ struct mempool_t {
     int16_t cell_alignment;
     pthread_mutex_t mutex;
 };
+#ifdef _WIN32
+void *microslop_aligned_alloc(size_t alignment, size_t size) {
+    void *ptr =NULL;
+    size_t large_page_minimum = 0;
+    ULONG allocation_type = MEM_RESERVE | MEM_COMMIT;
+    MEM_EXTENDED_PARAMETER param = {0};
+    MEM_ADDRESS_REQUIREMENTS req = {0};
+    // TODO: if one day you find a way to get the seLockMemoryPrivilege right, uncomment this
+    // large_page_minimum = GetLargePageMinimum();
+    // if ((size >= large_page_minimum) && (size%large_page_minimum == 0) && (alignment%large_page_minimum == 0)) {
+    //     allocation_type |= MEM_LARGE_PAGES;
+    // }
+    param.Type =  MemExtendedParameterAddressRequirements;
+    req.Alignment = alignment;
+    req.HighestEndingAddress = NULL;
+    req.LowestStartingAddress = NULL;
+    param.Pointer = &req;
+    ptr = VirtualAlloc2(NULL,NULL,size, allocation_type , PAGE_READWRITE, &param, 1);
+    if (ptr == NULL) {
+        log_error("[microslop_aligned_alloc] VirtualAlloc2 failed | error %d", GetLastError());
+    }
+    return ptr;
+}
+
+void microslop_aligned_free(void *ptr) {
+    VirtualFreeEx(NULL, ptr, 0, MEM_RELEASE);
+}
+#endif
 
 memblock_t *new_block(mempool_t * const pool)
 {
@@ -98,11 +123,12 @@ memblock_t *new_block(mempool_t * const pool)
         return NULL;
     }
     data = aligned_alloc(1<<alignment, 1<<alignment);
-    if (block->data == NULL) {
+    if (data == NULL) {
         free(block);
         log_error("[new_block] aligned_alloc failed allocating %lld bytes with alignment %lld", 1<<alignment, 1<<alignment);
         return NULL;
     }
+
     //write the address of the block at the start of the array
     *(void **)data = block;
     //find the first address that is aligned to the cells
