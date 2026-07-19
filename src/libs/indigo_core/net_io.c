@@ -188,7 +188,7 @@ int send_discovery_packets(int port, uint32_t multicast_addr, socket_ll *sockets
                 goto cleanup;
 
             packet_data->timestamp = time(NULL);
-            crypto_sign((unsigned char *)&packet_data->signature, NULL, (unsigned char *)&packet,
+            crypto_sign_detached((unsigned char *)&packet_data->signature, NULL, (unsigned char *)&packet,
                 offsetof(packet_t, data) + offsetof(init_packet_data_t, signature),
                         sign_key_pair->secret);
 

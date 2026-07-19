@@ -159,7 +159,7 @@ typedef struct packet_info_t {
 
 typedef struct PACKED init_packet_data_t {
     time_t timestamp;
-    char username[MAX_USERNAME_LEN * sizeof(utf8_char_t)];
+    char username[MAX_USERNAME_LEN * sizeof(uint32_t)];
     unsigned char signature[crypto_sign_BYTES];
 } init_packet_data_t;
 #define PAC_INIT_SIZE (sizeof(udp_packet_header) + sizeof(init_packet_data_t))
