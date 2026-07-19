@@ -121,7 +121,7 @@ typedef struct RECV_ARGS {
 
 // todo check and remove redundant code (there is a comment saying "temporary")
 int send_discovery_packets(int port, uint32_t multicast_addr, socket_ll *sockets, EFLAG *flag,
-                           uint32_t pCount, int32_t msec, signing_key_pair_t *sign_key_pair,
+                           uint32_t pCount, int32_t msec, const signing_key_pair_t *sign_key_pair,
                            char username[(MAX_USERNAME_LEN + 1) * sizeof(uint32_t)]);
 #ifdef _WIN32
 int register_single_receiver(SOCKET sock, RECV_INFO **info, mempool_t *mempool);

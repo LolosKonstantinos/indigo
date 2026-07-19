@@ -264,7 +264,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             ((init_packet_data_t *)packet->data)->signature, (unsigned char *)packet,
                             offsetof(packet_t, data) + offsetof(init_packet_data_t, signature), packet->id);
 
-                        if (!ret) {
+                        if (ret == 0) {
                             // validate timestamp
                             // todo: this is not valid for unsynchronised offline systems
                             curr_time = time(NULL);
@@ -274,8 +274,10 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 break;
                             }
                         }
-                        else
+                        else {
+                            log_debug("[packet_handler_thread] failed to verify signed init packet");
                             break;
+                        }
 
                         // search in the tree
                         ret = args->device_tree->search_pin(args->device_tree, &rdev, (void **)&found_rdev);

@@ -704,27 +704,28 @@ int register_multiple_receivers(int epoll_fd, socket_ll *sockets, int *event_cou
     return INDIGO_SUCCESS;
 }
 int send_discovery_packets(const int port, const uint32_t multicast_addr, socket_ll *sockets, EFLAG *flag,
-                           const uint32_t pCount, const int32_t msec, signing_key_pair_t *sign_key_pair,
+                           const uint32_t pCount, const int32_t msec, const signing_key_pair_t *sign_key_pair,
                            char username[(MAX_USERNAME_LEN + 1) * sizeof(uint32_t)])
 {
     ssize_t ret;
-    time_t curr_time;
-    packet_t packet;
+    packet_t packet = {0};
     struct sockaddr_in s_addr = {0};
-    init_packet_data_t packet_data;
+    init_packet_data_t *packet_data = (init_packet_data_t *)&packet.data;
 
     s_addr.sin_addr.s_addr = multicast_addr;
     s_addr.sin_port = port;
     s_addr.sin_family = AF_INET;
 
     build_packet(&packet, MSG_INIT_PACKET, sign_key_pair->public, NULL, NULL);
-    strcpy((char *)packet_data.username, (char *)username);
+    strcpy((char *)packet_data->username, (char *)username);
+    packet_data->timestamp = time(NULL);
     pthread_mutex_lock(&(sockets->mutex));
     for (uint32_t i = 0; i < pCount; i++) {
-        curr_time = time(NULL);
-        crypto_sign((unsigned char *)&packet_data.timestamp, NULL, (unsigned char *)&curr_time, sizeof(time_t),
+        //use crypto sign detached
+        crypto_sign_detached(packet_data->signature, NULL, (unsigned char *)&packet,
+            offsetof(packet_t, data) + offsetof(init_packet_data_t, signature),
                     sign_key_pair->secret);
-        memcpy(&packet.data, &packet_data, sizeof(init_packet_data_t));
+
         for (socket_node *s = sockets->head; s != NULL; s = s->next) {
             ret = sendto(s->sock, &packet, sizeof(packet_t), 0, (struct sockaddr *)&s_addr, sizeof(struct sockaddr_in));
             if (ret == -1) {
