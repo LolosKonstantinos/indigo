@@ -82,16 +82,15 @@ int send_discovery_packets(int port, uint32_t multicast_addr, socket_ll *sockets
     const int32_t temp_math = msec % 1000;
 
     struct timespec ts;
-    time_t curr_time;
 
     packet_t packet;
-    init_packet_data_t packet_data;
+    init_packet_data_t *packet_data = (init_packet_data_t *)packet.data;
     int routine_ret = 0;
 
     build_packet(&packet, MSG_INIT_PACKET, sign_key_pair->public, NULL, NULL);
     // TODO: make this utf8 compatible
 
-    strcpy((char *)packet_data.username, (char *)username);
+    strcpy((char *)packet_data->username, (char *)username);
 
     while (1) {
         restart = 0;
@@ -188,9 +187,9 @@ int send_discovery_packets(int port, uint32_t multicast_addr, socket_ll *sockets
             if (flag_val & EF_TERMINATION)
                 goto cleanup;
 
-            curr_time = time(NULL);
-            // todo this is wrong because we sign the whole data and not just the timestamp
-            crypto_sign((unsigned char *)&packet_data.timestamp, NULL, (unsigned char *)&curr_time, sizeof(time_t),
+            packet_data->timestamp = time(NULL);
+            crypto_sign((unsigned char *)&packet_data->signature, NULL, (unsigned char *)&packet,
+                offsetof(packet_t, data) + offsetof(init_packet_data_t, signature),
                         sign_key_pair->secret);
 
             ret_val = WSASendTo(sock->sock, sInfo[infolen - 1].buf, 1, sInfo[infolen - 1].bytes, MSG_DONTROUTE,
