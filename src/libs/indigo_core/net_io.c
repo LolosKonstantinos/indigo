@@ -698,7 +698,6 @@ int register_multiple_receivers(int epoll_fd, socket_ll *sockets, int *event_cou
             return INDIGO_ERROR;
         }
         ++count;
-        log_debug("[register_multiple_receivers] registered socket %d", sn->sock);
     }
     *event_count = count;
     pthread_mutex_unlock(&(sockets->mutex));
@@ -1563,7 +1562,6 @@ int *recv_thread(RECV_ARGS *args)
     local_addr.sin_family = AF_INET;
     local_addr.sin_port = args->port;
     local_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    log_debug("[recv_thread] bound socket to %u:%d",local_addr.sin_addr.s_addr, local_addr.sin_port);
     ret = bind(multicast_recv_socket, (struct sockaddr *)(&local_addr), sizeof(local_addr));
     if (ret) {
         log_fatal("[recv_thread] bind() failed to bind socket | return NULL | errno %d", errno);
@@ -1709,9 +1707,7 @@ int *recv_thread(RECV_ARGS *args)
             }
             else {
                 // we got a socket ready
-                log_debug("[recv_thread] received packet | socket:%d ",recv_events[i].data.fd);
                 recv_buffer = mempool_dalloc(mempool);
-                log_debug("[recv_thread] mempool alloc finished");
                 if (recv_buffer == NULL) {
                     log_fatal("[recv_thread] mempool alloc failed to allocate block for new packet");
                     *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
@@ -1753,7 +1749,6 @@ int *recv_thread(RECV_ARGS *args)
                 }
                 set_event_flag(args->flag, EF_NEW_PACKET);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
-                log_debug("[recv_thread] packet pushed to manager");
             }
         }
     }

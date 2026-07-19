@@ -193,7 +193,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
             break;
 
         if (flag_val & EF_NEW_PACKET) {
-            log_debug("[packet_handler_thread] new packet received");
             reset_single_event(args->flag, EF_NEW_PACKET);
 
             node = queue_pop(args->queue, QOPT_NON_BLOCK);
@@ -259,6 +258,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 // todo handle all types of packets
                 switch (packet_header.pac_type) {
                     case MSG_INIT_PACKET:
+                        log_info("[packet_handler_thread] received init packet");
                         // validate the public key (this is not decryption, nothing is encrypted here)
                         ret = crypto_sign_verify_detached(
                             ((init_packet_data_t *)packet->data)->signature, (unsigned char *)packet,
@@ -270,9 +270,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             curr_time = time(NULL);
                             if ((((init_packet_data_t *)packet)->timestamp < curr_time - 1) ||
                                 (((init_packet_data_t *)packet)->timestamp > curr_time)) {
-
-                                printf("DEBUG: time rejected");
-                                fflush(stdout);
+                                log_debug("[packet_handler_thread] time rejected init packet (signature did not match)");
                                 break;
                             }
                         }
@@ -283,6 +281,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         ret = args->device_tree->search_pin(args->device_tree, &rdev, (void **)&found_rdev);
 
                         if (ret == 1) {
+                            log_debug("[packet_handler_thread] device already registered");
                             found_rdev->expiration_time = time(NULL); // renew the timestamp
                             found_rdev->ip = packet_info->address.sin_addr.s_addr;
                             // copy the username
@@ -322,6 +321,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             log_fatal("[packet_handler_thread] device_tree insert() failed| return %d", ret);
                             goto cleanup;
                         }
+                        log_debug("[packet_handler_thread] device inserted to tree");
 
                         // send signing request
                         randombytes_buf(signing_request_data->nonce, INDIGO_NONCE_SIZE);
@@ -361,7 +361,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                     break; // winlib errors go here
                             }
                         }
-
+                        log_debug("[packet_handler_thread] sent signing request");
                         // add signing response to expected packets
                         xsr.expiration_time = time(NULL) + EXPIRATION_TIME;
                         memcpy(xsr.nonce, signing_request_data->nonce, INDIGO_NONCE_SIZE);
@@ -376,6 +376,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
                         break;
                     case MSG_SIGNING_REQUEST:
+                        log_info("[packet_handler_thread] received signing request");
                         // validate the public key
                         ret = crypto_sign_verify_detached(
                             ((signing_request_data_t *)packet->data)->signature, (unsigned char *)packet,
@@ -1230,10 +1231,10 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                     case MSG_IP_CHANGE:
                         if (packet->magic_number != MAGIC_NUMBER_2)
                             break;
-                        fprintf(stderr, "DEBUG: not implemented");
+                        log_debug("[packet_handler_thread] received ip change");
                         break;
                     case MSG_ERR:
-                        fprintf(stderr, "DEBUG: RECEIVED ERROR MSG");
+                        log_debug("[packet_handler_thread] received error");
                         break;
                     default:
                         printf("\noops...\n");
