@@ -659,9 +659,7 @@ int load_password_hash(char **hash)
             strlen(INDIGO_PSW_DIR) + strlen(INDIGO_PSW_HASH_FILE_NAME) + 2,  INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR );
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
-    strcpy(file_name, INDIGO_PSW_DIR);
-    strcat(file_name, "/");
-    strcat(file_name, INDIGO_PSW_HASH_FILE_NAME);
+    strcpy(file_name, INDIGO_PSW_DIR"/"INDIGO_PSW_HASH_FILE_NAME);
 
     fp = fopen(file_name, "r");
     if (fp == NULL) {
@@ -1030,12 +1028,13 @@ int bypass_password(void **master_key) {
 
     ret = crypto_pwhash_str_verify(stored_hash, psw, 4);
     if (ret) {
-        printf("what??");
         log_debug("couldn't verify password hash");
+        return -1;
     }
     ret = derive_master_key(psw, 4, master_key);
     if (ret != 0) {
         log_error("[bypass_password] derive_master_key() failed | return %d", ret);
+        return -1;
     }
     return 0;
 }

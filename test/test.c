@@ -22,15 +22,20 @@ SOFTWARE.
 
 #include "test.h"
 
+#include "config.h"
+#include "indigo_types.h"
 #include "mempool.h"
 
 #include <binary_tree.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
+#include <crypto_utils.h>
+#include <net_io.h>
 
 int main(void) {
     printf("testing indigo libraries...\n");
-    run_tests(test_arr,7);
+    run_tests(test_arr,8);
     return 0;
 }
 
@@ -38,6 +43,8 @@ void run_tests(test_t *tests, const uint64_t count) {
     uint64_t passed = 0;
     int ret;
     if ((tests == NULL) || (count == 0)) return;
+    ret = sodium_init();
+    if (ret) return;
 
     for (uint64_t i = 0; i < count; i++) {
         ret = tests[i].test();
@@ -298,7 +305,38 @@ int test_mempool()
 
     return TEST_PASSED;
 }
+int test_signature()
+{
+    packet_t packet;
+    init_packet_data_t *packet_data = NULL;
+    signing_key_pair_t sign_key_pair;
+    char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1];
+    void *master_key = NULL;
+    int ret = 0;
 
+    ret = bypass_password(&master_key);
+    if (ret) return TEST_FAILED;
+    ret = load_signing_key_pair(&sign_key_pair, master_key);
+    if (ret) return TEST_FAILED;
+    ret = load_username(username);
+    if (ret) return TEST_FAILED;
+
+    packet_data = (init_packet_data_t *)packet.data;
+
+    build_packet(&packet, MSG_INIT_PACKET, sign_key_pair.public, NULL, NULL);
+    strncpy((char *)packet_data->username, (char *)username, MAX_USERNAME_LEN * sizeof(uint32_t));
+
+    packet_data->timestamp = time(NULL);
+    ret = crypto_sign_detached(packet_data->signature, NULL, (unsigned char *)&packet,
+        offsetof(packet_t, data) + offsetof(init_packet_data_t, signature),sign_key_pair.secret);
+    if (ret) return TEST_FAILED;
+
+    ret = crypto_sign_verify_detached(((init_packet_data_t *)packet.data)->signature, (unsigned char *)&packet,
+                            offsetof(packet_t, data) + offsetof(init_packet_data_t, signature), packet.id);
+    if (ret) return TEST_FAILED;
+
+    return TEST_PASSED;
+}
 int test_buffer() {
     return TEST_PASSED;
 }

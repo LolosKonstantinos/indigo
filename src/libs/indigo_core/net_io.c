@@ -188,9 +188,8 @@ int send_discovery_packets(int port, uint32_t multicast_addr, socket_ll *sockets
                 goto cleanup;
 
             packet_data->timestamp = time(NULL);
-            crypto_sign_detached((unsigned char *)&packet_data->signature, NULL, (unsigned char *)&packet,
-                offsetof(packet_t, data) + offsetof(init_packet_data_t, signature),
-                        sign_key_pair->secret);
+            crypto_sign_detached(packet_data->signature, NULL, (unsigned char *)&packet,
+                offsetof(packet_t, data) + offsetof(init_packet_data_t, signature),sign_key_pair->secret);
 
             ret_val = WSASendTo(sock->sock, sInfo[infolen - 1].buf, 1, sInfo[infolen - 1].bytes, MSG_DONTROUTE,
                                 (struct sockaddr *)(sInfo[infolen - 1].dest), sizeof(struct sockaddr),
@@ -280,6 +279,11 @@ int send_discovery_packets(int port, uint32_t multicast_addr, socket_ll *sockets
         for (size_t i = 0; i < pCount - 1; i++) {
             for (size_t j = 0; j < infolen; j++) {
                 WSAResetEvent(handles[j]);
+
+                packet_data->timestamp = time(NULL);
+                memset(packet_data->signature, 0, crypto_sign_BYTES);
+                crypto_sign_detached(packet_data->signature, NULL, (unsigned char *)&packet,
+                    offsetof(packet_t, data) + offsetof(init_packet_data_t, signature),sign_key_pair->secret);
 
                 ret_val = WSASendTo(sInfo[j].socket, sInfo->buf, 1, sInfo->bytes, MSG_DONTROUTE,
                                     (struct sockaddr *)(sInfo->dest), sizeof(struct sockaddr), sInfo->overlapped, NULL);
@@ -717,14 +721,14 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, socket
     s_addr.sin_family = AF_INET;
 
     build_packet(&packet, MSG_INIT_PACKET, sign_key_pair->public, NULL, NULL);
-    strcpy((char *)packet_data->username, (char *)username);
-    packet_data->timestamp = time(NULL);
+    strncpy((char *)packet_data->username, (char *)username, MAX_USERNAME_LEN * sizeof(uint32_t));
+
     pthread_mutex_lock(&(sockets->mutex));
     for (uint32_t i = 0; i < pCount; i++) {
         //use crypto sign detached
+        packet_data->timestamp = time(NULL);
         crypto_sign_detached(packet_data->signature, NULL, (unsigned char *)&packet,
-            offsetof(packet_t, data) + offsetof(init_packet_data_t, signature),
-                    sign_key_pair->secret);
+            offsetof(packet_t, data) + offsetof(init_packet_data_t, signature),sign_key_pair->secret);
 
         for (socket_node *s = sockets->head; s != NULL; s = s->next) {
             ret = sendto(s->sock, &packet, sizeof(packet_t), 0, (struct sockaddr *)&s_addr, sizeof(struct sockaddr_in));

@@ -158,14 +158,14 @@ typedef struct packet_info_t {
 // the discovery packet format
 
 typedef struct PACKED init_packet_data_t {
-    time_t timestamp;
+    uint64_t timestamp;
     char username[MAX_USERNAME_LEN * sizeof(uint32_t)];
     unsigned char signature[crypto_sign_BYTES];
 } init_packet_data_t;
 #define PAC_INIT_SIZE (sizeof(udp_packet_header) + sizeof(init_packet_data_t))
 
 typedef struct PACKED signing_request_data_t {
-    time_t timestamp;
+    uint64_t timestamp;
     unsigned char nonce[INDIGO_NONCE_SIZE];
     unsigned char signature[crypto_sign_BYTES];
 } signing_request_data_t;
@@ -213,12 +213,12 @@ typedef struct fwd_fsr_t {
     uint32_t addr;
     unsigned char id[crypto_sign_PUBLICKEYBYTES];
     char zero[4];
-    time_t expiration_time;
+    uint64_t expiration_time;
     struct fwd_fsr_t *next;
 } fwd_fsr_t;
 
 typedef struct remote_device_t {
-    time_t expiration_time; // the time until which we consider the device active,
+    uint64_t expiration_time; // the time until which we consider the device active,
                             // updated with any packet
     uint64_t last_fid;
     int port;
@@ -245,8 +245,8 @@ typedef struct session_t {
     session_id_t session_id;
     int port;
     uint32_t ip;
-    time_t start_time;
-    time_t end_time;
+    uint64_t start_time;
+    uint64_t end_time;
     size_t bytes_moved;
     uint16_t status_flags;
 } session_t;

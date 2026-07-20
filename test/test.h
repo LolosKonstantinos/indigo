@@ -36,7 +36,7 @@ typedef struct test_t {
 }test_t;
 
 void run_tests(test_t *tests, uint64_t count);
-
+int test_signature();
 //test utilities
 int test_binary_tree();
 int test_buffer();
@@ -88,7 +88,8 @@ static test_t test_arr[] = {
     test_crypto, "crypto",
     test_event_flags, "event flags",
     test_buffer, "buffer",
-    test_queue, "queue"
+    test_queue, "queue",
+    test_signature, "sig"
 };
 
 #endif //INDIGO_TEST_H

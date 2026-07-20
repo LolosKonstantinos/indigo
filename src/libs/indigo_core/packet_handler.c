@@ -275,7 +275,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             }
                         }
                         else {
-                            log_debug("[packet_handler_thread] failed to verify signed init packet");
+                            log_debug("[packet_handler_thread] failed to verify signed init packet ret %d",ret);
                             break;
                         }
 
