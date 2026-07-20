@@ -79,6 +79,9 @@ int main(int argc, char *argv[])
     }
     log_add_fp(log_file, LOG_TRACE);
 
+    if (sodium_init() == -1)
+        return INDIGO_ERROR_SODIUM_ERROR;
+
 #ifdef _WIN32
     ret = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (ret != 0) {
@@ -86,11 +89,6 @@ int main(int argc, char *argv[])
         return 1;
     }
 #endif
-
-    if (sodium_init() == -1)
-        return INDIGO_ERROR_SODIUM_ERROR;
-
-
 
     setlocale(LC_ALL, "");
     initscr();

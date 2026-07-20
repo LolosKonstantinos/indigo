@@ -881,14 +881,14 @@ int load_signing_key_pair(signing_key_pair_t *key_pair, const unsigned char *mas
         return INDIGO_ERROR_INCOMPATIBLE_FILE;
     }
 
-    cipher = (unsigned char *)malloc(crypto_secretbox_MACBYTES + sizeof(signing_key_pair_t));
+    cipher = malloc(crypto_secretbox_MACBYTES + sizeof(signing_key_pair_t));
     if (cipher == NULL) {
         fclose(fp);
         log_error("malloc failed allocating %lld bytes for keypair ciphertext | return %d",
             crypto_secretbox_MACBYTES + sizeof(signing_key_pair_t), INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
-    nonce = (unsigned char *)malloc(crypto_secretbox_NONCEBYTES);
+    nonce = malloc(crypto_secretbox_NONCEBYTES);
     if (nonce == NULL) {
         fclose(fp);
         free(cipher);
