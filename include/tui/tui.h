@@ -28,7 +28,8 @@ SOFTWARE.
 #include <Queue.h>
 #include <binary_tree.h>
 #include <lht.h>
-#include <ncursesw/curses.h>
+//#include <ncursesw/curses.h>
+#include <curses.h>
 #include <stdint.h>
 
 int verify_user(void **master_key);
