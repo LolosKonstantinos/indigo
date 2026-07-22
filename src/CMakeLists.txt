@@ -20,3 +20,8 @@ target_link_libraries(${PROJECT_NAME}_tui PRIVATE indigo_core
 if(WIN32)
     target_link_libraries(${PROJECT_NAME}_tui PRIVATE ws2_32 IPHLPAPI)
 endif ()
+
+if(LINUX)
+    add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address)
+endif()
