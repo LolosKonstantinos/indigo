@@ -265,8 +265,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             // validate timestamp
                             // todo: this is not valid for unsynchronised offline systems
                             curr_time = time(NULL);
-                            if ((((init_packet_data_t *)packet)->timestamp < curr_time - 1) ||
-                                (((init_packet_data_t *)packet)->timestamp > curr_time)) {
+                            if ((((init_packet_data_t *)packet)->timestamp < curr_time - 60) ||
+                                (((init_packet_data_t *)packet)->timestamp > curr_time + 60)) {
                                 log_debug("[packet_handler_thread] time rejected init packet (signature did not match)");
                                 break;
                             }
