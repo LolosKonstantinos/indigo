@@ -869,7 +869,13 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args)
         goto cleanup;
     }
 
-    msg = (struct msghdr){&sa, sizeof(sa), &iov, 1, NULL, 0, 0};
+    msg = (struct msghdr){.msg_name = &sa,
+        .msg_namelen = sizeof(sa),
+        .msg_iov = &iov,
+        .msg_iovlen = 1,
+        .msg_control = NULL,
+        .msg_controllen = 0,
+        .msg_flags = 0};
 
     // the main loop
     while (termination_is_on(args->flag) == 0) {
