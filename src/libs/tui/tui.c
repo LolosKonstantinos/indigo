@@ -848,7 +848,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
                             dev_tree->search_release(dev_tree);
 
                             send_node->counter = 0;
-                            send_node->port = htons(2693);
+                            send_node->port = PORT;
                             send_node->next = NULL;
                             memcpy(send_node->session_id.pk, last_id, crypto_sign_PUBLICKEYBYTES);
                             randombytes(send_node->nonce, 24);

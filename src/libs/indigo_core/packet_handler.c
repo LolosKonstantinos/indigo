@@ -340,7 +340,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             goto cleanup;
                         }
 
-                        ret = send_packet((int)htonl(PORT), packet_info->address.sin_addr.s_addr, args->sockets, packet,
+                        ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets, packet,
                                           args->flag);
 
                         if (ret) {
@@ -360,6 +360,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 default:
                                     break; // winlib errors go here
                             }
+                            break;
                         }
                         log_debug("[packet_handler_thread] sent signing request");
                         // add signing response to expected packets
@@ -535,7 +536,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             goto cleanup;
                         }
 
-                        ret = send_packet((int)htonl(PORT), packet_info->address.sin_addr.s_addr, args->sockets, packet,
+                        ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets, packet,
                                           args->flag);
                         if (ret) {
                             switch (ret) {
@@ -679,7 +680,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                                       " signing response packet | return %d", *process_return);
                                             goto cleanup;
                                         }
-                                        ret = send_packet((int)htonl(PORT), packet_info->address.sin_addr.s_addr,
+                                        ret = send_packet(PORT, packet_info->address.sin_addr.s_addr,
                                                           args->sockets, packet, args->flag);
                                         if (ret) {
                                             switch (ret) {
@@ -1576,7 +1577,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     session->bytes_moved = 0;
     session->start_time = time(NULL);
     session->status_flags = 0;
-    session->port = htons(PORT);
+    session->port = PORT;
     session->ip = fwd->addr;
 
     ret = session_tree->insert(session_tree, session);
@@ -1648,7 +1649,7 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
     session->bytes_moved = 0;
     session->start_time = time(NULL);
     session->status_flags = 0;
-    session->port = htons(PORT);
+    session->port = PORT;
     session->ip = packet_info->address.sin_addr.s_addr;
 
     ret = session_tree->insert(session_tree, session);

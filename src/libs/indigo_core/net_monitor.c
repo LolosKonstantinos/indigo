@@ -105,7 +105,7 @@ socket_node *get_discovery_sockets(const int port, const uint32_t multicast_addr
         memset(&server, 0, sizeof(server));
         server.sin_family = AF_INET;
         server.sin_port = port;
-        server.sin_addr.s_addr = htonl(p_ip_subnet[i].ip);
+        server.sin_addr.s_addr = p_ip_subnet[i].ip;
 
         err = bind(new_sock->sock, (struct sockaddr *)(&server), sizeof(server));
         if (err == SOCKET_ERROR) {
@@ -386,14 +386,17 @@ socket_node *get_discovery_sockets(int port, uint32_t multicast_addr)
             first_sock = new_sock;
             temp_sock = new_sock;
         }
-        memcpy(&(new_sock->ip_subnet), &(p_ip_subnet[i]), sizeof(ip_subnet_t));
+        new_sock->ip_subnet.interface_type = p_ip_subnet->interface_type;
+        new_sock->ip_subnet.ip = p_ip_subnet->ip;
+        new_sock->ip_subnet.mask = p_ip_subnet->mask;
+        log_debug("[get_discovery_sockets] interface:%d mask:%d", new_sock->ip_subnet.ip, new_sock->ip_subnet.mask);
 
         // bind the socket to the local address (one for every address found)
         memset(&interface, 0, sizeof(interface));
         interface.sin_family = AF_INET;
         interface.sin_port = port;
-        interface.sin_addr.s_addr = htonl(p_ip_subnet[i].ip);
-        log_debug("[get_discovery_sockets] bound socket to %u",interface.sin_addr.s_addr);
+        interface.sin_addr.s_addr = p_ip_subnet[i].ip;
+
         err = bind(new_sock->sock, (struct sockaddr *)(&interface), sizeof(interface));
         if (err) {
             free_discv_sock_ll(first_sock);
@@ -474,9 +477,9 @@ int get_compatible_interfaces(ip_subnet_t **ip_subnet, size_t *count)
             }
 
             // check if the current unicast is in the same subnet as some other address
-            temp_ip_subnet.ip = ntohl(saddr->sin_addr.s_addr);
+            temp_ip_subnet.ip = saddr->sin_addr.s_addr;
             saddr = (struct sockaddr_in *)i->ifa_netmask;
-            temp_ip_subnet.mask = ntohl(saddr->sin_addr.s_addr);
+            temp_ip_subnet.mask = saddr->sin_addr.s_addr;
             temp_ip_subnet.interface_type = (int)interface_type;
 
             if (!ip_in_any_subnet(temp_ip_subnet, p_ip_subnet, addr_count)) {
