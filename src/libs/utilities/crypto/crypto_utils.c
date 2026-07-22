@@ -36,8 +36,7 @@ SOFTWARE.
 #include <sysinfoapi.h>
 #else
 #include <sys/sysinfo.h>
-#include <linux/limits.h>
-#include <linux/sysinfo.h>
+#include <limits.h>
 #endif
 
 

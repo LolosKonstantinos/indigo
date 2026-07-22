@@ -44,9 +44,6 @@ SOFTWARE.
 #define fseeko64 fseeko
 #include <errno.h>
 #endif
-#ifdef __linux__
-#include <linux/limits.h>
-#endif
 
 //////////////////////////////////////////////////////////
 ///                                                    ///

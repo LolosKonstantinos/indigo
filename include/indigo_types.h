@@ -29,7 +29,7 @@ SOFTWARE.
 #include <winsock2.h>
 #define NAME_MAX MAX_PATH
 #else
-#include <linux/limits.h>
+#include <limits.h>
 #include <netinet/ip.h>
 #include <string.h>
 #include <sys/socket.h>

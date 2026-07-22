@@ -34,7 +34,6 @@ SOFTWARE.
 
 #ifdef __linux__
 #include <sys/types.h>
-#include <linux/limits.h>
 #endif
 
 #include "binary_tree.h"

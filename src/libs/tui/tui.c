@@ -47,7 +47,7 @@ SOFTWARE.
 #include <winsock2.h>
 #endif
 #ifdef __linux__
-#include <linux/limits.h>
+#include <limits.h>
 #endif
 
 int verify_user(void **master_key)

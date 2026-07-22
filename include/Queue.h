@@ -22,9 +22,6 @@ SOFTWARE.
 #ifndef QUEUE_H
 #define QUEUE_H
 
-#ifdef __linux__
-#include <linux/limits.h>
-#endif
 
 #define QUEUE_MAX_SIZE 1000
 #include <pthread.h>

@@ -39,7 +39,6 @@ SOFTWARE.
 #include <net/if.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
-#include <linux/limits.h>
 #include <sys/epoll.h>
 #include <netinet/in.h>
 #endif
