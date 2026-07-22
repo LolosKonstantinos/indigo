@@ -265,9 +265,10 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             // validate timestamp
                             // todo: this is not valid for unsynchronised offline systems
                             curr_time = time(NULL);
-                            if ((((init_packet_data_t *)packet)->timestamp < curr_time - 60) ||
-                                (((init_packet_data_t *)packet)->timestamp > curr_time + 60)) {
-                                log_debug("[packet_handler_thread] time rejected init packet (signature did not match)");
+                            if ((((init_packet_data_t *)packet->data)->timestamp < curr_time - 60) ||
+                                (((init_packet_data_t *)packet->data)->timestamp > curr_time + 60)) {
+                                log_debug("[packet_handler_thread] time rejected init packet current time %lld received"
+                                          " time %lld", curr_time, ((init_packet_data_t *)packet->data)->timestamp);
                                 break;
                             }
                         }
@@ -384,8 +385,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         if (!ret) {
                             // validate the timestamp
                             curr_time = time(NULL);
-                            if ((((signing_request_data_t *)packet)->timestamp < curr_time - 1) ||
-                                (((signing_request_data_t *)packet)->timestamp > curr_time)) {
+                            if ((((signing_request_data_t *)packet->data)->timestamp < curr_time - 60) ||
+                                (((signing_request_data_t *)packet->data)->timestamp > curr_time) + 60) {
 
                                 log_info("[packet_handler_thread] signing request rejected due to "
                                           "expired header time stamp");
