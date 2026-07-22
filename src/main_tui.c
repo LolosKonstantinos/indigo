@@ -97,11 +97,11 @@ int main(int argc, char *argv[])
     noecho();
 
     // verify the user, check if crypto files are ready to go, and check password
-    // ret = verify_user(&master_key);
-    // if (ret != 0) {
-    //     goto cleanup;
-    // }
-    bypass_password(&master_key);
+    ret = verify_user(&master_key);
+    if (ret != 0) {
+        goto cleanup;
+    }
+    // bypass_password(&master_key);
     // create the device tree
 
     ret = new_tree(&device_tree, cmp_rdev, sizeof(remote_device_t), BINARY_TREE_FLAG_AVL);
