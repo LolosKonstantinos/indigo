@@ -29,7 +29,8 @@ SOFTWARE.
 #include <config.h>
 #include <glib-2.0/glib.h>
 #include <glib-2.0/glib/gstdio.h>
-#include <ncursesw/curses.h>
+//#include <ncursesw/curses.h>
+#include <curses.h>
 #include <pthread.h>
 #include <sodium/crypto_sign.h>
 #include <stddef.h>
@@ -45,9 +46,6 @@ SOFTWARE.
 #ifdef _WIN32
 #define sleep(t) (Sleep(1000 * t))
 #include <winsock2.h>
-#endif
-#ifdef __linux__
-#include <limits.h>
 #endif
 
 int verify_user(void **master_key)
