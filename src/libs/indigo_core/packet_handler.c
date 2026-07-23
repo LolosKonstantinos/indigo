@@ -530,9 +530,9 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         }
                         build_packet(packet, MSG_SIGNING_RESPONSE, public_key, NULL,
                             signing_response_data, sizeof(signing_response_data_t));
-                        ret =
-                            crypto_sign_detached(signing_response_data->signature, NULL, (unsigned char *)packet,
-                                                 offsetof(packet_t, data) + offsetof(signing_request_data_t, signature),
+
+                        ret = crypto_sign_detached(signing_response_data->signature, NULL, (unsigned char *)packet,
+                                                 offsetof(packet_t, data) + offsetof(signing_response_data_t, signature),
                                                  args->signing_keys->secret);
                         if (ret) {
                             *process_return = INDIGO_ERROR_INVALID_PARAM;
@@ -540,6 +540,9 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                       " signing request | return %d", *process_return);
                             goto cleanup;
                         }
+
+                        memcpy(((signing_response_data_t *)packet->data)->signature, signing_response_data->signature, crypto_sign_BYTES);
+
 
                         ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets, packet,
                                           args->flag);
