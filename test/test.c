@@ -71,6 +71,8 @@ int test_binary_tree() {
     tree_t *tree = NULL;
     uint64_t temp_data = 0;
     uint64_t *found_data = NULL;
+    tree_iterator_t *iterator;
+    uint64_t count;
     int ret = 0;
 
     //test if the tree pointer is created and returned
@@ -106,6 +108,16 @@ int test_binary_tree() {
         }
         tree->search_release(tree);
     }
+    tree_lock(tree);
+    count=0;
+    ret = new_tree_iterator(tree,&iterator);
+    if (ret) return TEST_FAILED;
+    while (tree_has_next(iterator)) {
+        tree_next(iterator, (void **)&found_data);
+        count++;
+    }
+    tree_unlock(tree);
+    if (count != 1<<10) return TEST_FAILED;
     //remove the root
     temp_data = 511;
     ret = tree->remove(tree, &temp_data);

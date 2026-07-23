@@ -97,6 +97,9 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     xfp_t *found_xfp = NULL;
     tree_iterator_t *xfp_iterator = NULL;
 
+    void *remove_array = NULL;
+    size_t remove_array_size = 0;
+
     Q_FILE_SENDING_REQUEST *fwd = NULL;
 
     session_t *session = NULL;
@@ -1323,16 +1326,20 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
         if (iterations_until_cleanup > 0) {
             iterations_until_cleanup--;
-            if (!queue_is_empty(args->queue))
+            if (!queue_is_empty(args->queue)) {
                 continue;
+            }
         }
-        else
+        else {
             iterations_until_cleanup = 10;
+        }
 
         /////////////////////////////////////////
         ///     phase 2: update the trees     ///
         /////////////////////////////////////////
         curr_time = time(NULL);
+        tmp_ptr = NULL;
+        remove_array = NULL;
 
         // update the xsr tree
         ret = new_tree_iterator(xsr_tree, &xsr_iterator);
@@ -1346,17 +1353,16 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 tree_next(xsr_iterator, (void **)&found_xsr);
                 time_diff = curr_time - found_xsr->expiration_time;
                 if (time_diff > EXPIRATION_TIME) {
-                    memcpy(&xsr, found_xsr, sizeof(xsr_t));
-                    ret = xsr_tree->remove(xsr_tree, &xsr);
-                    if (ret) {
-                        // todo: i dont remember what errors it returns
-                        //  it is not an error about the node not existing,
-                        //  that would indicate an implementation error
+                    tmp_ptr = realloc(remove_array , (++remove_array_size) * sizeof(xsr_t *));
+                    if (tmp_ptr == NULL) {
+                        free(remove_array);
+                        remove_array = NULL;
                         free_tree_iterator(&xsr_iterator);
-                        *process_return = ret;
-                        log_fatal("[packet_handler_thread] xsr remove failed | return %d", *process_return);
+                        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                         goto cleanup;
                     }
+                    remove_array = tmp_ptr;
+                    ((xsr_t **)remove_array)[remove_array_size -1] = found_xsr;
                 }
                 else {
                     // branchless minimum
@@ -1364,8 +1370,16 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                                ((lowest_time - time_diff) >> (sizeof(time_t) * CHAR_BIT - 1)));
                 }
             }
+            //clangd says that there is a use after free and double free or remove array.
+            //this is clearly impossible to happen
+            for (size_t i = 0; i < remove_array_size; i++) {
+                avl_delete_unlocked(xsr_tree, ((xsr_t **)remove_array)[i]);
+            }
+            free(remove_array);
             free_tree_iterator(&xsr_iterator);
         }
+        remove_array = NULL;
+        remove_array_size = 0;
 
         // update the xfp tree
         /*TODO: there is a case where we delete the xfp but the session persists,
@@ -1382,17 +1396,16 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 tree_next(xfp_iterator, (void **)&found_xfp);
                 time_diff = curr_time - found_xfp->expiration_time;
                 if (time_diff > EXPIRATION_TIME) {
-                    memcpy(&xfp, found_xfp, sizeof(xfp_t));
-                    ret = xfp_tree->remove(xfp_tree, &xfp);
-                    if (ret) {
-                        // todo: i dont remember what errors it returns
-                        //  it is not an error about the node not existing,
-                        //  that would indicate an implementation error
+                    tmp_ptr = realloc(remove_array , (++remove_array_size) * sizeof(xfp_t *));
+                    if (tmp_ptr == NULL) {
+                        free(remove_array);
+                        remove_array = NULL;
                         free_tree_iterator(&xfp_iterator);
-                        *process_return = ret;
-                        log_fatal("[packet_handler_thread] xfp remove failed | return %d", *process_return);
+                        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                         goto cleanup;
                     }
+                    remove_array = tmp_ptr;
+                    ((xfp_t **)remove_array)[remove_array_size -1] = found_xfp;
                 }
                 else {
                     // branchless minimum
@@ -1400,8 +1413,15 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                                ((lowest_time - time_diff) >> (sizeof(time_t) * CHAR_BIT - 1)));
                 }
             }
+            for (size_t i = 0; i < remove_array_size; i++) {
+                avl_delete_unlocked(xfp_tree, ((xfp_t **)remove_array)[i]);
+            }
+            free(remove_array);
             free_tree_iterator(&xfp_iterator);
         }
+
+        remove_array = NULL;
+        remove_array_size = 0;
 
         // update the device tree
         tree_lock(args->device_tree);
@@ -1416,19 +1436,16 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 tree_next(rdev_iterator, (void **)&found_rdev);
                 time_diff = curr_time - found_rdev->expiration_time;
                 if (time_diff > EXPIRATION_TIME) {
-                    memcpy(&rdev, found_rdev, sizeof(xfp_t));
-                    // if we use thread safe remove function (tree->remove), we create a deadlock.
-                    // and we cant just unlock the tree because the iterator may not remain valid.
-                    ret = avl_delete_unlocked(args->device_tree, &rdev);
-                    if (ret) {
-                        // todo: i dont remember what errors it returns
-                        //  it is not an error about the node not existing,
-                        //  that would indicate an implementation error
+                    tmp_ptr = realloc(remove_array , (++remove_array_size) * sizeof(remote_device_t *));
+                    if (tmp_ptr == NULL) {
+                        free(remove_array);
+                        remove_array = NULL;
                         free_tree_iterator(&rdev_iterator);
-                        *process_return = ret;
-                        log_fatal("[packet_handler_thread] device_tree remove failed | return %d", *process_return);
+                        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                         goto cleanup;
                     }
+                    remove_array = tmp_ptr;
+                    ((remote_device_t **)remove_array)[remove_array_size -1] = found_rdev;
                 }
                 else {
                     // branchless minimum
@@ -1436,6 +1453,10 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                                ((lowest_time - time_diff) >> (sizeof(time_t) * CHAR_BIT - 1)));
                 }
             }
+            for (size_t i = 0; i < remove_array_size; i++) {
+                avl_delete_unlocked(args->device_tree, ((remote_device_t **)remove_array)[i]);
+            }
+            free(remove_array);
             free_tree_iterator(&rdev_iterator);
         }
         tree_unlock(args->device_tree);
@@ -1450,9 +1471,13 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
         clock_gettime(CLOCK_REALTIME, &timespec);
         timespec.tv_sec += (time_t)lowest_time;
 
-        pthread_mutex_lock(&args->flag->mutex);
-        pthread_cond_timedwait(&args->flag->cond, &args->flag->mutex, &timespec);
-        pthread_mutex_unlock(&args->flag->mutex);
+        log_debug("[packet_handler_thread] entered wait state 1");
+        pthread_mutex_lock(&(args->flag->mutex));
+        log_debug("[packet_handler_thread] entered wait state 2");
+        pthread_cond_timedwait(&(args->flag->cond), &(args->flag->mutex), &timespec);
+        log_debug("[packet_handler_thread] exited wait state 3");
+        pthread_mutex_unlock(&(args->flag->mutex));
+        log_debug("[packet_handler_thread] exited wait state 4");
     }
 
     free_tree(xsr_tree);

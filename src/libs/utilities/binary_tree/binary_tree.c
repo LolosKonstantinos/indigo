@@ -1145,7 +1145,7 @@ void tree_unlock(tree_t *t) {
 int new_tree_iterator(tree_t *tree, tree_iterator_t **iterator) {
     tree_node_t **stack = NULL;
 
-    if (!tree) {
+    if (!tree || !iterator) {
         log_error("null tree | return -1");
         return -1;
     }
@@ -1170,7 +1170,6 @@ int new_tree_iterator(tree_t *tree, tree_iterator_t **iterator) {
     if (!stack){
         free(*iterator);
         *iterator = NULL;
-        free(stack);
         log_error("malloc failed allocating %lld bytes for iteration stack| return 1",
             sizeof(tree_node_t *) * ((2 * tree->priv->height) + 2));
         return 1;
@@ -1212,6 +1211,8 @@ int tree_next(tree_iterator_t *iterator, void **data) {
     --top;
     if (next_node->left) *(++top) = next_node->left;
     if (next_node->right) *(++top) = next_node->right;
+
+    iterator->top = top;
 
     *data = next_node->data;
     return 0;
