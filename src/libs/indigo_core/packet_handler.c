@@ -191,297 +191,108 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
         node = queue_pop(args->queue, QOPT_NON_BLOCK);
 
-        if (node == NULL)
-            continue;
+        if (node != NULL) {
+            if (node->type == QET_NEW_PACKET) {
+                // extract the contents of the node
+                packet = node->data;
+                packet_info = node->data + sizeof(packet_t);
 
-        if (node->type == QET_NEW_PACKET) {
-            // extract the contents of the node
-            packet = node->data;
-            packet_info = node->data + sizeof(packet_t);
+                destroy_qnode(node);
+                node = NULL;
 
-            destroy_qnode(node);
-            node = NULL;
+                // prepare the remote device struct to fill with the remote device info
+                // we zero so that previous garbage doesn't affect the new device
+                memset(&rdev, 0, sizeof(remote_device_t));
+                // most of the time we need to search the tree so we just copy it from the start
+                memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
+                if (packet->pac_type == MSG_SIGNING_RESPONSE)
+                    log_debug("[packet_handler_thread] received singing response");
+                // check if the packet is encrypted
+                if (packet->magic_number == MAGIC_NUMBER_2) {
+                    ret = args->device_tree->search(args->device_tree, &rdev);
+                    if (ret == 0) {
+                        // we cant decrypt a packet from a device we don't know
 
-            // prepare the remote device struct to fill with the remote device info
-            // we zero so that previous garbage doesn't affect the new device
-            memset(&rdev, 0, sizeof(remote_device_t));
-            // most of the time we need to search the tree so we just copy it from the start
-            memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
-            if (packet->pac_type == MSG_SIGNING_RESPONSE)
-                log_debug("[packet_handler_thread] received singing response");
-            // check if the packet is encrypted
-            if (packet->magic_number == MAGIC_NUMBER_2) {
-                ret = args->device_tree->search(args->device_tree, &rdev);
-                if (ret == 0) {
-                    // we cant decrypt a packet from a device we don't know
-
-                    // we no longer need the packet
-                    mempool_free(args->mempool, packet);
-                    packet = NULL;
-                    packet_info = NULL;
-                    continue;
-                }
-                /* the most likely is that we need to use the server receive key.
-                 * we first try to decrypt with the server key. If it fails,
-                 * we try to decrypt with the client key.
-                 * If it fails then, something went wrong, it is either an attacker
-                 * or a weird error on the other side
-                 * It should be fast enough, it fails on the tag recalculation not the decryption
-                 */
-                // todo: change the system so that we need to perform only one decryption
-
-                /*
-                 * todo: one idea is to have separate keys for each session and the peers public key
-                 * is the identifier in both the session tree and the packet id field
-                 */
-                ret = decrypt_packet(packet, rdev.server_rk);
-                if (ret) {
-                    ret = decrypt_packet(packet, rdev.client_rk);
-                    if (ret) {
                         // we no longer need the packet
                         mempool_free(args->mempool, packet);
                         packet = NULL;
                         packet_info = NULL;
-
                         continue;
                     }
+                    /* the most likely is that we need to use the server receive key.
+                     * we first try to decrypt with the server key. If it fails,
+                     * we try to decrypt with the client key.
+                     * If it fails then, something went wrong, it is either an attacker
+                     * or a weird error on the other side
+                     * It should be fast enough, it fails on the tag recalculation not the decryption
+                     */
+                    // todo: change the system so that we need to perform only one decryption
+
+                    /*
+                     * todo: one idea is to have separate keys for each session and the peers public key
+                     * is the identifier in both the session tree and the packet id field
+                     */
+                    ret = decrypt_packet(packet, rdev.server_rk);
+                    if (ret) {
+                        ret = decrypt_packet(packet, rdev.client_rk);
+                        if (ret) {
+                            // we no longer need the packet
+                            mempool_free(args->mempool, packet);
+                            packet = NULL;
+                            packet_info = NULL;
+
+                            continue;
+                        }
+                    }
                 }
-            }
 
-            memcpy(&packet_header, packet, sizeof(packet_header));
+                memcpy(&packet_header, packet, sizeof(packet_header));
 
-            // todo handle all types of packets
-            switch (packet_header.pac_type) {
-                case MSG_INIT_PACKET:
-                    log_info("[packet_handler_thread] received init packet");
-                    // validate the public key (this is not decryption, nothing is encrypted here)
-                    ret = crypto_sign_verify_detached(
-                        ((init_packet_data_t *)packet->data)->signature, (unsigned char *)packet,
-                        offsetof(packet_t, data) + offsetof(init_packet_data_t, signature), packet->id);
+                // todo handle all types of packets
+                switch (packet_header.pac_type) {
+                    case MSG_INIT_PACKET:
+                        log_info("[packet_handler_thread] received init packet");
+                        // validate the public key (this is not decryption, nothing is encrypted here)
+                        ret = crypto_sign_verify_detached(
+                            ((init_packet_data_t *)packet->data)->signature, (unsigned char *)packet,
+                            offsetof(packet_t, data) + offsetof(init_packet_data_t, signature), packet->id);
 
-                    if (ret == 0) {
-                        // validate timestamp
-                        // todo: this is not valid for unsynchronised offline systems
-                        curr_time = time(NULL);
-                        if ((((init_packet_data_t *)packet->data)->timestamp < curr_time - 60) ||
-                            (((init_packet_data_t *)packet->data)->timestamp > curr_time + 60)) {
-                            log_debug("[packet_handler_thread] time rejected init packet current time %lld received"
-                                      " time %lld",
-                                      curr_time, ((init_packet_data_t *)packet->data)->timestamp);
-                            break;
-                        }
-                    }
-                    else {
-                        log_debug("[packet_handler_thread] failed to verify signed init packet ret %d", ret);
-                        break;
-                    }
-
-                    // search in the tree
-                    ret = args->device_tree->search_pin(args->device_tree, &rdev, (void **)&found_rdev);
-
-                    if (ret == 1) {
-                        log_debug("[packet_handler_thread] device already registered");
-                        found_rdev->expiration_time = time(NULL); // renew the timestamp
-                        found_rdev->ip = packet_info->address.sin_addr.s_addr;
-                        // copy the username
-                        memcpy(tmp_username, ((init_packet_data_t *)packet)->username,
-                               MAX_USERNAME_LEN * sizeof(wchar_t));
-                        sanitize_username(tmp_username);
-                        memcpy(found_rdev->username, ((init_packet_data_t *)packet)->username, MAX_USERNAME_LEN);
-
-                        args->device_tree->search_release(args->device_tree);
-                        break;
-                    }
-                    args->device_tree->search_release(args->device_tree);
-
-                    // the remote device is not on the tree so we add it
-                    rdev.expiration_time = time(NULL);
-                    rdev.ip = packet_info->address.sin_addr.s_addr;
-                    rdev.client_rk = NULL;
-                    rdev.client_tk = NULL;
-                    rdev.server_rk = NULL;
-                    rdev.server_tk = NULL;
-                    rdev.fsr_list = NULL;
-                    rdev.fsr_count = 0;
-                    rdev.dev_state_flag = RDSF_UNVERIFIED; // the device is not verified
-
-                    memcpy(known_key.key, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
-                    if (known_keys_tree->search(known_keys_tree, &known_key)) {
-                        rdev.dev_state_flag |= known_key.status;
-                    }
-                    else {
-                        rdev.dev_state_flag |= KNOWN_KEY_STATUS_UNKNOWN;
-                    }
-
-                    ret = args->device_tree->insert(args->device_tree, &rdev);
-
-                    if (ret) {
-                        *process_return = ret;
-                        log_fatal("[packet_handler_thread] device_tree insert() failed| return %d", ret);
-                        goto cleanup;
-                    }
-                    log_debug("[packet_handler_thread] device inserted to tree");
-
-                    // send signing request
-                    randombytes_buf(signing_request_data->nonce, INDIGO_NONCE_SIZE);
-                    signing_request_data->timestamp = time(NULL);
-
-                    build_packet(packet, MSG_SIGNING_REQUEST, public_key, NULL, signing_request_data,
-                                 sizeof(signing_request_data_t));
-
-                    ret = crypto_sign_detached(signing_request_data->signature, NULL, (unsigned char *)packet,
-                                               offsetof(packet_t, data) + offsetof(signing_request_data_t, signature),
-                                               args->signing_keys->secret);
-                    if (ret) {
-                        *process_return = INDIGO_ERROR_INVALID_PARAM;
-                        log_fatal("[packet_handler_thread] crypto_sign_detached failed | return %d", *process_return);
-                        goto cleanup;
-                    }
-
-                    memcpy(((signing_request_data_t *)packet->data)->signature, signing_request_data->signature,
-                           crypto_sign_BYTES);
-
-                    ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets, packet, args->flag);
-
-                    if (ret) {
-                        switch (ret) {
-                            case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
-                            case INDIGO_ERROR_INVALID_PARAM:
-                            case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
-                                *process_return = ret;
-                                log_fatal("[packet_handler_thread] send_packet() failed to send signing request "
-                                          "| return %d",
-                                          ret);
-                                goto cleanup;
-                            case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should terminate for that
+                        if (ret == 0) {
+                            // validate timestamp
+                            // todo: this is not valid for unsynchronised offline systems
+                            curr_time = time(NULL);
+                            if ((((init_packet_data_t *)packet->data)->timestamp < curr_time - 60) ||
+                                (((init_packet_data_t *)packet->data)->timestamp > curr_time + 60)) {
+                                log_debug("[packet_handler_thread] time rejected init packet current time %lld received"
+                                          " time %lld",
+                                          curr_time, ((init_packet_data_t *)packet->data)->timestamp);
                                 break;
-                            case INDIGO_ERROR_NETWORK_RESET:
-                                set_event_flag(args->flag, EF_RESET_SOCKETS);
-                                break;
-                            default:
-                                break; // winlib errors go here
-                        }
-                        break;
-                    }
-                    log_debug("[packet_handler_thread] sent signing request");
-                    // add signing response to expected packets
-                    xsr.expiration_time = time(NULL);
-                    memcpy(xsr.nonce, signing_request_data->nonce, INDIGO_NONCE_SIZE);
-
-                    memset(signing_request_data, 0, sizeof(signing_request_data_t));
-
-                    if (xsr_tree->insert(xsr_tree, &xsr)) {
-                        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                        log_fatal("[packet_handler_thread] xsr_tree insert failed | return %d", *process_return);
-                        goto cleanup;
-                    }
-
-                    break;
-                case MSG_SIGNING_REQUEST:
-                    log_debug("[packet_handler_thread] received signing request");
-                    // validate the public key
-                    ret = crypto_sign_verify_detached(
-                        ((signing_request_data_t *)packet->data)->signature, (unsigned char *)packet,
-                        offsetof(packet_t, data) + offsetof(signing_request_data_t, signature), packet->id);
-                    // todo: time errors probable (same as above)
-                    if (!ret) {
-                        // validate the timestamp
-                        curr_time = time(NULL);
-                        if ((((signing_request_data_t *)packet->data)->timestamp < curr_time - 60) ||
-                            (((signing_request_data_t *)packet->data)->timestamp > curr_time + 60)) {
-
-                            log_info("[packet_handler_thread] signing request rejected due to "
-                                     "expired header time stamp");
-                            break;
-                        }
-                    }
-                    else {
-                        log_debug("[packet_handler_thread] signing request rejected, invalid signature");
-                        break;
-                    }
-
-                    // sign the nonce and send the signature with the public key and a new nonce
-                    ret = sign_buffer(args->signing_keys, ((signing_request_data_t *)packet->data)->nonce,
-                                      INDIGO_NONCE_SIZE, signing_response_data->signed_nonce, NULL);
-                    // can fail only dew to wrong usage
-                    if (ret) {
-                        *process_return = INDIGO_ERROR_INVALID_PARAM;
-                        log_fatal("[packet_handler_thread] sign_buffer failed signing a peer signing request nonce "
-                                  "| return %d",
-                                  ret);
-                        goto cleanup;
-                    }
-
-                    // create session keys
-                    session_pk = malloc(crypto_kx_PUBLICKEYBYTES);
-                    session_sk = malloc(crypto_kx_SECRETKEYBYTES);
-                    if (!session_pk || !session_sk) {
-                        free(session_pk);
-                        free(session_sk);
-                        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                        log_fatal("[packet_handler_thread] malloc failed allocating %d+%d bytes"
-                                  " for session public and private key | return %d",
-                                  crypto_kx_PUBLICKEYBYTES, crypto_kx_SECRETKEYBYTES, *process_return);
-                        goto cleanup;
-                    }
-                    sodium_mlock(session_sk, crypto_kx_SECRETKEYBYTES);
-
-                    ret = crypto_kx_keypair(session_pk, session_sk);
-                    if (ret) {
-                        free(session_pk);
-                        free(session_sk);
-                        *process_return = INDIGO_ERROR_INVALID_PARAM;
-                        log_fatal("[packet_handler_thread] crypto_kx_keypair() failed creating session keys"
-                                  " | return %d",
-                                  *process_return);
-                        goto cleanup;
-                    }
-
-                    memcpy(signing_response_data->pkx, session_pk, crypto_kx_PUBLICKEYBYTES);
-                    signing_response_data->zero = 0;
-
-                    // if the peer is verified we don't need to send a signing request
-                    ret = args->device_tree->search_pin(args->device_tree, &rdev, (void **)&found_rdev);
-                    if (ret == 1) {
-                        // the device is found
-
-                        found_rdev->expiration_time = time(NULL);
-                        found_rdev->ip = packet_info->address.sin_addr.s_addr;
-
-                        if (found_rdev->dev_state_flag & RDSF_UNVERIFIED) {
-                            randombytes_buf(signing_response_data->nonce, INDIGO_NONCE_SIZE);
-                            signing_response_data->sig_request = 1;
-
-                            // insert into xsr
-                            xsr.expiration_time = time(NULL);
-                            xsr.pkx = session_pk;
-
-                            xsr.skx = session_sk;
-                            memcpy(xsr.nonce, signing_response_data->nonce, INDIGO_NONCE_SIZE);
-                            memcpy(xsr.id, packet->id, crypto_sign_PUBLICKEYBYTES);
-
-                            ret = xsr_tree->insert(xsr_tree, &xsr);
-                            if (ret) {
-
-                                args->device_tree->search_release(args->device_tree);
-                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                                log_fatal("[packet_handler_thread] xsr_tree insert failed | return %d",
-                                          *process_return);
-                                goto cleanup;
-                            }
+                                }
                         }
                         else {
-                            // we don't need to send a signature request, we erase the nonce and turn off the flag
-                            memset(signing_response_data->nonce, 0, INDIGO_NONCE_SIZE);
-                            signing_response_data->sig_request = 0;
+                            log_debug("[packet_handler_thread] failed to verify signed init packet ret %d", ret);
+                            break;
+                        }
+
+                        // search in the tree
+                        ret = args->device_tree->search_pin(args->device_tree, &rdev, (void **)&found_rdev);
+
+                        if (ret == 1) {
+                            log_debug("[packet_handler_thread] device already registered");
+                            found_rdev->expiration_time = time(NULL); // renew the timestamp
+                            found_rdev->ip = packet_info->address.sin_addr.s_addr;
+                            // copy the username
+                            memcpy(tmp_username, ((init_packet_data_t *)packet)->username,
+                                   MAX_USERNAME_LEN * sizeof(wchar_t));
+                            sanitize_username(tmp_username);
+                            memcpy(found_rdev->username, ((init_packet_data_t *)packet)->username, MAX_USERNAME_LEN);
+
+                            args->device_tree->search_release(args->device_tree);
+                            break;
                         }
                         args->device_tree->search_release(args->device_tree);
-                    }
-                    // in this case they found us before we received their discovery packet (if they sent any)
-                    else {
-                        args->device_tree->search_release(args->device_tree);
-                        // add the device to the device table
-                        // we detected the device (though it is unverified)
+
+                        // the remote device is not on the tree so we add it
                         rdev.expiration_time = time(NULL);
                         rdev.ip = packet_info->address.sin_addr.s_addr;
                         rdev.client_rk = NULL;
@@ -490,7 +301,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         rdev.server_tk = NULL;
                         rdev.fsr_list = NULL;
                         rdev.fsr_count = 0;
-                        memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
                         rdev.dev_state_flag = RDSF_UNVERIFIED; // the device is not verified
 
                         memcpy(known_key.key, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
@@ -502,253 +312,441 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         }
 
                         ret = args->device_tree->insert(args->device_tree, &rdev);
+
                         if (ret) {
-                            free(session_pk);
-                            free(session_sk);
-                            *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                            log_fatal("[packet_handler_thread] device_tree insert failed inserting device"
-                                      " from signing request | return %d",
-                                      *process_return);
+                            *process_return = ret;
+                            log_fatal("[packet_handler_thread] device_tree insert() failed| return %d", ret);
+                            goto cleanup;
+                        }
+                        log_debug("[packet_handler_thread] device inserted to tree");
+
+                        // send signing request
+                        randombytes_buf(signing_request_data->nonce, INDIGO_NONCE_SIZE);
+                        signing_request_data->timestamp = time(NULL);
+
+                        build_packet(packet, MSG_SIGNING_REQUEST, public_key, NULL, signing_request_data,
+                                     sizeof(signing_request_data_t));
+
+                        ret = crypto_sign_detached(signing_request_data->signature, NULL, (unsigned char *)packet,
+                                                   offsetof(packet_t, data) + offsetof(signing_request_data_t, signature),
+                                                   args->signing_keys->secret);
+                        if (ret) {
+                            *process_return = INDIGO_ERROR_INVALID_PARAM;
+                            log_fatal("[packet_handler_thread] crypto_sign_detached failed | return %d", *process_return);
                             goto cleanup;
                         }
 
-                        // send a nonce to verify them
-                        randombytes_buf(signing_response_data->nonce, INDIGO_NONCE_SIZE);
-                        signing_response_data->sig_request = 1;
+                        memcpy(((signing_request_data_t *)packet->data)->signature, signing_request_data->signature,
+                               crypto_sign_BYTES);
+
+                        ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets, packet, args->flag);
+
+                        if (ret) {
+                            switch (ret) {
+                                case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
+                                case INDIGO_ERROR_INVALID_PARAM:
+                                case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
+                                    *process_return = ret;
+                                    log_fatal("[packet_handler_thread] send_packet() failed to send signing request "
+                                              "| return %d",
+                                              ret);
+                                    goto cleanup;
+                                case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should terminate for that
+                                    break;
+                                case INDIGO_ERROR_NETWORK_RESET:
+                                    set_event_flag(args->flag, EF_RESET_SOCKETS);
+                                    break;
+                                default:
+                                    break; // winlib errors go here
+                            }
+                            break;
+                        }
+                        log_debug("[packet_handler_thread] sent signing request");
                         // add signing response to expected packets
                         xsr.expiration_time = time(NULL);
-                        xsr.pkx = session_pk;
-                        xsr.skx = session_sk;
-                        memcpy(xsr.nonce, signing_response_data->nonce, INDIGO_NONCE_SIZE);
-                        memcpy(xsr.id, packet->id, crypto_sign_PUBLICKEYBYTES);
+                        memcpy(xsr.nonce, signing_request_data->nonce, INDIGO_NONCE_SIZE);
+
+                        memset(signing_request_data, 0, sizeof(signing_request_data_t));
 
                         if (xsr_tree->insert(xsr_tree, &xsr)) {
                             *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                             log_fatal("[packet_handler_thread] xsr_tree insert failed | return %d", *process_return);
                             goto cleanup;
                         }
-                        memset(&xsr, 0, sizeof(xsr_t));
-                    }
-                    build_packet(packet, MSG_SIGNING_RESPONSE, public_key, NULL, signing_response_data,
-                                 sizeof(signing_response_data_t));
 
-                    ret = crypto_sign_detached(signing_response_data->signature, NULL, (unsigned char *)packet,
-                                               offsetof(packet_t, data) + offsetof(signing_response_data_t, signature),
-                                               args->signing_keys->secret);
-                    if (ret) {
-                        *process_return = INDIGO_ERROR_INVALID_PARAM;
-                        log_fatal("[packet_handler_thread] crypto_sign_detached() failed signing nonce for"
-                                  " signing request | return %d",
-                                  *process_return);
-                        goto cleanup;
-                    }
+                        break;
+                    case MSG_SIGNING_REQUEST:
+                        log_debug("[packet_handler_thread] received signing request");
+                        // validate the public key
+                        ret = crypto_sign_verify_detached(
+                            ((signing_request_data_t *)packet->data)->signature, (unsigned char *)packet,
+                            offsetof(packet_t, data) + offsetof(signing_request_data_t, signature), packet->id);
+                        // todo: time errors probable (same as above)
+                        if (!ret) {
+                            // validate the timestamp
+                            curr_time = time(NULL);
+                            if ((((signing_request_data_t *)packet->data)->timestamp < curr_time - 60) ||
+                                (((signing_request_data_t *)packet->data)->timestamp > curr_time + 60)) {
 
-                    memcpy(((signing_response_data_t *)packet->data)->signature, signing_response_data->signature,
-                           crypto_sign_BYTES);
+                                log_info("[packet_handler_thread] signing request rejected due to "
+                                         "expired header time stamp");
+                                break;
+                                }
+                        }
+                        else {
+                            log_debug("[packet_handler_thread] signing request rejected, invalid signature");
+                            break;
+                        }
 
-                    ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets, packet, args->flag);
-                    if (ret) {
-                        switch (ret) {
-                            case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
-                            case INDIGO_ERROR_INVALID_PARAM:
-                            case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
-                                *process_return = ret;
-                                log_fatal("[packet_handler_thread] send_packet() failed sending "
-                                          "signing response| return %d",
+                        // sign the nonce and send the signature with the public key and a new nonce
+                        ret = sign_buffer(args->signing_keys, ((signing_request_data_t *)packet->data)->nonce,
+                                          INDIGO_NONCE_SIZE, signing_response_data->signed_nonce, NULL);
+                        // can fail only dew to wrong usage
+                        if (ret) {
+                            *process_return = INDIGO_ERROR_INVALID_PARAM;
+                            log_fatal("[packet_handler_thread] sign_buffer failed signing a peer signing request nonce "
+                                      "| return %d",
+                                      ret);
+                            goto cleanup;
+                        }
+
+                        // create session keys
+                        session_pk = malloc(crypto_kx_PUBLICKEYBYTES);
+                        session_sk = malloc(crypto_kx_SECRETKEYBYTES);
+                        if (!session_pk || !session_sk) {
+                            free(session_pk);
+                            free(session_sk);
+                            *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                            log_fatal("[packet_handler_thread] malloc failed allocating %d+%d bytes"
+                                      " for session public and private key | return %d",
+                                      crypto_kx_PUBLICKEYBYTES, crypto_kx_SECRETKEYBYTES, *process_return);
+                            goto cleanup;
+                        }
+                        sodium_mlock(session_sk, crypto_kx_SECRETKEYBYTES);
+
+                        ret = crypto_kx_keypair(session_pk, session_sk);
+                        if (ret) {
+                            free(session_pk);
+                            free(session_sk);
+                            *process_return = INDIGO_ERROR_INVALID_PARAM;
+                            log_fatal("[packet_handler_thread] crypto_kx_keypair() failed creating session keys"
+                                      " | return %d",
+                                      *process_return);
+                            goto cleanup;
+                        }
+
+                        memcpy(signing_response_data->pkx, session_pk, crypto_kx_PUBLICKEYBYTES);
+                        signing_response_data->zero = 0;
+
+                        // if the peer is verified we don't need to send a signing request
+                        ret = args->device_tree->search_pin(args->device_tree, &rdev, (void **)&found_rdev);
+                        if (ret == 1) {
+                            // the device is found
+
+                            found_rdev->expiration_time = time(NULL);
+                            found_rdev->ip = packet_info->address.sin_addr.s_addr;
+
+                            if (found_rdev->dev_state_flag & RDSF_UNVERIFIED) {
+                                randombytes_buf(signing_response_data->nonce, INDIGO_NONCE_SIZE);
+                                signing_response_data->sig_request = 1;
+
+                                // insert into xsr
+                                xsr.expiration_time = time(NULL);
+                                xsr.pkx = session_pk;
+
+                                xsr.skx = session_sk;
+                                memcpy(xsr.nonce, signing_response_data->nonce, INDIGO_NONCE_SIZE);
+                                memcpy(xsr.id, packet->id, crypto_sign_PUBLICKEYBYTES);
+
+                                ret = xsr_tree->insert(xsr_tree, &xsr);
+                                if (ret) {
+
+                                    args->device_tree->search_release(args->device_tree);
+                                    *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                    log_fatal("[packet_handler_thread] xsr_tree insert failed | return %d",
+                                              *process_return);
+                                    goto cleanup;
+                                }
+                            }
+                            else {
+                                // we don't need to send a signature request, we erase the nonce and turn off the flag
+                                memset(signing_response_data->nonce, 0, INDIGO_NONCE_SIZE);
+                                signing_response_data->sig_request = 0;
+                            }
+                            args->device_tree->search_release(args->device_tree);
+                        }
+                        // in this case they found us before we received their discovery packet (if they sent any)
+                        else {
+                            args->device_tree->search_release(args->device_tree);
+                            // add the device to the device table
+                            // we detected the device (though it is unverified)
+                            rdev.expiration_time = time(NULL);
+                            rdev.ip = packet_info->address.sin_addr.s_addr;
+                            rdev.client_rk = NULL;
+                            rdev.client_tk = NULL;
+                            rdev.server_rk = NULL;
+                            rdev.server_tk = NULL;
+                            rdev.fsr_list = NULL;
+                            rdev.fsr_count = 0;
+                            memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
+                            rdev.dev_state_flag = RDSF_UNVERIFIED; // the device is not verified
+
+                            memcpy(known_key.key, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
+                            if (known_keys_tree->search(known_keys_tree, &known_key)) {
+                                rdev.dev_state_flag |= known_key.status;
+                            }
+                            else {
+                                rdev.dev_state_flag |= KNOWN_KEY_STATUS_UNKNOWN;
+                            }
+
+                            ret = args->device_tree->insert(args->device_tree, &rdev);
+                            if (ret) {
+                                free(session_pk);
+                                free(session_sk);
+                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                log_fatal("[packet_handler_thread] device_tree insert failed inserting device"
+                                          " from signing request | return %d",
                                           *process_return);
                                 goto cleanup;
-                            case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should terminate for that
-                                break;
-                            case INDIGO_ERROR_NETWORK_RESET:
-                                set_event_flag(args->flag, EF_RESET_SOCKETS);
-                                break;
-                            default:
-                                break; // winlib errors go here
+                            }
+
+                            // send a nonce to verify them
+                            randombytes_buf(signing_response_data->nonce, INDIGO_NONCE_SIZE);
+                            signing_response_data->sig_request = 1;
+                            // add signing response to expected packets
+                            xsr.expiration_time = time(NULL);
+                            xsr.pkx = session_pk;
+                            xsr.skx = session_sk;
+                            memcpy(xsr.nonce, signing_response_data->nonce, INDIGO_NONCE_SIZE);
+                            memcpy(xsr.id, packet->id, crypto_sign_PUBLICKEYBYTES);
+
+                            if (xsr_tree->insert(xsr_tree, &xsr)) {
+                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                log_fatal("[packet_handler_thread] xsr_tree insert failed | return %d", *process_return);
+                                goto cleanup;
+                            }
+                            memset(&xsr, 0, sizeof(xsr_t));
                         }
-                        log_debug("[packet_handler_thread] send_packet() failed");
+                        build_packet(packet, MSG_SIGNING_RESPONSE, public_key, NULL, signing_response_data,
+                                     sizeof(signing_response_data_t));
+
+                        ret = crypto_sign_detached(signing_response_data->signature, NULL, (unsigned char *)packet,
+                                                   offsetof(packet_t, data) + offsetof(signing_response_data_t, signature),
+                                                   args->signing_keys->secret);
+                        if (ret) {
+                            *process_return = INDIGO_ERROR_INVALID_PARAM;
+                            log_fatal("[packet_handler_thread] crypto_sign_detached() failed signing nonce for"
+                                      " signing request | return %d",
+                                      *process_return);
+                            goto cleanup;
+                        }
+
+                        memcpy(((signing_response_data_t *)packet->data)->signature, signing_response_data->signature,
+                               crypto_sign_BYTES);
+
+                        ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets, packet, args->flag);
+                        if (ret) {
+                            switch (ret) {
+                                case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
+                                case INDIGO_ERROR_INVALID_PARAM:
+                                case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
+                                    *process_return = ret;
+                                    log_fatal("[packet_handler_thread] send_packet() failed sending "
+                                              "signing response| return %d",
+                                              *process_return);
+                                    goto cleanup;
+                                case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should terminate for that
+                                    break;
+                                case INDIGO_ERROR_NETWORK_RESET:
+                                    set_event_flag(args->flag, EF_RESET_SOCKETS);
+                                    break;
+                                default:
+                                    break; // winlib errors go here
+                            }
+                            log_debug("[packet_handler_thread] send_packet() failed");
+                            break;
+                        }
+                        log_debug("[packet_handler_thread] sent signing response");
                         break;
-                    }
-                    log_debug("[packet_handler_thread] sent signing response");
-                    break;
 
-                case MSG_SIGNING_RESPONSE:
-                    log_debug("[packet_handler_thread] received signing response");
-                    ret = crypto_sign_verify_detached(
-                        ((signing_response_data_t *)packet->data)->signature, (unsigned char *)packet,
-                        offsetof(packet_t, data) + offsetof(signing_response_data_t, signature), packet->id);
-                    if (ret) {
-                        log_debug("[packet_handler_thread] invalid signing response");
-                        break;
-                    }
-                    // we don't validate signed time, since there is already a signed nonce to verify
+                    case MSG_SIGNING_RESPONSE:
+                        log_debug("[packet_handler_thread] received signing response");
+                        ret = crypto_sign_verify_detached(
+                            ((signing_response_data_t *)packet->data)->signature, (unsigned char *)packet,
+                            offsetof(packet_t, data) + offsetof(signing_response_data_t, signature), packet->id);
+                        if (ret) {
+                            log_debug("[packet_handler_thread] invalid signing response");
+                            break;
+                        }
+                        // we don't validate signed time, since there is already a signed nonce to verify
 
-                    memcpy(xsr.id, packet->id, crypto_sign_PUBLICKEYBYTES);
-                    ret = xsr_tree->search(xsr_tree, &xsr);
-                    if (ret == 0)
-                        break; // if there is no expected signing response, there is nothing to process
+                        memcpy(xsr.id, packet->id, crypto_sign_PUBLICKEYBYTES);
+                        ret = xsr_tree->search(xsr_tree, &xsr);
+                        if (ret == 0)
+                            break; // if there is no expected signing response, there is nothing to process
 
-                    // verify the signed nonce
-                    ret = crypto_sign_open(nonce, NULL, ((signing_response_data_t *)packet->data)->signed_nonce,
-                                           INDIGO_NONCE_SIZE + crypto_sign_BYTES, packet->id);
-                    if (ret == 0) {
-                        // if the nonce signed is the same as the one we sent to be signed
-                        if (memcmp(xsr.nonce, nonce, INDIGO_NONCE_SIZE) == 0) {
-                            // the device got verified
-                            // todo: so we need to create the client and server keys, if we need to sing nonce, we
-                            // create keys no xsr, otherwise use xsr
-                            ret = args->device_tree->search_pin(args->device_tree, &rdev, (void **)&found_rdev);
-                            /* I am not sure how we could get an expected packet for a device
-                             * that isn't in the device tree
-                             */
-                            if (ret == 1) {
-                                found_rdev->expiration_time = time(NULL);
-                                found_rdev->ip = packet_info->address.sin_addr.s_addr; // ip may have changed
+                        // verify the signed nonce
+                        ret = crypto_sign_open(nonce, NULL, ((signing_response_data_t *)packet->data)->signed_nonce,
+                                               INDIGO_NONCE_SIZE + crypto_sign_BYTES, packet->id);
+                        if (ret == 0) {
+                            // if the nonce signed is the same as the one we sent to be signed
+                            if (memcmp(xsr.nonce, nonce, INDIGO_NONCE_SIZE) == 0) {
+                                // the device got verified
+                                // todo: so we need to create the client and server keys, if we need to sing nonce, we
+                                // create keys no xsr, otherwise use xsr
+                                ret = args->device_tree->search_pin(args->device_tree, &rdev, (void **)&found_rdev);
+                                /* I am not sure how we could get an expected packet for a device
+                                 * that isn't in the device tree
+                                 */
+                                if (ret == 1) {
+                                    found_rdev->expiration_time = time(NULL);
+                                    found_rdev->ip = packet_info->address.sin_addr.s_addr; // ip may have changed
 
-                                found_rdev->dev_state_flag |= RDSF_VERIFIED;
-                                found_rdev->dev_state_flag &= (~RDSF_UNVERIFIED);
+                                    found_rdev->dev_state_flag |= RDSF_VERIFIED;
+                                    found_rdev->dev_state_flag &= (~RDSF_UNVERIFIED);
 
-                                // check if we need to verify ourselves
-                                if (((signing_response_data_t *)(packet->data))->sig_request) {
-                                    signing_response_data->zero = 0;
-                                    signing_response_data->sig_request = 0;
-                                    memset(signing_response_data->nonce, 0, INDIGO_NONCE_SIZE);
+                                    // check if we need to verify ourselves
+                                    if (((signing_response_data_t *)(packet->data))->sig_request) {
+                                        signing_response_data->zero = 0;
+                                        signing_response_data->sig_request = 0;
+                                        memset(signing_response_data->nonce, 0, INDIGO_NONCE_SIZE);
 
-                                    ret = crypto_sign(signing_response_data->signed_nonce, NULL,
-                                                      ((signing_response_data_t *)packet->data)->nonce,
-                                                      INDIGO_NONCE_SIZE, args->signing_keys->secret);
-                                    if (ret) {
-                                        *process_return = INDIGO_ERROR_INVALID_PARAM;
-                                        log_fatal("[packet_handler_thread] crypto_sign failed to sign nonce "
-                                                  "for signing request | return %d",
-                                                  *process_return);
-                                        goto cleanup;
-                                    }
+                                        ret = crypto_sign(signing_response_data->signed_nonce, NULL,
+                                                          ((signing_response_data_t *)packet->data)->nonce,
+                                                          INDIGO_NONCE_SIZE, args->signing_keys->secret);
+                                        if (ret) {
+                                            *process_return = INDIGO_ERROR_INVALID_PARAM;
+                                            log_fatal("[packet_handler_thread] crypto_sign failed to sign nonce "
+                                                      "for signing request | return %d",
+                                                      *process_return);
+                                            goto cleanup;
+                                        }
 
-                                    // create session keys
-                                    /*there is no possible way to have a situation where,
-                                     * we have created session keys but the other party hasn't verified us
-                                     * it could happen if the other party runs slightly modified code, me not happy
-                                     */
+                                        // create session keys
+                                        /*there is no possible way to have a situation where,
+                                         * we have created session keys but the other party hasn't verified us
+                                         * it could happen if the other party runs slightly modified code, me not happy
+                                         */
 
-                                    session_pk = malloc(crypto_kx_PUBLICKEYBYTES);
-                                    session_sk = malloc(crypto_kx_SECRETKEYBYTES);
-                                    if (!session_pk || !session_sk) {
+                                        session_pk = malloc(crypto_kx_PUBLICKEYBYTES);
+                                        session_sk = malloc(crypto_kx_SECRETKEYBYTES);
+                                        if (!session_pk || !session_sk) {
+                                            free(session_pk);
+                                            free(session_sk);
+                                            *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                            log_fatal("[packet_handler_thread] malloc failed allocating %d+%d bytes "
+                                                      "for session keys | return %d",
+                                                      crypto_kx_SECRETKEYBYTES, crypto_kx_SECRETKEYBYTES, *process_return);
+                                            goto cleanup;
+                                        }
+                                        sodium_mlock(session_sk, crypto_kx_SECRETKEYBYTES);
+
+                                        ret = crypto_kx_keypair(session_pk, session_sk);
+                                        if (ret) {
+                                            free(session_pk);
+                                            free(session_sk);
+                                            printf("DEBUG: kx_keypair failed");
+                                            fflush(stdout);
+                                            *process_return = INDIGO_ERROR_INVALID_PARAM;
+                                            log_fatal("[packet_handler_thread] kx_keypair failed | return %d",
+                                                      *process_return);
+                                            goto cleanup;
+                                        }
+                                        ret = crypto_kx_client_session_keys(found_rdev->client_rk, found_rdev->client_tk,
+                                                                            session_pk, session_sk,
+                                                                            ((signing_response_data_t *)packet->data)->pkx);
+                                        if (ret) {
+                                            // the peer's public key is not acceptable
+                                            free(session_pk);
+                                            free(session_sk);
+                                            break;
+                                        }
+
+                                        ret = crypto_kx_server_session_keys(found_rdev->server_rk, found_rdev->server_tk,
+                                                                            session_pk, session_sk,
+                                                                            ((signing_response_data_t *)packet->data)->pkx);
+                                        if (ret) {
+                                            // the peer's public key is not acceptable
+                                            free(session_pk);
+                                            free(session_sk);
+                                            break;
+                                        }
+
+                                        memcpy(signing_response_data->pkx, session_pk, crypto_kx_PUBLICKEYBYTES);
+
+                                        // we no longer need the keys
                                         free(session_pk);
                                         free(session_sk);
-                                        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                                        log_fatal("[packet_handler_thread] malloc failed allocating %d+%d bytes "
-                                                  "for session keys | return %d",
-                                                  crypto_kx_SECRETKEYBYTES, crypto_kx_SECRETKEYBYTES, *process_return);
-                                        goto cleanup;
-                                    }
-                                    sodium_mlock(session_sk, crypto_kx_SECRETKEYBYTES);
+                                        session_pk = NULL;
+                                        session_sk = NULL;
 
-                                    ret = crypto_kx_keypair(session_pk, session_sk);
-                                    if (ret) {
-                                        free(session_pk);
-                                        free(session_sk);
-                                        printf("DEBUG: kx_keypair failed");
-                                        fflush(stdout);
-                                        *process_return = INDIGO_ERROR_INVALID_PARAM;
-                                        log_fatal("[packet_handler_thread] kx_keypair failed | return %d",
-                                                  *process_return);
-                                        goto cleanup;
+                                        build_packet(packet, MSG_SIGNING_RESPONSE, public_key, NULL, signing_response_data,
+                                                     sizeof(signing_response_data_t));
+                                        ret = crypto_sign_detached(
+                                            signing_response_data->signature, NULL, (unsigned char *)packet,
+                                            offsetof(packet_t, data) + offsetof(signing_response_data_t, signature),
+                                            public_key);
+                                        if (ret) {
+                                            *process_return = INDIGO_ERROR_INVALID_PARAM;
+                                            log_fatal("[packet_handler_thread] crypto_sing_detached failed signing"
+                                                      " signing response packet | return %d",
+                                                      *process_return);
+                                            goto cleanup;
+                                        }
+                                        ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets, packet,
+                                                          args->flag);
+                                        if (ret) {
+                                            switch (ret) {
+                                                case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
+                                                case INDIGO_ERROR_INVALID_PARAM:
+                                                case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
+                                                    *process_return = ret;
+                                                    log_fatal("[packet_handler_thread] send_packet failed sending"
+                                                              " signing response | return &d",
+                                                              *process_return);
+                                                    goto cleanup;
+                                                case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should
+                                                    // terminate for that
+                                                    break;
+                                                case INDIGO_ERROR_NETWORK_RESET:
+                                                    set_event_flag(args->flag, EF_RESET_SOCKETS);
+                                                    break;
+                                                default:
+                                                    break; // winlib errors go here
+                                            }
+                                        }
                                     }
-                                    ret = crypto_kx_client_session_keys(found_rdev->client_rk, found_rdev->client_tk,
-                                                                        session_pk, session_sk,
-                                                                        ((signing_response_data_t *)packet->data)->pkx);
-                                    if (ret) {
-                                        // the peer's public key is not acceptable
-                                        free(session_pk);
-                                        free(session_sk);
-                                        break;
-                                    }
+                                    else {
+                                        // todo: improve error handling
+                                        // create the client and server keys
+                                        ret = crypto_kx_client_session_keys(found_rdev->client_rk, found_rdev->client_tk,
+                                                                            xsr.pkx, xsr.skx,
+                                                                            ((signing_response_data_t *)packet->data)->pkx);
+                                        if (ret) {
+                                            // the peer's public key is not acceptable
+                                            break;
+                                        }
 
-                                    ret = crypto_kx_server_session_keys(found_rdev->server_rk, found_rdev->server_tk,
-                                                                        session_pk, session_sk,
-                                                                        ((signing_response_data_t *)packet->data)->pkx);
-                                    if (ret) {
-                                        // the peer's public key is not acceptable
-                                        free(session_pk);
-                                        free(session_sk);
-                                        break;
-                                    }
-
-                                    memcpy(signing_response_data->pkx, session_pk, crypto_kx_PUBLICKEYBYTES);
-
-                                    // we no longer need the keys
-                                    free(session_pk);
-                                    free(session_sk);
-                                    session_pk = NULL;
-                                    session_sk = NULL;
-
-                                    build_packet(packet, MSG_SIGNING_RESPONSE, public_key, NULL, signing_response_data,
-                                                 sizeof(signing_response_data_t));
-                                    ret = crypto_sign_detached(
-                                        signing_response_data->signature, NULL, (unsigned char *)packet,
-                                        offsetof(packet_t, data) + offsetof(signing_response_data_t, signature),
-                                        public_key);
-                                    if (ret) {
-                                        *process_return = INDIGO_ERROR_INVALID_PARAM;
-                                        log_fatal("[packet_handler_thread] crypto_sing_detached failed signing"
-                                                  " signing response packet | return %d",
-                                                  *process_return);
-                                        goto cleanup;
-                                    }
-                                    ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets, packet,
-                                                      args->flag);
-                                    if (ret) {
-                                        switch (ret) {
-                                            case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
-                                            case INDIGO_ERROR_INVALID_PARAM:
-                                            case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
-                                                *process_return = ret;
-                                                log_fatal("[packet_handler_thread] send_packet failed sending"
-                                                          " signing response | return &d",
-                                                          *process_return);
-                                                goto cleanup;
-                                            case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should
-                                                                                // terminate for that
-                                                break;
-                                            case INDIGO_ERROR_NETWORK_RESET:
-                                                set_event_flag(args->flag, EF_RESET_SOCKETS);
-                                                break;
-                                            default:
-                                                break; // winlib errors go here
+                                        ret = crypto_kx_server_session_keys(found_rdev->server_rk, found_rdev->server_tk,
+                                                                            xsr.pkx, xsr.skx,
+                                                                            ((signing_response_data_t *)packet->data)->pkx);
+                                        if (ret) {
+                                            // the peer's public key is not acceptable
+                                            break;
                                         }
                                     }
                                 }
-                                else {
-                                    // todo: improve error handling
-                                    // create the client and server keys
-                                    ret = crypto_kx_client_session_keys(found_rdev->client_rk, found_rdev->client_tk,
-                                                                        xsr.pkx, xsr.skx,
-                                                                        ((signing_response_data_t *)packet->data)->pkx);
-                                    if (ret) {
-                                        // the peer's public key is not acceptable
-                                        break;
-                                    }
 
-                                    ret = crypto_kx_server_session_keys(found_rdev->server_rk, found_rdev->server_tk,
-                                                                        xsr.pkx, xsr.skx,
-                                                                        ((signing_response_data_t *)packet->data)->pkx);
-                                    if (ret) {
-                                        // the peer's public key is not acceptable
-                                        break;
-                                    }
-                                }
+                                args->device_tree->search_release(args->device_tree);
+
+                                // remove the expected packet
+                                free(xsr.pkx);
+                                free(xsr.skx);
+                                xsr_tree->remove(xsr_tree, &xsr);
                             }
-
-                            args->device_tree->search_release(args->device_tree);
-
-                            // remove the expected packet
-                            free(xsr.pkx);
-                            free(xsr.skx);
-                            xsr_tree->remove(xsr_tree, &xsr);
                         }
-                    }
-                    break;
-                case MSG_FILE_SENDING_REQUEST:
+                        break;
+                    case MSG_FILE_SENDING_REQUEST:
                     {
                         // we need permission to proceed, so we push it to the manager to handle
                         // tell the interface (ui via queue), the interface will ask the user
@@ -815,20 +813,20 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
                         break;
                     }
-                case MSG_FILE_SENDING_RESPONSE:
-                    if (packet->magic_number != MAGIC_NUMBER_2)
+                    case MSG_FILE_SENDING_RESPONSE:
+                        if (packet->magic_number != MAGIC_NUMBER_2)
+                            break;
+                        ret = create_client_session(packet, packet_info, args->device_tree, args->session_tree, xfp_tree,
+                                                    args->send_queue);
+                        if (ret) {
+                            *process_return = ret;
+                            log_fatal("[packet_handler_thread] failed to create client session | "
+                                      "return %d",
+                                      *process_return);
+                            goto cleanup;
+                        }
                         break;
-                    ret = create_client_session(packet, packet_info, args->device_tree, args->session_tree, xfp_tree,
-                                                args->send_queue);
-                    if (ret) {
-                        *process_return = ret;
-                        log_fatal("[packet_handler_thread] failed to create client session | "
-                                  "return %d",
-                                  *process_return);
-                        goto cleanup;
-                    }
-                    break;
-                case MSG_FILE_CHUNK:
+                    case MSG_FILE_CHUNK:
                     {
                         /*TODO: the thing is that the file descriptor is in xfp, (and we need to check xfp anyway
                          *      but we need to update the session too, it contains stats mainly
@@ -883,7 +881,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 if (in_range(&(range_node->r), chunk_number))
                                     break;
                                 prev_node = range_node;
-                            }
+                                 }
                             if (range_node == NULL)
                                 break;
 
@@ -1006,7 +1004,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                                       *process_return);
                                             goto cleanup;
                                         case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should
-                                                                            // terminate for that
+                                            // terminate for that
                                             break;
                                         case INDIGO_ERROR_NETWORK_RESET:
                                             set_event_flag(args->flag, EF_RESET_SOCKETS);
@@ -1015,7 +1013,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                             break; // winlib errors go here
                                     }
                                 }
-                            }
+                                 }
                             range_node = NULL;
 
                             xfp_tree->search_release(xfp_tree);
@@ -1136,7 +1134,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         args->session_tree->search_release(args->session_tree);
                         break;
                     }
-                case MSG_RESEND:
+                    case MSG_RESEND:
                     {
                         Q_RESEND_FILE_CHUNK *qdata;
                         if (packet->magic_number != MAGIC_NUMBER_2)
@@ -1166,7 +1164,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         }
                         break;
                     }
-                case MSG_STOP_FILE_TRANSMISSION:
+                    case MSG_STOP_FILE_TRANSMISSION:
                     {
                         Q_CONTROL_FILE_TRANSMISSION *qdata;
                         if (packet->magic_number != MAGIC_NUMBER_2)
@@ -1195,7 +1193,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         }
                         break;
                     }
-                case MSG_PAUSE_FILE_TRANSMISSION:
+                    case MSG_PAUSE_FILE_TRANSMISSION:
                     {
                         Q_CONTROL_FILE_TRANSMISSION *qdata;
                         if (packet->magic_number != MAGIC_NUMBER_2)
@@ -1224,7 +1222,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         }
                         break;
                     }
-                case MSG_CONTINUE_FILE_TRANSMISSION:
+                    case MSG_CONTINUE_FILE_TRANSMISSION:
                     {
                         Q_CONTROL_FILE_TRANSMISSION *qdata;
                         if (packet->magic_number != MAGIC_NUMBER_2)
@@ -1253,67 +1251,68 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         }
                         break;
                     }
-                case MSG_IP_CHANGE:
-                    if (packet->magic_number != MAGIC_NUMBER_2)
+                    case MSG_IP_CHANGE:
+                        if (packet->magic_number != MAGIC_NUMBER_2)
+                            break;
+                        log_debug("[packet_handler_thread] received ip change");
                         break;
-                    log_debug("[packet_handler_thread] received ip change");
-                    break;
-                case MSG_ERR:
-                    log_debug("[packet_handler_thread] received error");
-                    break;
-                default:
-                    printf("\noops...\n");
-                    break;
-            }
+                    case MSG_ERR:
+                        log_debug("[packet_handler_thread] received error");
+                        break;
+                    default:
+                        printf("\noops...\n");
+                        break;
+                }
 
-            // we no longer need the packet
-            mempool_free(args->mempool, packet);
-            packet = NULL;
-            packet_info = NULL;
-        }
-        else if (node->type == QET_SESSION_START) {
-            // they sent us a send request and the user said yes
-            fwd = node->data;
-            ret = create_server_session(fwd, args->device_tree, args->session_tree, xfp_tree, public_key, args->sockets,
-                                        args->flag);
-            free(fwd);
-            if (ret) {
-                // todo: create_server_session() uses send_packet() and returns its errors
-                // todo: do more complex error handling
-                *process_return = ret;
-                log_fatal("[packet_handler_thread] create_server_session failed creating session | return %d",
-                          *process_return);
-                goto cleanup;
+                // we no longer need the packet
+                mempool_free(args->mempool, packet);
+                packet = NULL;
+                packet_info = NULL;
             }
-            destroy_qnode(node);
-            node = NULL;
-        }
-        else if (node->type == QET_EXPECT_SEND_RESPONSE) {
-            Q_EXPECT_SEND_RESPONSE *qe = (Q_EXPECT_SEND_RESPONSE *)node->data;
-            // we sent a request to send a file, and we expect a response to that request
-            memset(&xfp, 0, sizeof(xfp_t));
-            memcpy(&(xfp.session_id), &(qe->session_id), sizeof(session_id_t));
-            xfp.file = qe->file;
-            xfp.expiration_time = time(NULL);
-            xfp.packet_count = XFP_CLIENT_FILE;
-            free(node->data);
-            destroy_qnode(node);
-            node = NULL;
+            else if (node->type == QET_SESSION_START) {
+                // they sent us a send request and the user said yes
+                fwd = node->data;
+                ret = create_server_session(fwd, args->device_tree, args->session_tree, xfp_tree, public_key, args->sockets,
+                                            args->flag);
+                free(fwd);
+                if (ret) {
+                    // todo: create_server_session() uses send_packet() and returns its errors
+                    // todo: do more complex error handling
+                    *process_return = ret;
+                    log_fatal("[packet_handler_thread] create_server_session failed creating session | return %d",
+                              *process_return);
+                    goto cleanup;
+                }
+                destroy_qnode(node);
+                node = NULL;
+            }
+            else if (node->type == QET_EXPECT_SEND_RESPONSE) {
+                Q_EXPECT_SEND_RESPONSE *qe = (Q_EXPECT_SEND_RESPONSE *)node->data;
+                // we sent a request to send a file, and we expect a response to that request
+                memset(&xfp, 0, sizeof(xfp_t));
+                memcpy(&(xfp.session_id), &(qe->session_id), sizeof(session_id_t));
+                xfp.file = qe->file;
+                xfp.expiration_time = time(NULL);
+                xfp.packet_count = XFP_CLIENT_FILE;
+                free(node->data);
+                destroy_qnode(node);
+                node = NULL;
 
-            ret = xfp_tree->insert(xfp_tree, &xfp);
-            if (ret) {
-                fclose(xfp.file);
-                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                log_fatal("[packet_handler_thread] xfp_tree insert failed inserting client file| return %d",
-                          *process_return);
-                goto cleanup;
+                ret = xfp_tree->insert(xfp_tree, &xfp);
+                if (ret) {
+                    fclose(xfp.file);
+                    *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                    log_fatal("[packet_handler_thread] xfp_tree insert failed inserting client file| return %d",
+                              *process_return);
+                    goto cleanup;
+                }
             }
-        }
-        else {
-            // probably an error but good to check
-            destroy_qnode(node);
-            node = NULL;
-            continue;
+            else {
+                // probably an error but good to check
+                destroy_qnode(node);
+                node = NULL;
+                continue;
+            }
         }
 
         /*  here if there are more packets in the queue we go back up to process them,

@@ -62,7 +62,7 @@ SOFTWARE.
 // todo: OVERRIDE_IO is not handled correctly check implementation
 #ifdef _WIN32
 int send_discovery_packets(int port, uint32_t multicast_addr, socket_ll *sockets, EFLAG *flag, uint32_t pCount,
-                           int32_t msec,const signing_key_pair_t *sign_key_pair,
+                           int32_t msec, const signing_key_pair_t *sign_key_pair,
                            char username[(MAX_USERNAME_LEN + 1) * sizeof(uint32_t)])
 {
 
@@ -189,7 +189,8 @@ int send_discovery_packets(int port, uint32_t multicast_addr, socket_ll *sockets
 
             packet_data->timestamp = time(NULL);
             crypto_sign_detached(packet_data->signature, NULL, (unsigned char *)&packet,
-                offsetof(packet_t, data) + offsetof(init_packet_data_t, signature),sign_key_pair->secret);
+                                 offsetof(packet_t, data) + offsetof(init_packet_data_t, signature),
+                                 sign_key_pair->secret);
 
             ret_val = WSASendTo(sock->sock, sInfo[infolen - 1].buf, 1, sInfo[infolen - 1].bytes, MSG_DONTROUTE,
                                 (struct sockaddr *)(sInfo[infolen - 1].dest), sizeof(struct sockaddr),
@@ -283,7 +284,8 @@ int send_discovery_packets(int port, uint32_t multicast_addr, socket_ll *sockets
                 packet_data->timestamp = time(NULL);
                 memset(packet_data->signature, 0, crypto_sign_BYTES);
                 crypto_sign_detached(packet_data->signature, NULL, (unsigned char *)&packet,
-                    offsetof(packet_t, data) + offsetof(init_packet_data_t, signature),sign_key_pair->secret);
+                                     offsetof(packet_t, data) + offsetof(init_packet_data_t, signature),
+                                     sign_key_pair->secret);
 
                 ret_val = WSASendTo(sInfo[j].socket, sInfo->buf, 1, sInfo->bytes, MSG_DONTROUTE,
                                     (struct sockaddr *)(sInfo->dest), sizeof(struct sockaddr), sInfo->overlapped, NULL);
@@ -695,7 +697,8 @@ int register_multiple_receivers(int epoll_fd, socket_ll *sockets, int *event_cou
     for (socket_node *sn = sockets->head; sn != NULL; sn = sn->next) {
         recv_events.data.fd = sn->sock;
         if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, sn->sock, &recv_events) == -1) {
-            if (errno == EEXIST) continue;
+            if (errno == EEXIST)
+                continue;
             pthread_mutex_unlock(&(sockets->mutex));
             log_error("[register_multiple_receivers] epoll_ctl() failed adding socket | return %d | errno %d",
                       INDIGO_ERROR, errno);
@@ -725,10 +728,10 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, socket
 
     pthread_mutex_lock(&(sockets->mutex));
     for (uint32_t i = 0; i < pCount; i++) {
-        //use crypto sign detached
+        // use crypto sign detached
         packet_data->timestamp = time(NULL);
         crypto_sign_detached(packet_data->signature, NULL, (unsigned char *)&packet,
-            offsetof(packet_t, data) + offsetof(init_packet_data_t, signature),sign_key_pair->secret);
+                             offsetof(packet_t, data) + offsetof(init_packet_data_t, signature), sign_key_pair->secret);
 
         for (socket_node *s = sockets->head; s != NULL; s = s->next) {
             ret = sendto(s->sock, &packet, sizeof(packet_t), 0, (struct sockaddr *)&s_addr, sizeof(struct sockaddr_in));
@@ -767,7 +770,8 @@ int send_packet(const int port, const uint32_t addr, socket_ll *sockets, const p
     ret = sendto(sock, packet, sizeof(packet_t), 0, (struct sockaddr *)&s_addr, sizeof(struct sockaddr_in));
     pthread_mutex_unlock(&sockets->mutex);
     if (ret == -1) {
-        log_error("[send_packet] sendto() failed to send packet with socket:%d| return %d | errno %d",sock, INDIGO_ERROR, errno);
+        log_error("[send_packet] sendto() failed to send packet with socket:%d| return %d | errno %d", sock,
+                  INDIGO_ERROR, errno);
         switch (errno) {
             // TODO: handle the errors.
             default:
@@ -889,8 +893,7 @@ int send_file_packet(active_file_t *file, uint64_t counter, const unsigned char 
 
 void build_packet(packet_t *restrict packet, const unsigned pac_type,
                   const unsigned char id[crypto_sign_PUBLICKEYBYTES],
-                  const unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES],
-                  const void *restrict data,
+                  const unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES], const void *restrict data,
                   uint16_t data_size)
 {
 
@@ -923,8 +926,9 @@ void build_packet(packet_t *restrict packet, const unsigned pac_type,
     packet->pac_type = pac_type;
     packet->pac_version = PAC_VERSION;
 
-    if (data && data_size <= PAC_DATA_BYTES) {}
-        memcpy(packet->data, data, data_size);
+    if (data && data_size <= PAC_DATA_BYTES) {
+    }
+    memcpy(packet->data, data, data_size);
 }
 
 #ifdef _WIN32
@@ -1547,13 +1551,14 @@ int *recv_thread(RECV_ARGS *args)
     mempool = args->mempool;
     queue = args->ph_queue;
 
-    //create a socket used for receiving multicast packets
+    // create a socket used for receiving multicast packets
     multicast_recv_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (multicast_recv_socket == -1) {
         set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
         log_fatal("[recv_thread] could not open socket for receiving multicast traffic "
-                  "| return %d | errno %d", INDIGO_ERROR, errno);
+                  "| return %d | errno %d",
+                  INDIGO_ERROR, errno);
         *process_return = INDIGO_ERROR;
         return process_return;
     }
@@ -1679,7 +1684,8 @@ int *recv_thread(RECV_ARGS *args)
         if (ret == 0)
             continue;
         if (ret == -1) {
-            if (errno == EINTR) continue; //this is a debug statement (fails on SIGSTOP)
+            if (errno == EINTR)
+                continue; // this is a debug statement (fails on SIGSTOP)
             *process_return = INDIGO_ERROR;
             log_fatal("[recv_thread] epoll_wait() failed while waiting on receiving sockets | return %d | errno %d",
                       INDIGO_ERROR, errno);
@@ -1745,7 +1751,7 @@ int *recv_thread(RECV_ARGS *args)
                 packet_info = (void *)(recv_buffer + sizeof(packet_t));
                 packet_info->address.sin_addr.s_addr = recv_addr.sin_addr.s_addr;
 
-                if (pack_h.pac_type == MSG_SIGNING_RESPONSE) log_debug("[recv_thread] received signing response");
+                log_debug("[recv_thread] received packet");
 
                 ret = queue_push(queue, recv_buffer, QET_NEW_PACKET);
                 if (ret) {
@@ -1756,8 +1762,6 @@ int *recv_thread(RECV_ARGS *args)
                               INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
                     goto cleanup;
                 }
-                set_event_flag(args->flag, EF_NEW_PACKET);
-                set_event_flag(args->wake, EF_WAKE_MANAGER);
             }
         }
     }
@@ -1766,7 +1770,7 @@ int *recv_thread(RECV_ARGS *args)
     log_info("[recv_thread] receive thread successful exit | return %d", INDIGO_SUCCESS);
     return process_return;
 
-    cleanup:
+cleanup:
     set_event_flag(args->flag, EF_TERMINATION);
     set_event_flag(args->wake, EF_WAKE_MANAGER);
     free(recv_events);
