@@ -63,10 +63,10 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     uint32_t flag_val = 0;
     QNODE *node = NULL;
 
-    time_t curr_time = 0;
+    uint64_t curr_time = 0;
     struct timespec timespec;
-    time_t lowest_time = 600;
-    time_t time_diff = 0;
+    uint64_t lowest_time = 600;
+    uint64_t time_diff = 0;
 
     unsigned char iterations_until_cleanup = 10;
 
@@ -327,11 +327,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         randombytes_buf(signing_request_data->nonce, INDIGO_NONCE_SIZE);
                         signing_request_data->timestamp = time(NULL);
 
-                        build_packet(packet, MSG_SIGNING_REQUEST, public_key, NULL,
-                            signing_request_data, sizeof(signing_request_data_t));
-
-                        ret =
-                            crypto_sign_detached(signing_request_data->signature, NULL, (unsigned char *)packet,
+                        ret = crypto_sign_detached(signing_request_data->signature, NULL, (unsigned char *)packet,
                                                  offsetof(packet_t, data) + offsetof(signing_request_data_t, signature),
                                                  args->signing_keys->secret);
                         if (ret) {
@@ -340,7 +336,10 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 *process_return);
                             goto cleanup;
                         }
-                        log_debug("[packet_handler_thread] attempting to send signing request to %d",packet_info->address.sin_addr.s_addr);
+
+                        build_packet(packet, MSG_SIGNING_REQUEST, public_key, NULL,
+                            signing_request_data, sizeof(signing_request_data_t));
+
                         ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets, packet,
                                           args->flag);
 
@@ -378,7 +377,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
                         break;
                     case MSG_SIGNING_REQUEST:
-                        log_info("[packet_handler_thread] received signing request");
+                        log_debug("[packet_handler_thread] received signing request");
                         // validate the public key
                         ret = crypto_sign_verify_detached(
                             ((signing_request_data_t *)packet->data)->signature, (unsigned char *)packet,
@@ -395,8 +394,10 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 break;
                             }
                         }
-                        else
+                        else {
+                            log_debug("[packet_handler_thread] signing request rejected, invalid signature");
                             break;
+                        }
 
                         // sign the nonce and send the signature with the public key and a new nonce
                         ret = sign_buffer(args->signing_keys, ((signing_request_data_t *)packet->data)->nonce,
@@ -557,10 +558,14 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 default:
                                     break; // winlib errors go here
                             }
+                            log_debug("[packet_handler_thread] send_packet() failed");
+                            break;
                         }
+                        log_debug("[packet_handler_thread] sent signing response");
                         break;
 
                     case MSG_SIGNING_RESPONSE:
+                        log_debug("[packet_handler_thread] received signing response");
                         ret = crypto_sign_verify_detached(
                             ((signing_response_data_t *)packet->data)->signature, (unsigned char *)packet,
                             offsetof(packet_t, data) + offsetof(signing_response_data_t, signature), packet->id);

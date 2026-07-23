@@ -1742,7 +1742,6 @@ int *recv_thread(RECV_ARGS *args)
                     mempool_free(mempool, recv_buffer);
                     continue;
                 }
-                log_debug("[recv_thread] received form device with ip:%u",recv_addr.sin_addr.s_addr);
                 packet_info = (void *)(recv_buffer + sizeof(packet_t));
                 packet_info->address.sin_addr.s_addr = recv_addr.sin_addr.s_addr;
 
