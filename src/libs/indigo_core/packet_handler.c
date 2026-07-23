@@ -389,7 +389,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             // validate the timestamp
                             curr_time = time(NULL);
                             if ((((signing_request_data_t *)packet->data)->timestamp < curr_time - 60) ||
-                                (((signing_request_data_t *)packet->data)->timestamp > curr_time) + 60) {
+                                (((signing_request_data_t *)packet->data)->timestamp > curr_time + 60)) {
 
                                 log_info("[packet_handler_thread] signing request rejected due to "
                                           "expired header time stamp");
