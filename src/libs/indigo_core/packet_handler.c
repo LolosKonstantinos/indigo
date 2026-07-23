@@ -192,6 +192,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
         node = queue_pop(args->queue, QOPT_NON_BLOCK);
 
         if (node != NULL) {
+            log_debug("[packet_handler_thread] got queue node");
             if (node->type == QET_NEW_PACKET) {
                 // extract the contents of the node
                 packet = node->data;

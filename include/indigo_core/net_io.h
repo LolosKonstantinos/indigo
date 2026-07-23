@@ -97,8 +97,8 @@ typedef struct SEND_ARGS {
 } SEND_ARGS;
 
 typedef struct RECV_ARGS {
-    QUEUE *queue;
-    QUEUE *ph_queue;
+    QUEUE *packet_queue;
+    EFLAG *ph_flag;
     socket_ll *sockets;
     EFLAG *flag;
     EFLAG *wake;

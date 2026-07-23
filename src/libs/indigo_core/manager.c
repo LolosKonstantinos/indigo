@@ -171,8 +171,9 @@ int *thread_manager_thread(MANAGER_ARGS *args)
         goto cleanup;
     }
 
-    if (create_receiving_thread(&recv_args, sockets, packet_queue, args->ph_queue, mempool, args->flag, args->multicast_addr,
-                                args->port, &tid_receive)) {
+    if (create_receiving_thread(&recv_args, sockets, packet_queue, handler_args->flag, mempool, args->flag,
+                                args->multicast_addr, args->port, &tid_receive))
+    {
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_error("[thread_manager_thread] receive thread creation failed | return %d", INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         goto cleanup;
@@ -541,8 +542,8 @@ int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address
     return 0;
 }
 
-int create_receiving_thread(RECV_ARGS **args, socket_ll *sockets, QUEUE *queue, QUEUE *ph_queue, mempool_t *mempool,
-                            EFLAG *wake_mngr, uint32_t multicast_addr, int port, pthread_t *tid)
+int create_receiving_thread(RECV_ARGS **args, socket_ll *sockets, QUEUE *packet_queue, EFLAG *ph_flag,
+                            mempool_t *mempool, EFLAG *wake_mngr, uint32_t multicast_addr, int port, pthread_t *tid)
 {
 
     pthread_t thread;
@@ -595,8 +596,8 @@ int create_receiving_thread(RECV_ARGS **args, socket_ll *sockets, QUEUE *queue, 
         return 1;
     }
 #endif
-    recv_args->queue = queue;
-    recv_args->ph_queue = ph_queue;
+    recv_args->packet_queue = packet_queue;
+    recv_args->ph_flag = ph_flag;
     recv_args->mempool = mempool;
     recv_args->sockets = sockets;
     recv_args->wake = wake_mngr;

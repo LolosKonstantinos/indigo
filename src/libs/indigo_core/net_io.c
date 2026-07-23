@@ -1549,7 +1549,7 @@ int *recv_thread(RECV_ARGS *args)
     *process_return = 0;
 
     mempool = args->mempool;
-    queue = args->ph_queue;
+    queue = args->packet_queue;
 
     // create a socket used for receiving multicast packets
     multicast_recv_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -1762,6 +1762,7 @@ int *recv_thread(RECV_ARGS *args)
                               INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
                     goto cleanup;
                 }
+                set_event_flag(args->ph_flag, EF_NEW_PACKET);
             }
         }
     }

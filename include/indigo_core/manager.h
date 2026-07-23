@@ -66,8 +66,8 @@ int create_thread_manager_thread(MANAGER_ARGS **args, void *master_key, int port
 int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, socket_ll *sockets, EFLAG *wake_mngr,
                           QUEUE *queue, const void *master_key, pthread_t *tid);
 
-int create_receiving_thread(RECV_ARGS **args, socket_ll *sockets, QUEUE *queue, QUEUE *ph_queue, mempool_t *mempool,
-                            EFLAG *wake_mngr, uint32_t multicast_addr, int port, pthread_t *tid);
+int create_receiving_thread(RECV_ARGS **args, socket_ll *sockets, QUEUE *packet_queue, EFLAG *ph_flag,
+                            mempool_t *mempool, EFLAG *wake_mngr, uint32_t multicast_addr, int port, pthread_t *tid);
 
 int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint32_t multicast_address,
                                     EFLAG *wake_mngr, EFLAG *override_flags[], socket_ll *sockets, pthread_t *tid);
