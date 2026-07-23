@@ -327,7 +327,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         randombytes_buf(signing_request_data->nonce, INDIGO_NONCE_SIZE);
                         signing_request_data->timestamp = time(NULL);
 
-                        build_packet(packet, MSG_SIGNING_REQUEST, public_key, NULL, signing_request_data);
+                        build_packet(packet, MSG_SIGNING_REQUEST, public_key, NULL,
+                            signing_request_data, sizeof(signing_request_data_t));
 
                         ret =
                             crypto_sign_detached(signing_request_data->signature, NULL, (unsigned char *)packet,
@@ -524,7 +525,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             }
                             memset(&xsr, 0, sizeof(xsr_t));
                         }
-                        build_packet(packet, MSG_SIGNING_RESPONSE, public_key, NULL, signing_response_data);
+                        build_packet(packet, MSG_SIGNING_RESPONSE, public_key, NULL,
+                            signing_response_data, sizeof(signing_response_data_t));
                         ret =
                             crypto_sign_detached(signing_response_data->signature, NULL, (unsigned char *)packet,
                                                  offsetof(packet_t, data) + offsetof(signing_request_data_t, signature),
@@ -669,7 +671,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                         session_sk = NULL;
 
                                         build_packet(packet, MSG_SIGNING_RESPONSE, public_key, NULL,
-                                                     signing_response_data);
+                                                     signing_response_data, sizeof(signing_response_data_t));
                                         ret = crypto_sign_detached(
                                             signing_response_data->signature, NULL, (unsigned char *)packet,
                                             offsetof(packet_t, data) + offsetof(signing_response_data_t, signature),
@@ -966,7 +968,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                     break;
                                 }
 
-                                build_packet(&temp_packet, MSG_RESEND, public_key, NULL, NULL);
+                                build_packet(&temp_packet, MSG_RESEND, public_key, NULL, NULL, 0);
                                 ((transmission_control_data_t *)(temp_packet.data))->serial =
                                     ((file_chunk_data_t *)packet->data)->serial;
 
@@ -1025,7 +1027,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 range_node = NULL;
 
                                 // create the packet
-                                build_packet(&temp_packet, MSG_RESEND, public_key, NULL, NULL);
+                                build_packet(&temp_packet, MSG_RESEND, public_key, NULL, NULL, 0);
                                 ((transmission_control_data_t *)(temp_packet.data))->serial =
                                     ((file_chunk_data_t *)packet->data)->serial;
                                 ((transmission_control_data_t *)(temp_packet.data))->range.start =
@@ -1542,7 +1544,8 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
 
     // todo: i think this nonce is for the encryption, but i cant remember
     randombytes_buf(nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
-    build_packet(packet, MSG_FILE_SENDING_RESPONSE, pk, nonce, &file_sending_response_data);
+    build_packet(packet, MSG_FILE_SENDING_RESPONSE, pk, nonce, &file_sending_response_data,
+        sizeof(file_sending_request_data_t));
     ret = encrypt_packet(packet, rdev.server_tk, nonce);
     if (ret) {
         log_error("[create_server_session] encrypt packet failed | return %d", ret);

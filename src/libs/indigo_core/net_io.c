@@ -87,7 +87,7 @@ int send_discovery_packets(int port, uint32_t multicast_addr, socket_ll *sockets
     init_packet_data_t *packet_data = (init_packet_data_t *)packet.data;
     int routine_ret = 0;
 
-    build_packet(&packet, MSG_INIT_PACKET, sign_key_pair->public, NULL, NULL);
+    build_packet(&packet, MSG_INIT_PACKET, sign_key_pair->public, NULL, NULL, TODO);
     // TODO: make this utf8 compatible
 
     strcpy((char *)packet_data->username, (char *)username);
@@ -720,7 +720,7 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, socket
     s_addr.sin_port = port;
     s_addr.sin_family = AF_INET;
 
-    build_packet(&packet, MSG_INIT_PACKET, sign_key_pair->public, NULL, NULL);
+    build_packet(&packet, MSG_INIT_PACKET, sign_key_pair->public, NULL, NULL, 0);
     strncpy((char *)packet_data->username, (char *)username, MAX_USERNAME_LEN * sizeof(uint32_t));
 
     pthread_mutex_lock(&(sockets->mutex));
@@ -802,7 +802,7 @@ int send_next_file_packet(active_file_t *file, const unsigned char *const pk, so
         return ret;
     }
 
-    build_packet(&packet, MSG_FILE_CHUNK, pk, nonce, NULL);
+    build_packet(&packet, MSG_FILE_CHUNK, pk, nonce, NULL, 0);
     read_ret = fread(packet.data, PAC_DATA_BYTES_USABLE, 1, file->fd);
     if (read_ret != 0) {
         ret = feof(file->fd);
@@ -856,7 +856,7 @@ int send_file_packet(active_file_t *file, uint64_t counter, const unsigned char 
         return ret;
     }
 
-    build_packet(&packet, MSG_FILE_CHUNK, pk, nonce, NULL);
+    build_packet(&packet, MSG_FILE_CHUNK, pk, nonce, NULL, 0);
     read_ret = fread(packet.data, PAC_DATA_BYTES_USABLE, 1, file->fd);
     if (read_ret != 0) {
         ret = feof(file->fd);
@@ -889,7 +889,9 @@ int send_file_packet(active_file_t *file, uint64_t counter, const unsigned char 
 
 void build_packet(packet_t *restrict packet, const unsigned pac_type,
                   const unsigned char id[crypto_sign_PUBLICKEYBYTES],
-                  const unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES], const void *restrict data)
+                  const unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES],
+                  const void *restrict data,
+                  uint16_t data_size)
 {
 
     sodium_memzero(packet, sizeof(packet_t));
@@ -921,8 +923,8 @@ void build_packet(packet_t *restrict packet, const unsigned pac_type,
     packet->pac_type = pac_type;
     packet->pac_version = PAC_VERSION;
 
-    if (data)
-        memcpy(packet->data, data, PAC_DATA_BYTES);
+    if (data && data_size <= PAC_DATA_BYTES) {}
+        memcpy(packet->data, data, data_size);
 }
 
 #ifdef _WIN32

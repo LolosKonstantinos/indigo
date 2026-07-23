@@ -323,7 +323,7 @@ int test_signature()
 
     packet_data = (init_packet_data_t *)packet.data;
 
-    build_packet(&packet, MSG_INIT_PACKET, sign_key_pair.public, NULL, NULL);
+    build_packet(&packet, MSG_INIT_PACKET, sign_key_pair.public, NULL, NULL, 0);
     strncpy((char *)packet_data->username, (char *)username, MAX_USERNAME_LEN * sizeof(uint32_t));
 
     packet_data->timestamp = time(NULL);

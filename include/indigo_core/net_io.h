@@ -141,7 +141,8 @@ int send_file_packet(active_file_t *file, uint64_t counter, const unsigned char 
 /////////////////////////////////////////////////////////////
 
 void build_packet(packet_t *restrict packet, unsigned pac_type, const unsigned char id[crypto_sign_PUBLICKEYBYTES],
-                  const unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES], const void *restrict data);
+                  const unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES], const void *restrict data,
+                  uint16_t data_size);
 #ifdef _WIN32
 int create_handle_array_from_send_info(const SEND_INFO *info, size_t infolen, HANDLE **handles, size_t *hCount);
 void free_send_info(const SEND_INFO *info);
