@@ -1442,14 +1442,14 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
     int ret;
     int count = 0;
     tree_iterator_t *iter;
-    remote_device_t *rdev;
-    remote_device_t *found_rdev;
+    remote_device_t *rdev = NULL;
+    remote_device_t *found_rdev = NULL;
     remote_device_t s_rdev;
     known_key_t known_key;
     unsigned char **id_array = NULL;
     char highlight = 0;
     char found = 0;
-    void *temp;
+    void *temp = NULL;
 
     if (!dev_IDs || !dev_tree || !win || !last_id || !last_row) {
         log_error("null argument(s) | return -1");
@@ -1472,7 +1472,7 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
             print_device(win, found_rdev, count, 1);
             ++count;
             // add the device to the id array
-            temp = realloc(id_array, count * sizeof(unsigned char));
+            temp = realloc(id_array, count * sizeof(unsigned char *));
             if (!temp) {
                 tree_unlock(dev_tree);
                 log_error("realloc() failed re-allocating %d bytes for id array | return -1",
@@ -1501,7 +1501,7 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
         highlight = 0;
 
         // add the device to the id array
-        temp = realloc(id_array, count * sizeof(unsigned char));
+        temp = realloc(id_array, count * sizeof(unsigned char *));
         if (!temp) {
             tree_unlock(dev_tree);
             log_error("realloc() failed re-allocating %d bytes for id array | return -1",
@@ -1525,7 +1525,7 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
         *last_row = count;
 
         // add the device to the id array
-        temp = realloc(id_array, count * sizeof(unsigned char));
+        temp = realloc(id_array, count * sizeof(unsigned char *));
         if (!temp) {
             tree_unlock(dev_tree);
             log_error("realloc() failed re-allocating %d bytes for id array | return -1",
