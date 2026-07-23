@@ -1545,7 +1545,7 @@ int *recv_thread(RECV_ARGS *args)
     *process_return = 0;
 
     mempool = args->mempool;
-    queue = args->queue;
+    queue = args->ph_queue;
 
     //create a socket used for receiving multicast packets
     multicast_recv_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -1744,6 +1744,8 @@ int *recv_thread(RECV_ARGS *args)
                 }
                 packet_info = (void *)(recv_buffer + sizeof(packet_t));
                 packet_info->address.sin_addr.s_addr = recv_addr.sin_addr.s_addr;
+
+                if (pack_h.pac_type == MSG_SIGNING_RESPONSE) log_debug("[recv_thread] received signing response");
 
                 ret = queue_push(queue, recv_buffer, QET_NEW_PACKET);
                 if (ret) {

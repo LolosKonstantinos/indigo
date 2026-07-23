@@ -174,7 +174,7 @@ typedef struct PACKED signing_response_data_t {
     unsigned char nonce[INDIGO_NONCE_SIZE];
     unsigned char signature[crypto_sign_BYTES];
 } signing_response_data_t;
-#define PAC_SIGNING_RESPONSE (sizeof(udp_packet_header) + sizeof(signing_response_data_t))
+#define PAC_SIGNING_RESPONSE_SIZE (sizeof(udp_packet_header) + sizeof(signing_response_data_t))
 
 typedef struct PACKED file_sending_request_data_t {
     uint64_t serial;

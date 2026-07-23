@@ -171,7 +171,8 @@ int *thread_manager_thread(MANAGER_ARGS *args)
         goto cleanup;
     }
 
-    if (create_receiving_thread(&recv_args, sockets, packet_queue, mempool, args->flag, args->multicast_addr, args->port, &tid_receive)) {
+    if (create_receiving_thread(&recv_args, sockets, packet_queue, args->ph_queue, mempool, args->flag, args->multicast_addr,
+                                args->port, &tid_receive)) {
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_error("[thread_manager_thread] receive thread creation failed | return %d", INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         goto cleanup;
@@ -233,23 +234,6 @@ int *thread_manager_thread(MANAGER_ARGS *args)
             // for now, we terminate the whole operation, later we may pause or continue as we are
             log_info("[thread_manager_thread] receive thread terminated");
             goto cleanup;
-        }
-
-        // todo remove since the packet handler communicates directly with the receiver
-        // in this case we just forward to the packet handler
-        if (flag_val & EF_NEW_PACKET) {
-            qnode_pop = queue_pop(packet_queue, QOPT_NON_BLOCK);
-            if (qnode_pop != NULL) {
-                if (queue_push(packet_queue, qnode_pop->data, qnode_pop->type)) {
-                    destroy_qnode(qnode_pop);
-                    log_error("[thread_manager_thread] failed to push packet event to paket handler queue");
-                    *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                    goto cleanup;
-                }
-                destroy_qnode(qnode_pop);
-                update_event_flag(handler_args->flag, EF_NEW_PACKET);
-            }
-            reset_single_event(recv_args->flag, EF_NEW_PACKET);
         }
     }
 
@@ -557,8 +541,8 @@ int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address
     return 0;
 }
 
-int create_receiving_thread(RECV_ARGS **args, socket_ll *sockets, QUEUE *queue, mempool_t *mempool, EFLAG *wake_mngr,
-                            uint32_t multicast_addr, int port, pthread_t *tid)
+int create_receiving_thread(RECV_ARGS **args, socket_ll *sockets, QUEUE *queue, QUEUE *ph_queue, mempool_t *mempool,
+                            EFLAG *wake_mngr, uint32_t multicast_addr, int port, pthread_t *tid)
 {
 
     pthread_t thread;
@@ -612,6 +596,7 @@ int create_receiving_thread(RECV_ARGS **args, socket_ll *sockets, QUEUE *queue, 
     }
 #endif
     recv_args->queue = queue;
+    recv_args->ph_queue = ph_queue;
     recv_args->mempool = mempool;
     recv_args->sockets = sockets;
     recv_args->wake = wake_mngr;
