@@ -265,7 +265,6 @@ int get_compatible_interfaces(ip_subnet_t **ip_subnet, size_t *count)
                     // create more space for 1 more subnet
                     temp = realloc(p_ip_subnet, sizeof(ip_subnet) * (addr_count + 1));
                     if (temp == NULL) {
-                        perror("Failed to reallocate memory for ip_subnet_t");
                         free(adapter);
                         free(p_ip_subnet);
                         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;

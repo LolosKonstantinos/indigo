@@ -557,9 +557,10 @@ int save_password_hash(const char *password, const uint64_t psw_len)
     unsigned char time_cost;
     PSW_HASH_SETTINGS psw_settings;
     FILE *fp = NULL;
-    char *psw_hash = NULL;
+    char psw_hash [crypto_pwhash_STRBYTES] = {0};
     char *file_name = NULL;
     int ret;
+    size_t lret;
     char *init_cwd;
     char xpath[PATH_MAX];
 
@@ -568,16 +569,8 @@ int save_password_hash(const char *password, const uint64_t psw_len)
         return INDIGO_ERROR_INVALID_PARAM;
     }
 
-    psw_hash = (char *)malloc(crypto_pwhash_STRBYTES + 1);
-    if (psw_hash == NULL) {
-        log_error("malloc failed allocating %lld bytes for password hash | return %d",
-            crypto_pwhash_STRBYTES + 1, INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
-        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-    }
-
     ret = load_key_derivation_settings(&psw_settings);
     if (ret != INDIGO_SUCCESS) {
-        free(psw_hash);
         // possible file changed to incompatible values
         log_error("load_key_derivation_settings() failed | return %d", ret);
         return ret;
@@ -587,7 +580,6 @@ int save_password_hash(const char *password, const uint64_t psw_len)
     time_cost = psw_settings.time_cost;
 
     if (psw_len <= crypto_pwhash_PASSWD_MIN || psw_len >= crypto_pwhash_PASSWD_MAX) {
-        free(psw_hash);
         log_error("password length (%d) not in valid range [%d,%d] | return %d",
             psw_len,crypto_pwhash_PASSWD_MIN, crypto_pwhash_PASSWD_MAX, INDIGO_ERROR_INVALID_PARAM );
         return INDIGO_ERROR_INVALID_PARAM;
@@ -596,25 +588,20 @@ int save_password_hash(const char *password, const uint64_t psw_len)
     ret = crypto_pwhash_str(psw_hash, password, psw_len, time_cost, 1 << mem_cost);
 
     if (ret == -1) {
-        free(psw_hash);
         log_error("crypto_pwhash_str() failed | return %d", INDIGO_ERROR_SODIUM_ERROR);
         return INDIGO_ERROR_SODIUM_ERROR;
     }
 
     file_name = malloc(strlen(INDIGO_PSW_DIR) + strlen(INDIGO_PSW_HASH_FILE_NAME) + 2);
     if (file_name == NULL) {
-        free(psw_hash);
         log_error("malloc failed allocating %lld bytes for password hash file name | return %d",
             strlen(INDIGO_PSW_DIR) + strlen(INDIGO_PSW_HASH_FILE_NAME) + 2,  INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
-    strcpy(file_name, INDIGO_PSW_DIR);
-    strcat(file_name, "/");
-    strcat(file_name, INDIGO_PSW_HASH_FILE_NAME);
+    strcpy(file_name, INDIGO_PSW_DIR"/"INDIGO_PSW_HASH_FILE_NAME);
 
     init_cwd = g_get_current_dir();
     if (get_source_dir(xpath)) {
-        free(psw_hash);
         free(file_name);
         log_error("g_get_current_dir() failed possibly not enough memory | return %d",
             INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
@@ -628,19 +615,24 @@ int save_password_hash(const char *password, const uint64_t psw_len)
     if (fp == NULL) {
         chdir(init_cwd);
         g_free(init_cwd);
-        free(psw_hash);
         free(file_name);
         log_error("failed opening file %s | return %d | errno %d", file_name, INDIGO_ERROR_FILE_NOT_FOUND, errno);
         return INDIGO_ERROR_FILE_NOT_FOUND; // todo check errno
     }
 
-    fprintf(fp, "%s", psw_hash);
+    lret = fwrite(psw_hash, 1, crypto_pwhash_STRBYTES, fp);
+    if (lret != crypto_pwhash_STRBYTES) {
+        chdir(init_cwd);
+        g_free(init_cwd);
+        free(file_name);
+        fclose(fp);
+        return INDIGO_ERROR;
+    }
 
     chdir(init_cwd);
     g_free(init_cwd);
     free(file_name);
     fclose(fp);
-    free(psw_hash);
     return INDIGO_SUCCESS;
 }
 
@@ -672,7 +664,7 @@ int load_password_hash(char **hash)
     hash_len = ftell(fp);
     fseek(fp, 0, SEEK_SET);
 
-    if (hash_len > crypto_pwhash_STRBYTES + 1) {
+    if (hash_len > crypto_pwhash_STRBYTES) {
         printf("psw_hash incompatible length");
         fflush(stdout);
         free(psw_hash);
@@ -684,7 +676,7 @@ int load_password_hash(char **hash)
         return INDIGO_ERROR_INCOMPATIBLE_FILE;
     }
 
-    psw_hash = (char *)malloc(crypto_pwhash_STRBYTES + 1);
+    psw_hash = malloc(crypto_pwhash_STRBYTES);
     if (psw_hash == NULL) {
         free(psw_hash);
         fclose(fp);
@@ -696,6 +688,7 @@ int load_password_hash(char **hash)
     }
 
     fread(psw_hash, 1, crypto_pwhash_STRBYTES, fp);
+    psw_hash[crypto_pwhash_STRBYTES - 1] = '\0';
     *hash = psw_hash;
 
     free(file_name);

@@ -339,7 +339,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 *process_return);
                             goto cleanup;
                         }
-
+                        log_debug("[packet_handler_thread] attempting to send signing request to %d",packet_info->address.sin_addr.s_addr);
                         ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets, packet,
                                           args->flag);
 

@@ -14,6 +14,15 @@ pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0)
 
 pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET libsodium)
 
+option(ASAN "enable address sanitizers" OFF)
+
+if(LINUX)
+    if(ASAN)
+        add_compile_options(-fsanitize=address -fno-omit-frame-pointer -g)
+        add_link_options(-fsanitize=address)
+    endif ()
+endif()
+
 add_subdirectory(src)
 add_subdirectory(include)
 add_subdirectory(test)

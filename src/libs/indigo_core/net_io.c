@@ -767,7 +767,7 @@ int send_packet(const int port, const uint32_t addr, socket_ll *sockets, const p
     ret = sendto(sock, packet, sizeof(packet_t), 0, (struct sockaddr *)&s_addr, sizeof(struct sockaddr_in));
     pthread_mutex_unlock(&sockets->mutex);
     if (ret == -1) {
-        log_error("[send_packet] sendto() failed to send packet | return %d | errno %d", INDIGO_ERROR, errno);
+        log_error("[send_packet] sendto() failed to send packet with socket:%d| return %d | errno %d",sock, INDIGO_ERROR, errno);
         switch (errno) {
             // TODO: handle the errors.
             default:
@@ -1719,6 +1719,7 @@ int *recv_thread(RECV_ARGS *args)
                     goto cleanup;
                 }
 
+                recv_addr_len = sizeof(recv_addr);
                 lret = recvfrom(recv_events[i].data.fd, recv_buffer, sizeof(packet_t) + sizeof(packet_info_t), 0,
                                 (struct sockaddr *)(&recv_addr), &recv_addr_len);
 
@@ -1739,9 +1740,9 @@ int *recv_thread(RECV_ARGS *args)
                     mempool_free(mempool, recv_buffer);
                     continue;
                 }
-
+                log_debug("[recv_thread] received form device with ip:%u",recv_addr.sin_addr.s_addr);
                 packet_info = (void *)(recv_buffer + sizeof(packet_t));
-                memcpy(&(packet_info->address), &recv_addr, recv_addr_len);
+                packet_info->address.sin_addr.s_addr = recv_addr.sin_addr.s_addr;
 
                 ret = queue_push(queue, recv_buffer, QET_NEW_PACKET);
                 if (ret) {

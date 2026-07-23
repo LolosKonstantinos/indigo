@@ -148,11 +148,6 @@ typedef struct PACKED udp_packet_header {
 // for device discovery system and queue
 typedef struct packet_info_t {
     struct sockaddr_in address;
-#ifdef _WIN32
-    SOCKET socket;
-#else
-    int socket;
-#endif
 } packet_info_t;
 
 // the discovery packet format
