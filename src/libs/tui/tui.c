@@ -1720,7 +1720,7 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
 
         // add the device to the id array
         ++count;
-        temp = realloc(requests_list, count * sizeof(unsigned char));
+        temp = realloc(requests_list, count * sizeof(unsigned char *));
         if (!temp) {
             tree_unlock(dev_tree);
             for (i = 0; i < count - 1; ++i) {
@@ -1782,7 +1782,7 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
             mvwprintw(win, ++y, 0, "%s [%s]", file->name, directions[file->direction]);
             // add the device to the id array
             ++count;
-            temp = realloc(file_list, count * sizeof(unsigned char));
+            temp = realloc(file_list, count * sizeof(unsigned char *));
             if (!temp) {
                 tree_unlock(active_files);
                 for (int j = 0; j < count - 1; ++j) {
