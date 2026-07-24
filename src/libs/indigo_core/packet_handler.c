@@ -285,6 +285,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             memcpy(tmp_username, ((init_packet_data_t *)packet->data)->username,
                                    MAX_USERNAME_LEN * sizeof(wchar_t));
                             sanitize_username(tmp_username);
+                            log_debug("[packet_handler_thread] found device with username %s",tmp_username);
                             memcpy(found_rdev->username, tmp_username, MAX_USERNAME_LEN * sizeof(uint32_t));
 
                             args->device_tree->search_release(args->device_tree);
@@ -302,6 +303,12 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         rdev.fsr_list = NULL;
                         rdev.fsr_count = 0;
                         rdev.dev_state_flag = RDSF_UNVERIFIED; // the device is not verified
+
+                        memcpy(tmp_username, ((init_packet_data_t *)packet->data)->username,
+                                   MAX_USERNAME_LEN * sizeof(wchar_t));
+                        sanitize_username(tmp_username);
+                        log_debug("[packet_handler_thread] inserted device with username %s",tmp_username);
+                        memcpy(rdev.username, tmp_username, MAX_USERNAME_LEN * sizeof(uint32_t));
 
                         memcpy(known_key.key, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
                         if (known_keys_tree->search(known_keys_tree, &known_key)) {

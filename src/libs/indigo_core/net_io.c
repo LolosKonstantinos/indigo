@@ -724,7 +724,7 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, socket
     s_addr.sin_family = AF_INET;
 
     build_packet(&packet, MSG_INIT_PACKET, sign_key_pair->public, NULL, NULL, 0);
-    memset(username, 0, MAX_USERNAME_LEN * sizeof(uint32_t));
+    memset(packet_data->username, 0, MAX_USERNAME_LEN * sizeof(uint32_t));
     strncpy((char *)packet_data->username, (char *)username, MAX_USERNAME_LEN * sizeof(uint32_t));
 
     pthread_mutex_lock(&(sockets->mutex));

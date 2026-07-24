@@ -932,7 +932,24 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
         }
         doupdate();
     }
-
+    if (dev_IDs != NULL) {
+        for (int i = 0; i < id_count; ++i) {
+            free(dev_IDs[i]);
+        }
+        free(dev_IDs);
+    }
+    if (file_list != NULL) {
+        for (int i = 0; i < file_count; ++i) {
+            free(file_list[i]);
+        }
+        free(file_list);
+    }
+    if (request_list != NULL) {
+        for (int i = 0; i < request_count; ++i) {
+            free(request_list[i]);
+        }
+        free(request_list);
+    }
     free_tree(known_key_tree);
     delwin(device_pad);
     return 0;

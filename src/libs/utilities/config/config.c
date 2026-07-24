@@ -124,7 +124,7 @@ int sanitize_username(char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1])
     if (g_utf8_strlen(username, -1) > MAX_USERNAME_LEN) {
         *(g_utf8_offset_to_pointer(username, MAX_USERNAME_LEN)) = '\0';
     }
-    
+
     username[MAX_USERNAME_LEN * sizeof(uint32_t)] = '\0';
     g_free(valid_username);
     return 0;
@@ -403,7 +403,7 @@ FILE *load_log_file()
     strncat(xpath, INDIGO_LOG_FILE_NAME, PATH_MAX - strlen(xpath));
     xpath[PATH_MAX - 1] = '\0';
 
-    log_file = fopen(xpath, "a+");
+    log_file = fopen(xpath, "w");
     if (!log_file) {
         return NULL;
     }
