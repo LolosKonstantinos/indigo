@@ -246,9 +246,9 @@ int ins_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBYT
 
 int edit_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBYTES], uint64_t status)
 {
-    FILE *fd;
+    FILE *fp;
     char *file_name;
-
+    int file_descriptor;
     size_t ret;
     known_key_t known_key;
     known_key_t *found_key;
@@ -256,7 +256,7 @@ int edit_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBY
 
     // edit the tree
     ret = known_keys->search_pin(known_keys, &known_key, (void **)&found_key);
-    if (ret) {
+    if (ret == 0) {
         log_error("[edit_known_key] search_pin() failed to find key | return %d", INDIGO_ERROR);
         return INDIGO_ERROR;
     }
@@ -265,30 +265,48 @@ int edit_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBY
 
     // edit the file
 
-    file_name = malloc(strlen(INDIGO_CONFIG_DIR) + strlen(INDIGO_KNOWN_KEYS_FILE_NAME) + 1);
+    file_name = malloc(strlen(INDIGO_CONFIG_DIR) + strlen(INDIGO_KNOWN_KEYS_FILE_NAME) + 2);
     if (file_name == NULL) {
         log_error("[edit_known_key] malloc failed allocating %lld bytes for known keys file name | return %d",
             strlen(INDIGO_CONFIG_DIR) + strlen(INDIGO_KNOWN_KEYS_FILE_NAME) + 1,
             INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
-    strcpy(file_name, INDIGO_CONFIG_DIR);
-    strcat(file_name, INDIGO_KNOWN_KEYS_FILE_NAME);
-    fd = fopen(file_name, "r+");
-    if (!fd) {
-        free(file_name);
-        log_error("[edit_known_key] failed to open file %s | return %d | errno %d", file_name, INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
-        return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
+    strcpy(file_name, INDIGO_CONFIG_DIR"/"INDIGO_KNOWN_KEYS_FILE_NAME);
+
+    if (access(file_name, F_OK)) {
+        //if the file does not exist we create it
+        file_descriptor = open(file_name, O_RDWR | O_CREAT, S_IRUSR + S_IWUSR + S_IRGRP + S_IWGRP + S_IROTH);
+        if (file_descriptor == -1) {
+            log_error("[edit_known_key] failed to open file %s as known keys file | return %d | errno %d",
+                file_name , INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
+            return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
+        }
+        fp = fdopen(file_descriptor,"r+");
+        if (!fp) {
+            log_error("[edit_known_key] failed to open file %s as known keys file | return %d | errno %d",
+                file_name , INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
+            close(file_descriptor);
+            return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
+        }
     }
-    fseek(fd, 0, SEEK_SET);
+    else {
+        fp = fopen(file_name, "r+");
+        if (!fp) {
+            log_error("[edit_known_key] failed to open file %s as known keys file | return %d | errno %d",
+                file_name , INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
+            return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
+        }
+    }
+    fseek(fp, 0, SEEK_SET);
     while (1) {
-        ret = fread(&found_key, sizeof(known_key_t), 1, fd);
+        ret = fread(&found_key, sizeof(known_key_t), 1, fp);
         if (ret != 1) {
-            if (feof(fd)) {
+            if (feof(fp)) {
                 memcpy(known_key.key, key, crypto_sign_PUBLICKEYBYTES);
                 known_key.status = status;
-                fseek(fd, 0, SEEK_END);
-                fwrite(&known_key, sizeof(known_key), 1, fd);
+                fseek(fp, 0, SEEK_END);
+                fwrite(&known_key, sizeof(known_key), 1, fp);
                 free(file_name);
                 return INDIGO_SUCCESS;
             }
@@ -301,8 +319,8 @@ int edit_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBY
             }
         }
         if (memcmp(key, known_key.key, crypto_sign_PUBLICKEYBYTES) == 0) {
-            fseek(fd, -((long)sizeof(uint64_t)), SEEK_CUR);
-            ret = fwrite(&status, sizeof(uint64_t), 1, fd);
+            fseek(fp, -((long)sizeof(uint64_t)), SEEK_CUR);
+            ret = fwrite(&status, sizeof(uint64_t), 1, fp);
             if (ret != 1) {
                 log_error("[edit_known_key] failed to write known key status to file | return %d | errno %d", INDIGO_ERROR, errno);
                 free(file_name);

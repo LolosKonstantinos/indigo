@@ -809,8 +809,10 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
                 if (context == 0) {
                     if (id_count > 0)
                         context = 1;
+                    werase(device_pad);
                     print_device_files(device_pad, last_id, dev_tree, file_tree, &request_list, &request_count,
                                        &file_list, &file_count, &file_last_row, &file_last_level);
+                    pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
                     doupdate();
                     continue;
                 }
@@ -888,6 +890,10 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
             }
             else if (ch == ' ' && context == 1 && file_last_level == 2) {
                 // pause files
+            }
+            else if (ch == 's') {
+                //switch context
+                context = context == 1 ? 0 : 1;
             }
         }
 
@@ -1477,11 +1483,8 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
 
     ret = new_tree_iterator(dev_tree, &iter);
     while (tree_has_next(iter)) {
-        if (found && (memcmp(last_id, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES) == 0)) {
-            // ignore the device that was last highlighted
-            // it will be printed on the same line it was before
-            continue;
-        }
+        tree_next(iter, (void **)&rdev);
+
         if (count == *last_row && found) {
             // print the last highlighted device on the row it was before
             print_device(win, found_rdev, count, 1);
@@ -1503,15 +1506,23 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
             }
             id_array[count - 1] = temp;
             memcpy(temp, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES);
-            continue;
         }
         else if (count == *last_row && found == 0)
             highlight = 1;
 
-        tree_next(iter, (void **)&rdev);
+        if (found && (memcmp(last_id, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES) == 0)) {
+            // ignore the device that was last highlighted
+            // it will be printed on the same line it was before
+            continue;
+        }
 
         print_device(win, rdev, count, highlight);
         ++count;
+
+        if (highlight) {
+            //this is in case last device got removed
+            memcpy(last_id, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES);
+        }
 
         highlight = 0;
 
@@ -1568,12 +1579,19 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
         // if we haven't highlighted any device yet, we highlight the last one
         // that is because we have less devises than before and the last one is not there
         // so the lowest device above the last device is the last one printed
-        wmove(win, count, 0);
-        wchgat(win, 3, A_REVERSE, 0, NULL);
-        *last_row = count;
-        memcpy(last_id, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES);
+        if (count > 0) {
+            wmove(win, count - 1, 0);
+            wchgat(win, 3, A_REVERSE, 0, NULL);
+            *last_row = count - 1;
+            memcpy(last_id, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES);
+        }
+        else {
+            *last_row = 0;
+            memset(last_id, 0, crypto_sign_PUBLICKEYBYTES);
+        }
     }
     free_tree_iterator(&iter);
+
     tree_unlock(dev_tree);
 
     *id_count = count;
@@ -1668,24 +1686,13 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
         // the device was not found
         // we return with an error
         tree_unlock(dev_tree);
-        log_warn("device not found | return 1");
+        wprintw(win, "device not fount");
         return 1;
-    }
-
-    username = g_utf8_make_valid(rdev.username, MAX_USERNAME_LEN * sizeof(uint32_t));
-    if (!username) {
-        tree_unlock(dev_tree);
-        log_error("g_utf8_make_valid() failed");
-        return -1;
-    }
-    if (g_utf8_strlen(username, -1) > MAX_USERNAME_LEN) {
-        *(g_utf8_offset_to_pointer(username, MAX_USERNAME_LEN)) = '\0';
     }
 
     wmove(win, 0, 0);
 
-    wprintw(win, "%s", username);
-    g_free(username);
+    wprintw(win, "%s", found_rdev->username);
     wmove(win, ++y, 0);
     for (i = 0; i < 32; ++i) {
         wprintw(win, "%02x", id[i]);
