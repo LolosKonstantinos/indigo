@@ -307,7 +307,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         memcpy(tmp_username, ((init_packet_data_t *)packet->data)->username,
                                    MAX_USERNAME_LEN * sizeof(wchar_t));
                         sanitize_username(tmp_username);
-                        log_debug("[packet_handler_thread] inserted device with username %s",tmp_username);
                         memcpy(rdev.username, tmp_username, MAX_USERNAME_LEN * sizeof(uint32_t));
 
                         memcpy(known_key.key, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
@@ -315,6 +314,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             rdev.dev_state_flag |= known_key.status;
                         }
                         else {
+                            ins_known_key(known_keys_tree,known_key.key, KNOWN_KEY_STATUS_UNKNOWN);
                             rdev.dev_state_flag |= KNOWN_KEY_STATUS_UNKNOWN;
                         }
 
@@ -501,11 +501,17 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
                             rdev.dev_state_flag = RDSF_UNVERIFIED; // the device is not verified
 
+                            memcpy(tmp_username, ((init_packet_data_t *)packet->data)->username,
+                                   MAX_USERNAME_LEN * sizeof(wchar_t));
+                            sanitize_username(tmp_username);
+                            memcpy(rdev.username, tmp_username, MAX_USERNAME_LEN * sizeof(uint32_t));
+
                             memcpy(known_key.key, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
                             if (known_keys_tree->search(known_keys_tree, &known_key)) {
                                 rdev.dev_state_flag |= known_key.status;
                             }
                             else {
+                                ins_known_key(known_keys_tree,known_key.key, KNOWN_KEY_STATUS_UNKNOWN);
                                 rdev.dev_state_flag |= KNOWN_KEY_STATUS_UNKNOWN;
                             }
 

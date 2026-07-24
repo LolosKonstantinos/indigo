@@ -826,9 +826,12 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
                             log_error("pathfinder() failed | return -1");
                             goto cleanup;
                         }
-                        if (ret == 1)
+                        if (ret == 1) {
+                            halfdelay(10);
                             continue;
+                        }
                         if (ret == 0) {
+                            halfdelay(10);
                             // send this to the queue
                             send_node = malloc(sizeof(Q_SEND_FILE));
                             if (!send_node) {
@@ -1039,6 +1042,8 @@ int pathfinder(char path[PATH_MAX])
     wattroff(win, COLOR_PAIR(2));
 
     keypad(win_text, TRUE);
+    curs_set(1);
+    cbreak();
 
     initial_cwd = g_get_current_dir();
 
@@ -1253,6 +1258,7 @@ int pathfinder(char path[PATH_MAX])
                         delwin(win);
                         delwin(win_frame);
                         delwin(win_text);
+                        log_error("g_canonicalize_filename() failed | return -1");
                         return -1;
                     }
                     ret = g_file_test(cpath, G_FILE_TEST_EXISTS);
@@ -1404,6 +1410,7 @@ int pathfinder(char path[PATH_MAX])
                             delwin(win);
                             delwin(win_frame);
                             delwin(win_text);
+                            log_error("g_canonicalize_filename() failed | return -1");
                             return -1;
                         }
                         ret = g_file_test(cpath, G_FILE_TEST_EXISTS);
@@ -1454,6 +1461,7 @@ int pathfinder(char path[PATH_MAX])
     delwin(win);
     delwin(win_frame);
     delwin(win_text);
+    log_error("wtf() failed | return -1");
     return -1;
 }
 

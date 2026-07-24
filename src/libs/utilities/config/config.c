@@ -300,7 +300,7 @@ int edit_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBY
     }
     fseek(fp, 0, SEEK_SET);
     while (1) {
-        ret = fread(&found_key, sizeof(known_key_t), 1, fp);
+        ret = fread(&known_key, sizeof(known_key_t), 1, fp);
         if (ret != 1) {
             if (feof(fp)) {
                 memcpy(known_key.key, key, crypto_sign_PUBLICKEYBYTES);
