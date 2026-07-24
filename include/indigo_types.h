@@ -65,7 +65,7 @@ SOFTWARE.
 #define INDIGO_KNOWN_KEYS_FILE_NAME "known-keys.dat" // TODO: use database (sqlite3)
 #define INDIGO_USERNAME_FILE_NAME "username.txt"
 #define INDIGO_SETTINGS_FILE_NAME "settings.conf"
-#define INDIGO_LOG_FILE_NAME "log.txt"
+#define INDIGO_LOG_FILE_NAME "log"
 
 // RDSF == RemoteDeviceStateFlag
 #define RDSF_UNVERIFIED 0x0001

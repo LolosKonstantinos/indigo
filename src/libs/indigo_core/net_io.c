@@ -1751,8 +1751,6 @@ int *recv_thread(RECV_ARGS *args)
                 packet_info = (void *)(recv_buffer + sizeof(packet_t));
                 packet_info->address.sin_addr.s_addr = recv_addr.sin_addr.s_addr;
 
-                log_debug("[recv_thread] received packet");
-
                 ret = queue_push(queue, recv_buffer, QET_NEW_PACKET);
                 if (ret) {
                     // the only error is a not enough memory error, so we return an error

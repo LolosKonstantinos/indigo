@@ -609,7 +609,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
 
     unsigned char **dev_IDs = NULL;
     size_t id_count = 0;
-    unsigned char last_id[crypto_sign_PUBLICKEYBYTES];
+    unsigned char last_id[crypto_sign_PUBLICKEYBYTES] = {0};
     int last_id_row = 0;
 
     char selected_path[PATH_MAX];
@@ -655,7 +655,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
     curs_set(0);
     halfdelay(10);
 
-    pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy, maxx);
+    pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
 
     // the main loop
     while (1) {
@@ -673,7 +673,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
                             if (device_top_row + win_c <= id_count) {
                                 ++device_top_row;
                             }
-                            pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy, maxx);
+                            pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
                         }
                     }
                     else {
@@ -727,7 +727,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
                         if (file_top_row + win_c <= 8 + 1 + request_count + 1 + file_count) {
                             ++file_top_row;
                         }
-                        pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy, maxx);
+                        pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
                     }
                     break;
                 case KEY_UP:
@@ -739,7 +739,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
                             if (device_top_row > 0) {
                                 --device_top_row;
                             }
-                            pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy, maxx);
+                            pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
                         }
                     }
                     else if (context == 1) {
@@ -902,13 +902,11 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
             }
             werase(device_pad);
             print_devices(device_pad, dev_tree, &dev_IDs, &id_count, last_id, &last_id_row);
+
             if (id_count == 0) {
                 mvwprintw(device_pad, 0, 0, "There are currently no devices in the local network.");
             }
-            else {
-                log_debug("%d devices detected in ui", id_count);
-            }
-            pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy, maxx);
+            pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
         }
         else {
             if (request_list != NULL) {
@@ -930,7 +928,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
             werase(device_pad);
             print_device_files(device_pad, last_id, dev_tree, file_tree, &request_list, &request_count, &file_list,
                                &file_count, &file_last_row, &file_last_level);
-            pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy, maxx);
+            pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
         }
         doupdate();
     }
@@ -1511,12 +1509,15 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
         id_array = temp;
         temp = malloc(crypto_sign_PUBLICKEYBYTES);
         if (!temp) {
+            id_array[count - 1] = NULL;
             tree_unlock(dev_tree);
             log_error("malloc() failed allocating %d bytes for device id | return -1", crypto_sign_PUBLICKEYBYTES);
             return -1;
         }
         id_array[count - 1] = temp;
         memcpy(temp, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES);
+        *dev_IDs = id_array;
+        *id_count = count;
     }
     if (found && count < *last_row) {
         // some devises got removed, so we print our device at the end
