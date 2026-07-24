@@ -52,12 +52,12 @@ int main(int argc, char *argv[])
     struct in_addr maddr;
 
     // device table
-    tree_t *device_tree;
+    tree_t *device_tree = NULL;
     // the file tree
-    tree_t *file_tree;
+    tree_t *file_tree = NULL;
 
     // ui queue
-    QUEUE *ui_queue;
+    QUEUE *ui_queue = NULL;
 
     // the packet handler queue
     QUEUE *ph_queue = NULL;
@@ -106,61 +106,61 @@ int main(int argc, char *argv[])
 
     ret = new_tree(&device_tree, cmp_rdev, sizeof(remote_device_t), BINARY_TREE_FLAG_AVL);
     if (ret) {
-        fprintf(stderr, "malloc failed\n");
+        log_error("[main] new_tree failed");
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
     ret = new_tree(&file_tree, cmp_ui_file, sizeof(ui_file_t), BINARY_TREE_FLAG_AVL);
     if (ret) {
-        fprintf(stderr, "malloc failed\n");
+        log_error("[main] new_tree failed");
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
 
     ui_queue = malloc(sizeof(QUEUE));
     if (ui_queue == NULL) {
-        fprintf(stderr, "malloc failed\n");
+        log_error("[main] malloc failed");
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
     ret = init_queue(ui_queue);
     if (ret) {
-        fprintf(stderr, "init_queue failed\n");
+        log_error("[main] init_queue failed");
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
     send_queue = malloc(sizeof(QUEUE));
     if (send_queue == NULL) {
-        fprintf(stderr, "malloc failed\n");
+        log_error("[main] malloc failed");
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
     ret = init_queue(send_queue);
     if (ret) {
-        fprintf(stderr, "init_queue failed\n");
+        log_error("[main] init_queue failed");
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
     ph_queue = (QUEUE *)malloc(sizeof(QUEUE));
     if (ph_queue == NULL) {
-        fprintf(stderr, "Failed to allocate memory for packet_queue\n");
+        log_error("[main] malloc failed");
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
     if (init_queue(ph_queue)) {
-        fprintf(stderr, "init_queue failed\n");
+        log_error("[main] init_queue failed");
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
     manager_queue = malloc(sizeof(QUEUE));
     if (manager_queue == NULL) {
-        fprintf(stderr, "malloc failed\n");
+        log_error("[main] malloc failed");
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
     ret = init_queue(manager_queue);
     if (ret) {
-        fprintf(stderr, "init_queue failed\n");
+        log_error("[main] init_queue failed");
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
@@ -171,7 +171,7 @@ int main(int argc, char *argv[])
     ret = create_thread_manager_thread(&manager_args, master_key, port, multicast_addr, device_tree, ui_queue, ph_queue,
                                        send_queue, manager_queue, &manager_tid);
     if (ret != INDIGO_SUCCESS) {
-        fprintf(stderr, "Error creating thread_manager thread\n");
+        log_error("[main] create_thread_manager_thread failed\n");
         goto cleanup;
     }
 
@@ -196,8 +196,7 @@ int main(int argc, char *argv[])
 
     endwin();
     free_tree(file_tree);
-    printf("\nmain return:%d\n", ret);
-    getchar();
+    free_tree(device_tree);
     return ret;
 
 cleanup:
@@ -205,5 +204,7 @@ cleanup:
     WSACleanup();
 #endif
     endwin();
+    free_tree(file_tree);
+    free_tree(device_tree);
     return ret;
 }

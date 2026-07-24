@@ -134,6 +134,9 @@ void free_tree(tree_t *t) {
     top = stack - 1;
     if (priv->root == NULL) {
         free(stack);
+        pthread_mutex_destroy(&priv->mutex);
+        free(priv);
+        free(t);
         return;
     }
     *(++top) = priv->root;
@@ -145,6 +148,7 @@ void free_tree(tree_t *t) {
         free(temp->data);
         free(temp);
     }
+
     pthread_mutex_destroy(&priv->mutex);
     free(priv);
     free(t);

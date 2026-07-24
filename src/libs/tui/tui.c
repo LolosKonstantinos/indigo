@@ -1567,7 +1567,6 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
 
 int print_device(WINDOW *win, remote_device_t *rdev, int row, char highlight)
 {
-    char *username;
     uint8_t *ip_bytes;
     known_key_t known_key;
     if (!win || !rdev)
@@ -1613,7 +1612,6 @@ int print_device(WINDOW *win, remote_device_t *rdev, int row, char highlight)
         wprintw(win, " (%d)", rdev->fsr_count);
         wattroff(win, COLOR_PAIR(3));
     }
-    g_free(username);
 
     if (highlight) {
         wmove(win, row, 0);
