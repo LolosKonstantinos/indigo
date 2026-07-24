@@ -176,6 +176,7 @@ int main(int argc, char *argv[])
     }
 
     // create the main tui interface
+    start_color();
     init_pair(1, COLOR_RED, COLOR_BLACK);
     init_pair(2, COLOR_MAGENTA, COLOR_BLACK);
     init_pair(3, COLOR_YELLOW, COLOR_BLACK);
@@ -194,6 +195,7 @@ int main(int argc, char *argv[])
     create_main_interface(device_tree, file_tree, ui_queue, ph_queue, send_queue);
 
     endwin();
+    free_tree(file_tree);
     printf("\nmain return:%d\n", ret);
     getchar();
     return ret;

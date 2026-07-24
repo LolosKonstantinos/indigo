@@ -1501,6 +1501,7 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
         // add the device to the id array
         temp = realloc(id_array, count * sizeof(unsigned char *));
         if (!temp) {
+            free_tree_iterator(&iter);
             tree_unlock(dev_tree);
             log_error("realloc() failed re-allocating %d bytes for id array | return -1",
                       count * sizeof(unsigned char));
@@ -1509,6 +1510,7 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
         id_array = temp;
         temp = malloc(crypto_sign_PUBLICKEYBYTES);
         if (!temp) {
+            free_tree_iterator(&iter);
             id_array[count - 1] = NULL;
             tree_unlock(dev_tree);
             log_error("malloc() failed allocating %d bytes for device id | return -1", crypto_sign_PUBLICKEYBYTES);
@@ -1528,6 +1530,7 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
         // add the device to the id array
         temp = realloc(id_array, count * sizeof(unsigned char *));
         if (!temp) {
+            free_tree_iterator(&iter);
             tree_unlock(dev_tree);
             log_error("realloc() failed re-allocating %d bytes for id array | return -1",
                       count * sizeof(unsigned char));
@@ -1536,6 +1539,7 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
         id_array = temp;
         temp = malloc(crypto_sign_PUBLICKEYBYTES);
         if (!temp) {
+            free_tree_iterator(&iter);
             tree_unlock(dev_tree);
             log_error("malloc() failed allocating %d bytes for device id | return -1", crypto_sign_PUBLICKEYBYTES);
             return -1;
@@ -1552,7 +1556,7 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
         *last_row = count;
         memcpy(last_id, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES);
     }
-
+    free_tree_iterator(&iter);
     tree_unlock(dev_tree);
 
     *id_count = count;
@@ -1569,19 +1573,10 @@ int print_device(WINDOW *win, remote_device_t *rdev, int row, char highlight)
     if (!win || !rdev)
         return -1;
 
-    username = g_utf8_make_valid(rdev->username, MAX_USERNAME_LEN * sizeof(uint32_t));
-    if (!username) {
-        log_error("g_utf8_make_valid() failed | return -1");
-        return -1;
-    }
-    if (g_utf8_strlen(username, -1) > MAX_USERNAME_LEN) {
-        *(g_utf8_offset_to_pointer(username, MAX_USERNAME_LEN)) = '\0';
-    }
-
     wmove(win, row, 0);
     wprintw(win, "dev%u ", row);
     wattron(win, COLOR_PAIR(5));
-    wprintw(win, "%s ", username);
+    wprintw(win, "%s ", rdev->username);
     wattroff(win, COLOR_PAIR(5));
     ip_bytes = (uint8_t *)&(rdev->ip);
     wattron(win, COLOR_PAIR(2));
@@ -1785,6 +1780,7 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
             ++count;
             temp = realloc(file_list, count * sizeof(unsigned char *));
             if (!temp) {
+                free_tree_iterator(&iter);
                 tree_unlock(active_files);
                 for (int j = 0; j < count - 1; ++j) {
                     free(file_list[j]);
@@ -1799,6 +1795,7 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
             file_list = temp;
             temp = malloc(crypto_sign_PUBLICKEYBYTES);
             if (!temp) {
+                free_tree_iterator(&iter);
                 tree_unlock(active_files);
                 for (int j = 0; j < count - 1; ++j) {
                     free(file_list[j]);
@@ -1813,6 +1810,7 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
             memcpy(temp, file->id.pk, crypto_sign_PUBLICKEYBYTES);
         }
     }
+    free_tree_iterator(&iter);
     tree_unlock(active_files);
     *file_count = count;
     if (*level == 2) {

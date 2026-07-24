@@ -282,10 +282,10 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             found_rdev->expiration_time = time(NULL); // renew the timestamp
                             found_rdev->ip = packet_info->address.sin_addr.s_addr;
                             // copy the username
-                            memcpy(tmp_username, ((init_packet_data_t *)packet)->username,
+                            memcpy(tmp_username, ((init_packet_data_t *)packet->data)->username,
                                    MAX_USERNAME_LEN * sizeof(wchar_t));
                             sanitize_username(tmp_username);
-                            memcpy(found_rdev->username, ((init_packet_data_t *)packet)->username, MAX_USERNAME_LEN);
+                            memcpy(found_rdev->username, tmp_username, MAX_USERNAME_LEN * sizeof(uint32_t));
 
                             args->device_tree->search_release(args->device_tree);
                             break;

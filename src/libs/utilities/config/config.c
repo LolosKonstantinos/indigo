@@ -90,17 +90,19 @@ int load_username(char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1])
         fclose(fp);
         return 1;
     }
+    if (size > MAX_USERNAME_LEN * sizeof(uint32_t))
+        return INDIGO_ERROR_INCOMPATIBLE_FILE;
 
-    memset(username, 0, sizeof(uint32_t) * MAX_USERNAME_LEN);
+    memset(username, 0, sizeof(uint32_t) * MAX_USERNAME_LEN + 1);
 
     ret = fread(username, 1, MAX_USERNAME_LEN * sizeof(uint32_t), fp);
     if (ret != size) {
-
         fclose(fp);
         log_error("[load_username] fread read less bytes than username file | return %d | errno %d", INDIGO_ERROR, errno);
         return INDIGO_ERROR;
         // todo: handle error better
     }
+
     fclose(fp);
     return 0;
 }
@@ -111,12 +113,18 @@ int validate_username(char username[MAX_USERNAME_LEN  * sizeof(uint32_t) +1 ])
 int sanitize_username(char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1])
 {
     char *valid_username;
-    valid_username = g_utf8_make_valid(username, MAX_USERNAME_LEN + 1);
+    username[MAX_USERNAME_LEN * sizeof(uint32_t)] = '\0';
+    valid_username = g_utf8_make_valid(username,  -1);
     if (!valid_username) {
         log_error("[sanitize_username] g_utf8_make_valid() failed. probably not enough memory");
         return -1;
     }
     strncpy(username, valid_username, MAX_USERNAME_LEN * sizeof(uint32_t));
+
+    if (g_utf8_strlen(username, -1) > MAX_USERNAME_LEN) {
+        *(g_utf8_offset_to_pointer(username, MAX_USERNAME_LEN)) = '\0';
+    }
+    
     username[MAX_USERNAME_LEN * sizeof(uint32_t)] = '\0';
     g_free(valid_username);
     return 0;

@@ -712,7 +712,7 @@ int register_multiple_receivers(int epoll_fd, socket_ll *sockets, int *event_cou
 }
 int send_discovery_packets(const int port, const uint32_t multicast_addr, socket_ll *sockets, EFLAG *flag,
                            const uint32_t pCount, const int32_t msec, const signing_key_pair_t *sign_key_pair,
-                           char username[(MAX_USERNAME_LEN + 1) * sizeof(uint32_t)])
+                           char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1])
 {
     ssize_t ret;
     packet_t packet = {0};
@@ -724,6 +724,7 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, socket
     s_addr.sin_family = AF_INET;
 
     build_packet(&packet, MSG_INIT_PACKET, sign_key_pair->public, NULL, NULL, 0);
+    memset(username, 0, MAX_USERNAME_LEN * sizeof(uint32_t));
     strncpy((char *)packet_data->username, (char *)username, MAX_USERNAME_LEN * sizeof(uint32_t));
 
     pthread_mutex_lock(&(sockets->mutex));
@@ -1788,7 +1789,7 @@ int *send_thread(SEND_ARGS *args)
     lht_t *active_files = NULL;
     active_file_t *curr_af;
     lht_node_t *list;
-    char username[(MAX_USERNAME_LEN + 1) * sizeof(uint32_t)];
+    char username[MAX_USERNAME_LEN  * sizeof(uint32_t) + 1];
     int *process_return = NULL;
     int ret;
 
