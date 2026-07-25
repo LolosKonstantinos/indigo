@@ -38,6 +38,7 @@ typedef struct MANAGER_ARGS {
     QUEUE *ph_queue;
     QUEUE *send_queue;
     tree_t *device_tree;
+    tree_t *known_keys_tree;
 } MANAGER_ARGS;
 
 //////////////////////////////////////////////////////////
@@ -60,8 +61,8 @@ int *thread_manager_thread(MANAGER_ARGS *args);
 int cancel_device_discovery(pthread_t tid, EFLAG *flag);
 
 int create_thread_manager_thread(MANAGER_ARGS **args, void *master_key, int port, uint32_t multicast_address,
-                                 tree_t *dev_tree, QUEUE *ui_queue, QUEUE *ph_queue, QUEUE *send_queue,
-                                 QUEUE *manager_queue, pthread_t *tid);
+                                 tree_t *dev_tree, tree_t *known_keys_tree, QUEUE *ui_queue, QUEUE *ph_queue,
+                                 QUEUE *send_queue, QUEUE *manager_queue, pthread_t *tid);
 
 int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, socket_ll *sockets, EFLAG *wake_mngr,
                           QUEUE *queue, const void *master_key, pthread_t *tid);
@@ -74,5 +75,5 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
 
 int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *queue, QUEUE *ui_queue,
                                  QUEUE *send_queue, EFLAG *send_flag, mempool_t *mempool, tree_t *device_tree,
-                                 const void *master_key, socket_ll *sockets, pthread_t *tid);
+                                 tree_t *known_keys_tree, const void *master_key, socket_ll *sockets, pthread_t *tid);
 #endif // THREAD_MANAGEMENT_H

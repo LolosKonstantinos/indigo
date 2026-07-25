@@ -138,18 +138,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     }
     *process_return = 0;
 
-    ret = new_tree(&known_keys_tree, key_cmp, sizeof(known_key_t), BINARY_TREE_FLAG_AVL);
-    if (ret) {
-        *process_return = ret;
-        log_fatal("[packet_handler_thread] new_tree() failed creating known key tree | return %d", ret);
-        goto cleanup;
-    }
-    ret = load_known_keys(known_keys_tree);
-    if (ret != INDIGO_SUCCESS && ret != INDIGO_ERROR_FILE_NOT_FOUND) {
-        *process_return = ret;
-        log_fatal("[packet_handler_thread] load_known_keys() failed | return %d", ret);
-        goto cleanup;
-    }
+    known_keys_tree = args->known_keys_tree;
 
     signing_request_data = malloc(sizeof(signing_request_data_t));
     signing_response_data = malloc(sizeof(signing_response_data_t));
@@ -317,9 +306,11 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
                         memcpy(known_key.key, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
                         if (known_keys_tree->search(known_keys_tree, &known_key)) {
+                            log_debug("[packet_handler_thread] key was found");
                             rdev.dev_state_flag |= known_key.status;
                         }
                         else {
+                            log_debug("[packet_handler_thread] key not found thus inserted");
                             ins_known_key(known_keys_tree,known_key.key, KNOWN_KEY_STATUS_UNKNOWN);
                             rdev.dev_state_flag |= KNOWN_KEY_STATUS_UNKNOWN;
                         }
@@ -513,9 +504,11 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
                             memcpy(known_key.key, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
                             if (known_keys_tree->search(known_keys_tree, &known_key)) {
+                                log_debug("[packet_handler_thread] key was found");
                                 rdev.dev_state_flag |= known_key.status;
                             }
                             else {
+                                log_debug("[packet_handler_thread] key not found thus inserted");
                                 ins_known_key(known_keys_tree,known_key.key, KNOWN_KEY_STATUS_UNKNOWN);
                                 rdev.dev_state_flag |= KNOWN_KEY_STATUS_UNKNOWN;
                             }
@@ -1414,10 +1407,12 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
             }
             // clangd says that there is a use after free and double free or remove array.
             // this is clearly impossible to happen
-            for (size_t i = 0; i < remove_array_size; i++) {
-                avl_delete_unlocked(xsr_tree, ((xsr_t **)remove_array)[i]);
+            if (remove_array){
+                for (size_t i = 0; i < remove_array_size; i++) {
+                    avl_delete_unlocked(xsr_tree, ((xsr_t **)remove_array)[i]);
+                }
+                free(remove_array);
             }
-            free(remove_array);
             free_tree_iterator(&xsr_iterator);
         }
         remove_array = NULL;
@@ -1455,10 +1450,12 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                                ((lowest_time - time_diff) >> (sizeof(time_t) * CHAR_BIT - 1)));
                 }
             }
-            for (size_t i = 0; i < remove_array_size; i++) {
-                avl_delete_unlocked(xfp_tree, ((xfp_t **)remove_array)[i]);
+            if (remove_array){
+                for (size_t i = 0; i < remove_array_size; i++) {
+                    avl_delete_unlocked(xfp_tree, ((xfp_t **)remove_array)[i]);
+                }
+                free(remove_array);
             }
-            free(remove_array);
             free_tree_iterator(&xfp_iterator);
         }
 
@@ -1495,10 +1492,12 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                                ((lowest_time - time_diff) >> (sizeof(time_t) * CHAR_BIT - 1)));
                 }
             }
-            for (size_t i = 0; i < remove_array_size; i++) {
-                avl_delete_unlocked(args->device_tree, ((remote_device_t **)remove_array)[i]);
+            if (remove_array){
+                for (size_t i = 0; i < remove_array_size; i++) {
+                    avl_delete_unlocked(args->device_tree, ((remote_device_t **)remove_array)[i]);
+                }
+                free(remove_array);
             }
-            free(remove_array);
             free_tree_iterator(&rdev_iterator);
         }
         tree_unlock(args->device_tree);
@@ -1520,7 +1519,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
     free_tree(xsr_tree);
     free_tree(xfp_tree);
-    free_tree(known_keys_tree);
     free(signing_request_data);
     free(signing_response_data);
     free(file_sending_request_data);
@@ -1532,7 +1530,6 @@ cleanup:
     destroy_qnode(node);
     free_tree(xsr_tree);
     free_tree(xfp_tree);
-    free_tree(known_keys_tree);
     free(signing_request_data);
     free(signing_response_data);
     free(file_sending_request_data);

@@ -585,7 +585,8 @@ int get_user_input(WINDOW *win, utf8_char_t *input)
 #endif
 }
 
-int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, QUEUE *ph_queue, QUEUE *send_queue)
+int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key_tree, QUEUE *ui_queue, QUEUE *ph_queue,
+                          QUEUE *send_queue)
 {
     tree_iterator_t *dev_iter;
     WINDOW *device_pad;
@@ -622,7 +623,6 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
     int file_last_row = 0;
     char file_last_level = 0;
 
-    tree_t *known_key_tree;
     uint64_t status = 0;
 
     int ret;
@@ -630,18 +630,6 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
     if (!dev_tree || !file_tree || !ui_queue || !ph_queue || !send_queue) {
         log_error("[create_main_interface] null parameter(s) | return %d", INDIGO_ERROR_INVALID_PARAM);
         return INDIGO_ERROR_INVALID_PARAM;
-    }
-
-    ret = new_tree(&known_key_tree, key_cmp, sizeof(known_key_t), BINARY_TREE_FLAG_AVL);
-    if (ret) {
-        log_error("[create_main_interface] new_tree() for known_keys failed | return %d", ret);
-        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-    }
-    ret = load_known_keys(known_key_tree);
-    if (ret != INDIGO_SUCCESS && ret != INDIGO_ERROR_FILE_NOT_FOUND) {
-        free_tree(known_key_tree);
-        log_error("[create_main_interface] load_known_keys() failed | return %d", ret);
-        return ret;
     }
 
     memset(last_id, 0, crypto_sign_PUBLICKEYBYTES);
@@ -872,10 +860,10 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
                         // set the trust status
                         switch (file_last_row) {
                             case 1:
-                                status = KNOWN_KEY_STATUS_TOO_GOOD;
+                                status = KNOWN_KEY_STATUS_GOOD;
                                 break;
                             case 2:
-                                status = KNOWN_KEY_STATUS_GOOD;
+                                status = KNOWN_KEY_STATUS_TOO_GOOD;
                                 break;
                             case 3:
                                 status = KNOWN_KEY_STATUS_BAD;
@@ -884,18 +872,20 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
                                 status = KNOWN_KEY_STATUS_UNKNOWN;
                                 break;
                         }
-                        edit_known_key(known_key_tree, last_id, status);
-                        memcpy(rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);
-                        ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&rdev_p);
-                        if (ret) {
-                             rdev_p->dev_state_flag &= ~(KNOWN_KEY_STATUS_GOOD |
-                                                         KNOWN_KEY_STATUS_TOO_GOOD |
-                                                         KNOWN_KEY_STATUS_BAD |
-                                                         KNOWN_KEY_STATUS_UNKNOWN |
-                                                         KNOWN_KEY_STATUS_EVIL_AND_SINISTER);
-                            rdev_p->dev_state_flag |= status;
+                        ret = edit_known_key(known_key_tree, last_id, status);
+                        if (ret == 0){
+                            memcpy(rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);
+                            ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&rdev_p);
+                            if (ret) {
+                                rdev_p->dev_state_flag &= ~(KNOWN_KEY_STATUS_GOOD |
+                                                            KNOWN_KEY_STATUS_TOO_GOOD |
+                                                            KNOWN_KEY_STATUS_BAD |
+                                                            KNOWN_KEY_STATUS_UNKNOWN |
+                                                            KNOWN_KEY_STATUS_EVIL_AND_SINISTER);
+                                rdev_p->dev_state_flag |= status;
+                            }
+                            tree_unlock(dev_tree);
                         }
-                        tree_unlock(dev_tree);
                     }
                 }
                 // TODO: HUGE TODO
@@ -970,7 +960,6 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
         }
         free(request_list);
     }
-    free_tree(known_key_tree);
     delwin(device_pad);
     return 0;
 
@@ -993,7 +982,6 @@ cleanup:
         }
         free(request_list);
     }
-    free_tree(known_key_tree);
     delwin(device_pad);
     return ret;
 }

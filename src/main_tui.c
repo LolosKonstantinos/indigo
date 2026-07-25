@@ -55,6 +55,8 @@ int main(int argc, char *argv[])
     tree_t *device_tree = NULL;
     // the file tree
     tree_t *file_tree = NULL;
+    //the known kwy tree
+    tree_t *known_key_tree = NULL;
 
     // ui queue
     QUEUE *ui_queue = NULL;
@@ -116,6 +118,19 @@ int main(int argc, char *argv[])
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
+    ret = new_tree(&known_key_tree, key_cmp, sizeof(known_key_t), BINARY_TREE_FLAG_AVL);
+    if (ret) {
+        log_error("[main] new_tree failed");
+        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        goto cleanup;
+    }
+
+    ret = load_known_keys(known_key_tree);
+    if (ret == -1) {
+        log_error("[main] load_known_keys() failed due to invalid parameter");
+        ret = INDIGO_ERROR_INVALID_PARAM;
+        goto cleanup;
+    }
 
     ui_queue = malloc(sizeof(QUEUE));
     if (ui_queue == NULL) {
@@ -168,8 +183,8 @@ int main(int argc, char *argv[])
     inet_pton(AF_INET, MULTICAST_ADDR, &multicast_addr);
     port = PORT;
 
-    ret = create_thread_manager_thread(&manager_args, master_key, port, multicast_addr, device_tree, ui_queue, ph_queue,
-                                       send_queue, manager_queue, &manager_tid);
+    ret = create_thread_manager_thread(&manager_args, master_key, port, multicast_addr, device_tree, known_key_tree, ui_queue,
+                                       ph_queue, send_queue, manager_queue, &manager_tid);
     if (ret != INDIGO_SUCCESS) {
         log_error("[main] create_thread_manager_thread failed\n");
         goto cleanup;
@@ -194,11 +209,12 @@ int main(int argc, char *argv[])
     init_pair(12, COLOR_BLUE, COLOR_WHITE);
     init_pair(12, COLOR_BLACK, COLOR_WHITE);
 
-    create_main_interface(device_tree, file_tree, ui_queue, ph_queue, send_queue);
+    create_main_interface(device_tree, file_tree, known_key_tree, ui_queue, ph_queue, send_queue);
 
     endwin();
     free_tree(file_tree);
     free_tree(device_tree);
+    free(known_key_tree);
     return ret;
 
 cleanup:
@@ -208,5 +224,6 @@ cleanup:
     endwin();
     free_tree(file_tree);
     free_tree(device_tree);
+    free(known_key_tree);
     return ret;
 }

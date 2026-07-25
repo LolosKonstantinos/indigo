@@ -304,7 +304,7 @@ int avl_insert_copy(tree_t *t, void* data) {
     top = stack - 1;
 
     //if there is no root, the tree is empty, insertion is just putting the node as root
-    if (!priv->root) {
+    if (!(priv->root)) {
         priv->root = node;
         priv->height = 1;
         pthread_mutex_unlock(&(priv->mutex));

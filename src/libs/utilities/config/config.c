@@ -163,6 +163,7 @@ int load_known_keys(tree_t *known_keys)
     char file_name[PATH_MAX];
     FILE *fp_kkeys;
     known_key_t known_key;
+    size_t debug_count = 0;
 
     if (!known_keys) {
         log_error("[load_known_keys] null parameter");
@@ -186,10 +187,12 @@ int load_known_keys(tree_t *known_keys)
         return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
     }
 
-    while (ret = fread(&known_key, 40, 1, fp_kkeys), ret == 1) {
-        known_keys->insert(known_keys, &known_key);
+    while (ret = fread(&known_key, sizeof(known_key_t), 1, fp_kkeys), ret == 1) {
+        ret = known_keys->insert(known_keys, &known_key);
+        if (ret == 0) debug_count++;
     }
     fclose(fp_kkeys);
+    log_debug("[load_known_keys] loaded %llu keys", debug_count);
     return 0;
 }
 int insert_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBYTES], uint64_t status)
@@ -199,11 +202,12 @@ int insert_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEY
     known_key.status = status;
     return known_keys->insert(known_keys, &known_key);
 }
-int save_known_key(unsigned char key[crypto_sign_PUBLICKEYBYTES], uint64_t status)
+int save_known_key(unsigned char key[crypto_sign_PUBLICKEYBYTES], const uint64_t status)
 {
     FILE *fp;
     char file_name[PATH_MAX];
     size_t ret;
+    known_key_t kk = {0};
 
     get_source_dir(file_name);
     file_name[PATH_MAX -1] = '\0';
@@ -214,16 +218,12 @@ int save_known_key(unsigned char key[crypto_sign_PUBLICKEYBYTES], uint64_t statu
         log_error("[save_known_key] failed to open file %s | return %d | errno %d", file_name, INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
         return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
     }
-    ret = fwrite(key, crypto_sign_PUBLICKEYBYTES, 1, fp);
+    memcpy(kk.key, key, crypto_sign_PUBLICKEYBYTES);
+    kk.status = status;
+    ret = fwrite(&kk, sizeof(known_key_t), 1, fp);
     if (ret != 1) {
         fclose(fp);
         log_error("[save_known_key] failed to write known key to file | return %d | errno %d", INDIGO_ERROR, errno);
-        return INDIGO_ERROR;
-    }
-    ret = fwrite(&status, sizeof(uint64_t), 1, fp);
-    if (ret != 1) {
-        fclose(fp);
-        log_error("[save_known_key] failed to write known key status to file | return %d | errno", INDIGO_ERROR, errno);
         return INDIGO_ERROR;
     }
     fclose(fp);
@@ -236,8 +236,11 @@ int ins_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBYT
         log_error("[ins_known_key] failed to insert known key | return %d", ret);
         return ret;
     }
-    // if it returns positive then it aleady exists in the file
-    if (ret > 0) return 0;
+    // if it returns positive then it already exists in the file
+    if (ret > 0) {
+        log_debug("[ins_known_key] already exists");
+        return 0;
+    }
 
     ret = save_known_key(key, status);
     if (ret) {
@@ -255,9 +258,9 @@ int edit_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBY
     size_t ret;
     known_key_t known_key;
     known_key_t *found_key;
-    memcpy(known_key.key, key, crypto_sign_PUBLICKEYBYTES);
 
     // edit the tree
+    memcpy(known_key.key, key, crypto_sign_PUBLICKEYBYTES);
     ret = known_keys->search_pin(known_keys, &known_key, (void **)&found_key);
     if (ret == 0) {
         tree_unlock(known_keys);
@@ -303,6 +306,7 @@ int edit_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBY
         ret = fread(&known_key, sizeof(known_key_t), 1, fp);
         if (ret != 1) {
             // well this is an error
+            fclose(fp);
             log_error("[edit_known_key] error reading from known key file | return %d | errno %d", INDIGO_ERROR, errno);
             return INDIGO_ERROR;
         }
@@ -310,12 +314,14 @@ int edit_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBY
             fseek(fp, -((long)sizeof(uint64_t)), SEEK_CUR);
             ret = fwrite(&status, sizeof(uint64_t), 1, fp);
             if (ret != 1) {
+                fclose(fp);
                 log_error("[edit_known_key] failed to write known key status to file | return %d | errno %d", INDIGO_ERROR, errno);
                 return INDIGO_ERROR;
             }
             break;
         }
     }
+    fclose(fp);
     return 0;
 }
 int get_source_dir(char path[PATH_MAX])
@@ -380,16 +386,16 @@ int move_to_downloads(char path[PATH_MAX], char new_file_name[NAME_MAX])
         log_error("[move_to_downloads] rename failed to rename %s to %s | return -1 | errno %d", path, new_path, errno);
         return -1;
         // if file already exists we add a (n) at the end
-        if (strlen(new_path) >= PATH_MAX - 1) {
-            for (uint32_t i = 0; i < UINT_MAX; ++i) {
-                snprintf(file_serial, 64, "%x", i);
-
-                // remove the extension if it exists
-                // apend the serial
-                // apend the extension
-                // check if the file exists
-            }
-        }
+        // if (strlen(new_path) >= PATH_MAX - 1) {
+        //     for (uint32_t i = 0; i < UINT_MAX; ++i) {
+        //         snprintf(file_serial, 64, "%x", i);
+        //
+        //         // remove the extension if it exists
+        //         // append the serial
+        //         // append the extension
+        //         // check if the file exists
+        //     }
+        // }
     }
     return 0;
 }
