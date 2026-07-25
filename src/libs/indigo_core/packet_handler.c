@@ -114,6 +114,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     tree_t *known_keys_tree = NULL;
 
     char tmp_username[MAX_USERNAME_LEN * sizeof(utf8_char_t)];
+    char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1] = {0};
 
     range_node_t *range_node;
     range_node_t *prev_node;
@@ -180,6 +181,11 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
         log_fatal("[packet_handler_thread] new_tree failed to create expected file packet tree | return %d",
                   process_return);
         goto cleanup;
+    }
+
+    ret = load_username(username);
+    if (ret != INDIGO_SUCCESS) {
+        strcpy(username, "unknown");
     }
 
     // the main loop
@@ -330,12 +336,12 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         // send signing request
                         randombytes_buf(signing_request_data->nonce, INDIGO_NONCE_SIZE);
                         signing_request_data->timestamp = time(NULL);
+                        strcpy(signing_request_data->username, username);
 
                         build_packet(packet, MSG_SIGNING_REQUEST, public_key, NULL, signing_request_data,
                                      sizeof(signing_request_data_t));
 
-                        ret =
-                            crypto_sign_detached(signing_request_data->signature, NULL, (unsigned char *)packet,
+                        ret = crypto_sign_detached(signing_request_data->signature, NULL, (unsigned char *)packet,
                                                  offsetof(packet_t, data) + offsetof(signing_request_data_t, signature),
                                                  args->signing_keys->secret);
                         if (ret) {
@@ -348,8 +354,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         memcpy(((signing_request_data_t *)packet->data)->signature, signing_request_data->signature,
                                crypto_sign_BYTES);
 
-                        ret =
-                            send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets, packet, args->flag);
+                        ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets, packet, args->flag);
 
                         if (ret) {
                             switch (ret) {
@@ -544,6 +549,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             }
                             memset(&xsr, 0, sizeof(xsr_t));
                         }
+                        strcpy(signing_request_data->username, username);
                         build_packet(packet, MSG_SIGNING_RESPONSE, public_key, NULL, signing_response_data,
                                      sizeof(signing_response_data_t));
 

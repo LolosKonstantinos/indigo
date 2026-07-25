@@ -193,7 +193,7 @@ int avl_insert(tree_t* t, void* data) {
     if (!node) {
         pthread_mutex_unlock(&(priv->mutex));
         log_error("new_node() failed | return 1");
-        return 1;
+        return -1;
     }
 
     stack = malloc(sizeof(tree_node_t *) * (priv->height + 2));
@@ -201,7 +201,7 @@ int avl_insert(tree_t* t, void* data) {
         pthread_mutex_unlock(&(priv->mutex));
         free(node);
         log_error("malloc failed allocating %lld bytes for stack | return 1", sizeof(tree_node_t *) * (priv->height + 2));
-        return 1;
+        return -1;
     }
     top = stack - 1;
 
@@ -222,7 +222,7 @@ int avl_insert(tree_t* t, void* data) {
             //if the node already exists we do not re-insert it
             free(node);
             free(stack);
-            return 0;
+            return 1;
         }
 
         //add the current node to the stack, so that after the insertion we have the stack trace of the new node
@@ -278,7 +278,7 @@ int avl_insert_copy(tree_t *t, void* data) {
     if (!node) {
         pthread_mutex_unlock(&(priv->mutex));
         log_error("new_node() failed | return 1");
-        return 1;
+        return -1;
     }
 
     //allocate the data field of the node
@@ -287,7 +287,7 @@ int avl_insert_copy(tree_t *t, void* data) {
         pthread_mutex_unlock(&(priv->mutex));
         free(node);
         log_error("calloc failed allocating %lld bytes for data part of node | return 1", priv->data_size);
-        return 1;
+        return -1;
     }
     //copy the data to the node
     memcpy(node->data, data, priv->data_size);
@@ -299,7 +299,7 @@ int avl_insert_copy(tree_t *t, void* data) {
         free(node->data);
         free(node);
         log_error("malloc failed allocating %lld bytes for stack | return 1", sizeof(tree_node_t *) * (priv->height + 2));
-        return 1;
+        return -1;
     }
     top = stack - 1;
 
@@ -324,7 +324,7 @@ int avl_insert_copy(tree_t *t, void* data) {
             free(node->data);
             free(node);
             free(stack);
-            return 0;
+            return 1;
         }
 
         //add the current node to the stack, so that after the insertion we have the stack trace of the new node
@@ -378,7 +378,7 @@ int avl_insert_copy_unlocked(tree_t *t, void* data) {
     node = new_node();
     if (!node) {
         log_error("new_node() failed | return 1");
-        return 1;
+        return -1;
     }
 
     //allocate the data field of the node
@@ -386,7 +386,7 @@ int avl_insert_copy_unlocked(tree_t *t, void* data) {
     if (!node->data) {
         free(node);
         log_error("calloc failed allocting %lld bytes for data part of node | return 1", priv->data_size);
-        return 1;
+        return -1;
     }
     //copy the data to the node
     memcpy(node->data, data, priv->data_size);
@@ -397,7 +397,7 @@ int avl_insert_copy_unlocked(tree_t *t, void* data) {
         free(node->data);
         free(node);
         log_error("malloc failed allocating %lld bytes for stack | return 1", sizeof(tree_node_t *) * (priv->height + 2));
-        return 1;
+        return -1;
     }
     top = stack - 1;
 

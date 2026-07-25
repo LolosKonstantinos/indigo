@@ -161,6 +161,7 @@ typedef struct PACKED init_packet_data_t {
 
 typedef struct PACKED signing_request_data_t {
     uint64_t timestamp;
+    char username[MAX_USERNAME_LEN * sizeof(uint32_t)];
     unsigned char nonce[INDIGO_NONCE_SIZE];
     unsigned char signature[crypto_sign_BYTES];
 } signing_request_data_t;

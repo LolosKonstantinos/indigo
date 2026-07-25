@@ -232,10 +232,13 @@ int save_known_key(unsigned char key[crypto_sign_PUBLICKEYBYTES], uint64_t statu
 int ins_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBYTES], uint64_t status)
 {
     int ret = insert_known_key(known_keys, key, status);
-    if (ret) {
+    if (ret < 0) {
         log_error("[ins_known_key] failed to insert known key | return %d", ret);
         return ret;
     }
+    // if it returns positive then it aleady exists in the file
+    if (ret > 0) return 0;
+
     ret = save_known_key(key, status);
     if (ret) {
         log_error("[ins_known_key] save_known_key() failed to save known key | return %d", ret);
@@ -247,7 +250,7 @@ int ins_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBYT
 int edit_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBYTES], uint64_t status)
 {
     FILE *fp;
-    char *file_name;
+    char file_name[PATH_MAX];
     int file_descriptor;
     size_t ret;
     known_key_t known_key;
@@ -257,22 +260,18 @@ int edit_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBY
     // edit the tree
     ret = known_keys->search_pin(known_keys, &known_key, (void **)&found_key);
     if (ret == 0) {
+        tree_unlock(known_keys);
         log_error("[edit_known_key] search_pin() failed to find key | return %d", INDIGO_ERROR);
         return INDIGO_ERROR;
     }
     found_key->status = status;
     known_keys->search_release(known_keys);
 
-    // edit the file
 
-    file_name = malloc(strlen(INDIGO_CONFIG_DIR) + strlen(INDIGO_KNOWN_KEYS_FILE_NAME) + 2);
-    if (file_name == NULL) {
-        log_error("[edit_known_key] malloc failed allocating %lld bytes for known keys file name | return %d",
-            strlen(INDIGO_CONFIG_DIR) + strlen(INDIGO_KNOWN_KEYS_FILE_NAME) + 1,
-            INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
-        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-    }
-    strcpy(file_name, INDIGO_CONFIG_DIR"/"INDIGO_KNOWN_KEYS_FILE_NAME);
+    // edit the file
+    file_name[0] = '\0';
+    get_source_dir(file_name);
+    strcat(file_name, "/"INDIGO_CONFIG_DIR"/"INDIGO_KNOWN_KEYS_FILE_NAME);
 
     if (access(file_name, F_OK)) {
         //if the file does not exist we create it
@@ -298,38 +297,25 @@ int edit_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBY
             return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
         }
     }
+
     fseek(fp, 0, SEEK_SET);
     while (1) {
         ret = fread(&known_key, sizeof(known_key_t), 1, fp);
         if (ret != 1) {
-            if (feof(fp)) {
-                memcpy(known_key.key, key, crypto_sign_PUBLICKEYBYTES);
-                known_key.status = status;
-                fseek(fp, 0, SEEK_END);
-                fwrite(&known_key, sizeof(known_key), 1, fp);
-                free(file_name);
-                return INDIGO_SUCCESS;
-            }
-            else {
-                // well this is an error
-                //  TODO: error encountered
-                free(file_name);
-                log_error("[edit_known_key] error reading from known key file | return %d | errno %d", INDIGO_ERROR, errno);
-                return INDIGO_ERROR;
-            }
+            // well this is an error
+            log_error("[edit_known_key] error reading from known key file | return %d | errno %d", INDIGO_ERROR, errno);
+            return INDIGO_ERROR;
         }
         if (memcmp(key, known_key.key, crypto_sign_PUBLICKEYBYTES) == 0) {
             fseek(fp, -((long)sizeof(uint64_t)), SEEK_CUR);
             ret = fwrite(&status, sizeof(uint64_t), 1, fp);
             if (ret != 1) {
                 log_error("[edit_known_key] failed to write known key status to file | return %d | errno %d", INDIGO_ERROR, errno);
-                free(file_name);
                 return INDIGO_ERROR;
             }
             break;
         }
     }
-    free(file_name);
     return 0;
 }
 int get_source_dir(char path[PATH_MAX])
@@ -362,6 +348,7 @@ int get_source_dir(char path[PATH_MAX])
     }
     xpath[ret] = '\0';
     dir = g_path_get_dirname(xpath);
+    if (!dir) return -1;
     strncpy(path, dir, PATH_MAX - 1);
     g_free(dir);
     path[PATH_MAX - 1] = '\0';

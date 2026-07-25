@@ -885,6 +885,17 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, QUEUE *ui_queue, 
                                 break;
                         }
                         edit_known_key(known_key_tree, last_id, status);
+                        memcpy(rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);
+                        ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&rdev_p);
+                        if (ret) {
+                             rdev_p->dev_state_flag &= ~(KNOWN_KEY_STATUS_GOOD |
+                                                         KNOWN_KEY_STATUS_TOO_GOOD |
+                                                         KNOWN_KEY_STATUS_BAD |
+                                                         KNOWN_KEY_STATUS_UNKNOWN |
+                                                         KNOWN_KEY_STATUS_EVIL_AND_SINISTER);
+                            rdev_p->dev_state_flag |= status;
+                        }
+                        tree_unlock(dev_tree);
                     }
                 }
                 // TODO: HUGE TODO
