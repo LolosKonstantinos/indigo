@@ -319,7 +319,7 @@ int test_mempool()
 }
 int test_signature()
 {
-    packet_t packet;
+    alignas(8) packet_t packet;
     init_packet_data_t *packet_data = NULL;
     signing_key_pair_t sign_key_pair;
     char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1];

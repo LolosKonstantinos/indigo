@@ -39,6 +39,7 @@ SOFTWARE.
 #include <sodium/crypto_sign.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdalign.h>
 
 /*GLOBAL DEFINITIONS*/
 #define FORCE_INLINE inline __attribute__((always_inline))
@@ -212,6 +213,13 @@ typedef struct fwd_fsr_t {
     uint64_t expiration_time;
     struct fwd_fsr_t *next;
 } fwd_fsr_t;
+
+typedef struct fwd_packet_t {
+    alignas(8) packet_t packet;
+    uint32_t address;
+    uint16_t port;
+    uint8_t zero[2];
+}fwd_packet_t;
 
 typedef struct remote_device_t {
     uint64_t expiration_time; // the time until which we consider the device active,

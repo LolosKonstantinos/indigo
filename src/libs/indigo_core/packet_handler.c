@@ -244,7 +244,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
                 memcpy(&packet_header, packet, sizeof(packet_header));
 
-                // todo handle all types of packets
+                // todo each case should call a function that handles that packet type
                 switch (packet_header.pac_type) {
                     case MSG_INIT_PACKET:
                         log_info("[packet_handler_thread] received init packet");
@@ -873,7 +873,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                              */
                             size_t ret_val;
                             uint64_t chunk_number;
-                            packet_t temp_packet;
+                            alignas(8) packet_t temp_packet;
 
                             // ensure that the packet was encrypted
                             if (packet->magic_number != MAGIC_NUMBER_2)
@@ -1452,6 +1452,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
             }
             if (remove_array){
                 for (size_t i = 0; i < remove_array_size; i++) {
+                    fclose(((xfp_t **)remove_array)[i]->file);
                     avl_delete_unlocked(xfp_tree, ((xfp_t **)remove_array)[i]);
                 }
                 free(remove_array);
@@ -1649,6 +1650,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     xfp.last_chunk = 0;
     xfp.session_id.serial = file_sending_response_data.serial;
     xfp.missing_range_ll = NULL;
+    xfp.file = NULL;
     memcpy(xfp.session_id.pk, fwd->id, crypto_sign_PUBLICKEYBYTES);
 
     ret = xfp_tree->insert(xfp_tree, &xfp);

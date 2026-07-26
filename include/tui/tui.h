@@ -44,7 +44,7 @@ int iswspecialchar(wint_t ch);
 int get_user_input(WINDOW *win, utf8_char_t *input);
 
 int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key_tree, QUEUE *ui_queue, QUEUE *ph_queue,
-                          QUEUE *send_queue);
+                          QUEUE *send_queue, unsigned char pk[]);
 int pathfinder(char path[PATH_MAX]);
 int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_t *id_count,
                   unsigned char last_id[crypto_sign_PUBLICKEYBYTES], int *last_row);

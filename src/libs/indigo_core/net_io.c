@@ -83,7 +83,7 @@ int send_discovery_packets(int port, uint32_t multicast_addr, socket_ll *sockets
 
     struct timespec ts;
 
-    packet_t packet;
+    alignas(8) packet_t packet;
     init_packet_data_t *packet_data = (init_packet_data_t *)packet.data;
     int routine_ret = 0;
 
@@ -715,7 +715,7 @@ int send_discovery_packets(const int port, const uint32_t multicast_addr, socket
                            char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1])
 {
     ssize_t ret;
-    packet_t packet = {0};
+    alignas(8) packet_t packet = {0};
     struct sockaddr_in s_addr = {0};
     init_packet_data_t *packet_data = (init_packet_data_t *)&packet.data;
 
@@ -786,7 +786,7 @@ int send_packet(const int port, const uint32_t addr, socket_ll *sockets, const p
 int send_next_file_packet(active_file_t *file, const unsigned char *const pk, socket_ll *sockets, EFLAG *flag)
 {
     unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
-    packet_t packet;
+    alignas(8) packet_t packet;
     size_t read_ret;
     int ret;
 
@@ -1789,6 +1789,8 @@ int *send_thread(SEND_ARGS *args)
     lht_t *active_files = NULL;
     active_file_t *curr_af;
     lht_node_t *list;
+    fwd_packet_t *fwd_packet = NULL;
+    remote_device_t rdev = {0};
     char username[MAX_USERNAME_LEN  * sizeof(uint32_t) + 1];
     int *process_return = NULL;
     int ret;
@@ -1844,7 +1846,9 @@ int *send_thread(SEND_ARGS *args)
                 return process_return;
             }
         }
-        else if (flag_val & EF_SEND_NEW_FILE) {
+        else if (flag_val & EF_CHECK_QUEUE) {
+            reset_single_event(args->flag, EF_CHECK_QUEUE);
+
             queue_lock(args->queue);
             node = queue_peek_tu(args->queue);
 
@@ -1860,24 +1864,16 @@ int *send_thread(SEND_ARGS *args)
                 if (ret) {
                     // todo: do something
                 }
-                free(node->data);
             }
-            else {
+            else if (node->type == QET_SEND_PACKET) {
+                queue_remove_front_tu(args->queue);
                 queue_unlock(args->queue);
-            }
-            destroy_qnode(node);
-            node = NULL;
-        }
-        // todo: there is a queue node with the info needed, check it and help your self
-        else if (flag_val & EF_RESEND_FILE_CHUNK) {
-            queue_lock(args->queue);
-            node = queue_peek_tu(args->queue);
-            if (node == NULL) {
-                queue_unlock(args->queue);
-                continue;
-            }
 
-            if (node->type == QET_RESEND_FILE_CHUNK) {
+                fwd_packet = node->data;
+
+                send_packet(fwd_packet->port,fwd_packet->address, args->sockets, &(fwd_packet->packet),args->flag);
+            }
+            else if (node->type == QET_RESEND_FILE_CHUNK) {
                 queue_remove_front_tu(args->queue);
                 queue_unlock(args->queue);
                 active_file_t *af;
@@ -1907,71 +1903,27 @@ int *send_thread(SEND_ARGS *args)
                     }
                 }
             }
+            else if (node->type == QET_STOP_FILE_TRANSMISSION) {
+                queue_remove_front_tu(args->queue);
+                queue_unlock(args->queue);
+            }
+            else if (node->type == QET_CONTINUE_FILE_TRANSMISSION) {
+                queue_remove_front_tu(args->queue);
+                queue_unlock(args->queue);
+            }
+            else if (node->type == QET_PAUSE_FILE_TRANSMISSION) {
+                queue_remove_front_tu(args->queue);
+                queue_unlock(args->queue);
+            }
             else {
+                //if it was not processed above then it shouldn't be in the queue
+                queue_remove_front_tu(args->queue);
                 queue_unlock(args->queue);
             }
 
             free(node->data);
             destroy_qnode(node);
             node = NULL;
-        }
-        else if (flag_val & EF_STOP_FILE_TRANSMISSION) {
-            queue_lock(args->queue);
-            node = queue_peek_tu(args->queue);
-            if (node == NULL) {
-                queue_unlock(args->queue);
-                continue;
-            }
-            if (node->type == QET_STOP_FILE_TRANSMISSION) {
-                queue_remove_front_tu(args->queue);
-                queue_unlock(args->queue);
-            }
-            else {
-                queue_unlock(args->queue);
-            }
-            // TODO: find and remove the active file
-            free(node->data);
-            destroy_qnode(node);
-        }
-        else if (flag_val & EF_CONTINUE_FILE_TRANSMISSION) {
-            queue_lock(args->queue);
-            node = queue_peek_tu(args->queue);
-
-            if (node == NULL) {
-                queue_unlock(args->queue);
-                continue;
-            }
-
-            if (node->type == QET_CONTINUE_FILE_TRANSMISSION) {
-                queue_remove_front_tu(args->queue);
-                queue_unlock(args->queue);
-            }
-            else {
-                queue_unlock(args->queue);
-            }
-            // TODO: find and continue the active file
-            free(node->data);
-            destroy_qnode(node);
-        }
-        else if (flag_val & EF_PAUSE_FILE_TRANSMISSION) {
-            queue_lock(args->queue);
-            node = queue_peek_tu(args->queue);
-
-            if (node == NULL) {
-                queue_unlock(args->queue);
-                continue;
-            }
-
-            if (node->type == QET_PAUSE_FILE_TRANSMISSION) {
-                queue_remove_front_tu(args->queue);
-                queue_unlock(args->queue);
-            }
-            else {
-                queue_unlock(args->queue);
-            }
-            // TODO: find and pause the active file
-            free(node->data);
-            destroy_qnode(node);
         } // we don't care about other events, if they are there we shouldn't get them anyway
 
         //////////////////////////////////////////////////

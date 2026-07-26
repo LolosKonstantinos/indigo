@@ -70,6 +70,8 @@ int main(int argc, char *argv[])
 
     MANAGER_ARGS *manager_args;
     pthread_t manager_tid;
+    unsigned char pk[crypto_sign_PUBLICKEYBYTES] = {0};
+    signing_key_pair_t *key_pair;
     void *master_key;
 
     FILE *log_file = NULL;
@@ -103,6 +105,20 @@ int main(int argc, char *argv[])
     if (ret != 0) {
         goto cleanup;
     }
+
+    key_pair = sodium_malloc(sizeof(signing_key_pair_t));
+    if (key_pair == NULL) {
+        goto cleanup;
+    }
+    ret = load_signing_key_pair(key_pair, master_key);
+    if (ret) {
+        sodium_memzero(key_pair, sizeof(signing_key_pair_t));
+        sodium_free(key_pair);
+        goto cleanup;
+    }
+    memcpy(pk, key_pair->public, crypto_sign_PUBLICKEYBYTES);
+    sodium_memzero(key_pair, sizeof(signing_key_pair_t));
+    sodium_free(key_pair);
     // bypass_password(&master_key);
     // create the device tree
 
@@ -209,12 +225,12 @@ int main(int argc, char *argv[])
     init_pair(12, COLOR_BLUE, COLOR_WHITE);
     init_pair(12, COLOR_BLACK, COLOR_WHITE);
 
-    create_main_interface(device_tree, file_tree, known_key_tree, ui_queue, ph_queue, send_queue);
+    create_main_interface(device_tree, file_tree, known_key_tree, ui_queue, ph_queue, send_queue, pk);
 
     endwin();
     free_tree(file_tree);
     free_tree(device_tree);
-    free(known_key_tree);
+    free_tree(known_key_tree);
     return ret;
 
 cleanup:
@@ -224,6 +240,6 @@ cleanup:
     endwin();
     free_tree(file_tree);
     free_tree(device_tree);
-    free(known_key_tree);
+    free_tree(known_key_tree);
     return ret;
 }

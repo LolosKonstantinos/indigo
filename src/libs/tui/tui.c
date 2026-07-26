@@ -586,7 +586,7 @@ int get_user_input(WINDOW *win, utf8_char_t *input)
 }
 
 int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key_tree, QUEUE *ui_queue, QUEUE *ph_queue,
-                          QUEUE *send_queue)
+                          QUEUE *send_queue, unsigned char pk[crypto_sign_PUBLICKEYBYTES])
 {
     tree_iterator_t *dev_iter;
     WINDOW *device_pad;
@@ -602,8 +602,11 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
     utf8_char_t ch;
     char context = 0; // 0 is for devises and 1 is for devide info
 
-    Q_SEND_FILE *send_node;
     Q_FILE_SENDING_REQUEST *fsr = NULL;
+    Q_EXPECT_SEND_RESPONSE *esr = NULL;
+    fwd_packet_t *fwd_packet = NULL;
+    file_sending_request_data_t *file_sending_request_data = NULL;
+    unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
 
     remote_device_t rdev;
     remote_device_t *rdev_p = NULL;
@@ -624,7 +627,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
     char file_last_level = 0;
 
     uint64_t status = 0;
-
+    void *temp = NULL;
     int ret;
 
     if (!dev_tree || !file_tree || !ui_queue || !ph_queue || !send_queue) {
@@ -816,44 +819,88 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
                         }
                         if (ret == 1) {
                             halfdelay(10);
+                            curs_set(0);
                             continue;
                         }
                         if (ret == 0) {
                             halfdelay(10);
+                            curs_set(0);
                             // send this to the queue
-                            send_node = malloc(sizeof(Q_SEND_FILE));
-                            if (!send_node) {
+                            fwd_packet = malloc(sizeof(fwd_packet_t));
+                            esr = malloc(sizeof(Q_EXPECT_SEND_RESPONSE));
+                            temp = g_path_get_basename(selected_path);
+                            if (!fwd_packet || !esr || !temp) {
+                                free(fwd_packet);
+                                free(esr);
+                                g_free(temp);
+                                temp = NULL;
+                                esr = NULL;
+                                fwd_packet = NULL;
                                 ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                                log_error("malloc() failed allocating %d bytes for queue node data Q_SENd_FILE "
-                                          "| return %d",
+                                log_error("malloc() failed allocating %d+%d bytes for queue node data"
+                                          " Q_SEND_FILE+Q_EXPECT_SEND_RESPONSE | return %d",
                                           sizeof(Q_SEND_FILE), ret);
                                 goto cleanup;
                             }
+                            esr->file = fopen(selected_path,"r");
+                            if (esr->file == NULL) {
+                                free(fwd_packet);
+                                free(esr);
+                                g_free(temp);
+                                temp = NULL;
+                                esr = NULL;
+                                fwd_packet = NULL;
+                                continue;
+                            }
+
+                            memcpy(esr->session_id.pk, last_id, crypto_sign_PUBLICKEYBYTES);
+
+                            randombytes(nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
+                            build_packet(&(fwd_packet->packet), MSG_FILE_SENDING_REQUEST,
+                                                            pk, nonce,NULL,0);
 
                             memcpy(rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);
 
+                            file_sending_request_data = (file_sending_request_data_t *)fwd_packet->packet.data;
+                            strncpy(file_sending_request_data->file_name, temp, NAME_MAX);
+                            g_free(temp);
+                            temp = NULL;
+
+                            fseek(esr->file, 0, SEEK_END);
+                            file_sending_request_data->file_size = ftell(esr->file);
+                            fseek(esr->file, 0, SEEK_SET);
+
                             ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&rdev_p);
                             if (ret == 1) {
-                                send_node->ip = rdev_p->ip;
-                                send_node->tk = rdev_p->client_tk;
-                                send_node->session_id.serial = ++(rdev_p->last_fid);
+                                fwd_packet->address = rdev_p->ip;
+                                fwd_packet->port = rdev_p->port;
+                                esr->session_id.serial = ++(rdev_p->last_fid);
+                                file_sending_request_data->serial = esr->session_id.serial;
+
+                                encrypt_packet(&(fwd_packet->packet), rdev_p->client_tk,nonce);
                             }
                             dev_tree->search_release(dev_tree);
 
-                            send_node->counter = 0;
-                            send_node->port = PORT;
-                            send_node->next = NULL;
-                            memcpy(send_node->session_id.pk, last_id, crypto_sign_PUBLICKEYBYTES);
-                            randombytes(send_node->nonce, 24);
 
-                            ret = queue_push(send_queue, send_node, QET_SEND_FILE);
+                            ret = queue_push(send_queue, fwd_packet, QET_SEND_PACKET);
                             if (ret) {
-                                free(send_node);
-                                send_node = NULL;
+                                free(fwd_packet);
+                                free(esr);
+                                fwd_packet = NULL;
+                                esr = NULL;
                                 log_error("queue_push() failed | return %d", ret);
                                 goto cleanup;
                             }
-                            send_node = NULL;
+                            ret = queue_push(ph_queue, esr,QET_EXPECT_SEND_RESPONSE);
+                            if (ret) {
+                                free(fwd_packet);
+                                free(esr);
+                                fwd_packet = NULL;
+                                esr = NULL;
+                                log_error("queue_push() failed | return %d", ret);
+                                goto cleanup;
+                            }
+                            fwd_packet = NULL;
                         }
                     }
                     else {

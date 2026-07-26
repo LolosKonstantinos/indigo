@@ -40,6 +40,7 @@ SOFTWARE.
 #define EF_PAUSE_FILE_TRANSMISSION       0x00001000
 #define EF_CONTINUE_FILE_TRANSMISSION    0x00002000
 #define EF_RESET_SOCKETS                 0x00004000
+#define EF_CHECK_QUEUE                   0x00008000
 
 //todo: we dont need a mutex, use _Atomic and an event object instead of a condition, we can use the msb as a semaphore
 typedef struct EVENT_FLAG {

@@ -838,29 +838,20 @@ int create_signing_key_pair(void *master_key)
 int load_signing_key_pair(signing_key_pair_t *key_pair, const unsigned char *master_key)
 {
     FILE *fp;
-    char *file_name = NULL;
+    char file_name[PATH_MAX];
     uint32_t file_len = 0;
     unsigned char *cipher = NULL;
     unsigned char *nonce = NULL;
     int ret = 0;
 
-    file_name = malloc(strlen(INDIGO_KEY_DIR) + strlen(INDIGO_SIGN_KEY_FILE_NAME) + 2);
-    if (file_name == NULL) {
-        log_error("malloc failed allocating %lld bytes for signing keypair file name | return %d",
-            strlen(INDIGO_KEY_DIR) + strlen(INDIGO_SIGN_KEY_FILE_NAME) + 2, INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
-        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-    }
-    strcpy(file_name, INDIGO_KEY_DIR);
-    strcat(file_name, "/");
-    strcat(file_name, INDIGO_SIGN_KEY_FILE_NAME);
+    get_source_dir(file_name);
+    strcat(file_name, "/"INDIGO_KEY_DIR"/"INDIGO_SIGN_KEY_FILE_NAME);
 
-    fp = fopen(file_name, "rb");
+    fp = fopen(file_name, "r");
     if (fp == NULL) {
-        free(file_name);
         log_error("failed opening file %s | return %d | errno %d", file_name, INDIGO_ERROR_FILE_NOT_FOUND, errno);
         return INDIGO_ERROR_FILE_NOT_FOUND;
     }
-    free(file_name);
 
     fseek(fp, 0, SEEK_END);
     file_len = ftell(fp);
