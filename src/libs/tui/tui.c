@@ -97,7 +97,7 @@ int verify_user(void **master_key)
         log_error("[verify_user] verify_password() failed | return %d", ret);
         return ret;
     }
-    if (!signing_key_pair_exists()) {
+    if (signing_key_pair_exists() == 0) {
         ret = create_signing_key_pair(*master_key);
         if (ret)
             log_error("[verify_user] create_signing_key_pair() failed | return %d", ret);

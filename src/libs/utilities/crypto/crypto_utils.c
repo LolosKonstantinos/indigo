@@ -253,8 +253,9 @@ int load_psw_salt(unsigned char **salt)
 
 int psw_salt_exists()
 {
-    char file_name[32] = INDIGO_PSW_DIR;
-    strcat(file_name, "/salt.dat");
+    char file_name[PATH_MAX];
+    get_source_dir(file_name);
+    strcat(file_name, "/"INDIGO_PSW_DIR"/salt.dat");
 
     if (access(file_name, F_OK) == 0) {
         return 1;
@@ -542,9 +543,9 @@ int load_key_derivation_settings(PSW_HASH_SETTINGS *settings)
 
 int key_derivation_settings_exist()
 {
-    char file_name[48] = INDIGO_PSW_DIR;
-    strcat(file_name, "/");
-    strcat(file_name, INDIGO_PSW_HASH_SETTINGS_FILE);
+    char file_name[PATH_MAX];
+    get_source_dir(file_name);
+    strcat(file_name, "/"INDIGO_PSW_DIR"/"INDIGO_PSW_HASH_SETTINGS_FILE);
 
     if (access(file_name, F_OK) == 0)
         return 1;
@@ -918,9 +919,9 @@ int sign_buffer(const signing_key_pair_t *key_pair, const unsigned char *buffer,
 
 int signing_key_pair_exists()
 {
-    char filename[32];
-    strcpy(filename, INDIGO_KEY_DIR);
-    strcat(filename, INDIGO_SIGN_KEY_FILE_NAME);
+    char filename[PATH_MAX] = {0};
+    get_source_dir(filename);
+    strcat(filename, "/"INDIGO_KEY_DIR"/"INDIGO_SIGN_KEY_FILE_NAME);
 
     if (access(filename, F_OK)) {
         return 0;
