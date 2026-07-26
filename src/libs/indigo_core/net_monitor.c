@@ -388,7 +388,6 @@ socket_node *get_discovery_sockets(int port, uint32_t multicast_addr)
         new_sock->ip_subnet.interface_type = p_ip_subnet->interface_type;
         new_sock->ip_subnet.ip = p_ip_subnet->ip;
         new_sock->ip_subnet.mask = p_ip_subnet->mask;
-        log_debug("[get_discovery_sockets] interface:%d mask:%d", new_sock->ip_subnet.ip, new_sock->ip_subnet.mask);
 
         // bind the socket to the local address (one for every address found)
         memset(&interface, 0, sizeof(interface));
@@ -550,7 +549,6 @@ socket_node *create_discv_sock_node()
         free(node);
         return NULL;
     }
-    log_debug("[create_discv_sock_node] created socket %d", node->sock);
 
     return node;
 }

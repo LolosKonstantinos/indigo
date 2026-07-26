@@ -369,17 +369,19 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         }
                         log_debug("[packet_handler_thread] sent signing request");
                         // add signing response to expected packets
+                        memset(&xsr, 0, sizeof(xsr_t));
                         xsr.expiration_time = time(NULL);
                         memcpy(xsr.nonce, signing_request_data->nonce, INDIGO_NONCE_SIZE);
-                        memcpy(xsr.id, packet->id, crypto_sign_PUBLICKEYBYTES);
                         memset(signing_request_data, 0, sizeof(signing_request_data_t));
-
-                        if (xsr_tree->insert(xsr_tree, &xsr)) {
+                        memcpy(xsr.id, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
+                        ret = xsr_tree->insert(xsr_tree, &xsr);
+                        if (ret < 0) {
                             *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                             log_fatal("[packet_handler_thread] xsr_tree insert failed | return %d", *process_return);
                             goto cleanup;
                         }
-
+                        if (ret == 0) log_debug("[packet_handler_thread] xsr tree inserted successfully");
+                        else if (ret > 0) log_debug("[packet_handler_thread] xsr tree insert duplicate");
                         break;
                     case MSG_SIGNING_REQUEST:
                         log_debug("[packet_handler_thread] received signing request");
@@ -457,15 +459,16 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 signing_response_data->sig_request = 1;
 
                                 // insert into xsr
+                                memset(&xsr, 0, sizeof(xsr_t));
                                 xsr.expiration_time = time(NULL);
                                 xsr.pkx = session_pk;
 
                                 xsr.skx = session_sk;
                                 memcpy(xsr.nonce, signing_response_data->nonce, INDIGO_NONCE_SIZE);
-                                memcpy(xsr.id, packet->id, crypto_sign_PUBLICKEYBYTES);
 
+                                memcpy(xsr.id, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
                                 ret = xsr_tree->insert(xsr_tree, &xsr);
-                                if (ret) {
+                                if (ret < 0) {
                                     tree_unlock(args->device_tree);
                                     args->device_tree->search_release(args->device_tree);
                                     *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
@@ -473,6 +476,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                               *process_return);
                                     goto cleanup;
                                 }
+                                else if (ret == 0) log_debug("[packet_handler_thread] xsr insert success");
+                                else log_debug("[packet_handler_thread] xsr insert failed duplicate");
                             }
                             else {
                                 // we don't need to send a signature request, we erase the nonce and turn off the flag
@@ -528,28 +533,27 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             randombytes_buf(signing_response_data->nonce, INDIGO_NONCE_SIZE);
                             signing_response_data->sig_request = 1;
                             // add signing response to expected packets
+                            memset(&xsr, 0, sizeof(xsr_t));
                             xsr.expiration_time = time(NULL);
                             xsr.pkx = session_pk;
                             xsr.skx = session_sk;
                             memcpy(xsr.nonce, signing_response_data->nonce, INDIGO_NONCE_SIZE);
-                            memcpy(xsr.id, packet->id, crypto_sign_PUBLICKEYBYTES);
 
-                            if (xsr_tree->insert(xsr_tree, &xsr)) {
+                            memcpy(xsr.id, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
+                            if (xsr_tree->insert(xsr_tree, &xsr) < 0) {
                                 *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                                 log_fatal("[packet_handler_thread] xsr_tree insert failed | return %d",
                                           *process_return);
                                 goto cleanup;
                             }
-                            memset(&xsr, 0, sizeof(xsr_t));
                         }
                         strcpy(signing_request_data->username, username);
                         build_packet(packet, MSG_SIGNING_RESPONSE, public_key, NULL, signing_response_data,
                                      sizeof(signing_response_data_t));
 
                         ret = crypto_sign_detached(signing_response_data->signature, NULL, (unsigned char *)packet,
-                                                   offsetof(packet_t, data) +
-                                                       offsetof(signing_response_data_t, signature),
-                                                   args->signing_keys->secret);
+                                                  offsetof(packet_t, data)+offsetof(signing_response_data_t,signature),
+                                                  args->signing_keys->secret);
                         if (ret) {
                             *process_return = INDIGO_ERROR_INVALID_PARAM;
                             log_fatal("[packet_handler_thread] crypto_sign_detached() failed signing nonce for"
@@ -597,8 +601,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             break;
                         }
                         // we don't validate signed time, since there is already a signed nonce to verify
-
-                        memcpy(xsr.id, packet->id, crypto_sign_PUBLICKEYBYTES);
+                        memcpy(xsr.id, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
                         ret = xsr_tree->search(xsr_tree, &xsr);
                         if (ret == 0){
                             log_debug("[packet_handler_thread] signing response not expected");
@@ -779,7 +782,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         free(xsr.pkx);
                         free(xsr.skx);
                         xsr_tree->remove(xsr_tree, &xsr);
-
+                        log_debug("it's me, hi! Im the problem it's me");
                         break;
                     case MSG_FILE_SENDING_REQUEST:
                         {
@@ -1415,6 +1418,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
             }
             free_tree_iterator(&xsr_iterator);
         }
+        if (remove_array_size > 0)log_debug("[packet_handler_thread] removed %llu xsr", remove_array_size);
         remove_array = NULL;
         remove_array_size = 0;
 
@@ -1543,7 +1547,7 @@ cleanup:
 }
 
 // cmp functions (helpers)
-int cmp_xsr(void *s1, void *s2) { return memcmp(((xsr_t *)s1)->id, ((xsr_t *)s2)->id, crypto_kx_PUBLICKEYBYTES); }
+int cmp_xsr(void *s1, void *s2) { return memcmp(((xsr_t *)s1)->id, ((xsr_t *)s2)->id, crypto_sign_PUBLICKEYBYTES); }
 
 int cmp_xfp(void *s1, void *s2)
 {

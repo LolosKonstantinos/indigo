@@ -199,8 +199,8 @@ int main(int argc, char *argv[])
     inet_pton(AF_INET, MULTICAST_ADDR, &multicast_addr);
     port = PORT;
 
-    ret = create_thread_manager_thread(&manager_args, master_key, port, multicast_addr, device_tree, known_key_tree, ui_queue,
-                                       ph_queue, send_queue, manager_queue, &manager_tid);
+    ret = create_thread_manager_thread(&manager_args, master_key, port, multicast_addr, device_tree,
+                         known_key_tree, ui_queue, ph_queue, send_queue, manager_queue, &manager_tid);
     if (ret != INDIGO_SUCCESS) {
         log_error("[main] create_thread_manager_thread failed\n");
         goto cleanup;
