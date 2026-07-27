@@ -383,8 +383,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             log_fatal("[packet_handler_thread] xsr_tree insert failed | return %d", *process_return);
                             goto cleanup;
                         }
-                        if (ret == 0) log_debug("[packet_handler_thread] xsr tree inserted successfully");
-                        else if (ret > 0) log_debug("[packet_handler_thread] xsr tree insert duplicate");
+
                         break;
                     case MSG_SIGNING_REQUEST:
                         log_debug("[packet_handler_thread] received signing request");
@@ -573,6 +572,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 goto cleanup;
                             }
                             if (ret > 0) {
+                                log_debug("[packet_handler_thread] xsr already exists");
                                 sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
                                 free(session_pk);
                                 free(session_sk);
@@ -580,6 +580,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 session_sk = NULL;
                             }
                         }
+
                         strncpy(signing_request_data->username, username, MAX_USERNAME_LEN * sizeof(uint32_t));
                         build_packet(packet, MSG_SIGNING_RESPONSE, public_key, NULL, signing_response_data,
                                      sizeof(signing_response_data_t));
@@ -756,7 +757,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             signing_response_data->sig_request = 0;
                             memset(signing_response_data->nonce, 0, INDIGO_NONCE_SIZE);
 
-                            ret = sign_buffer(args->signing_keys, ((signing_request_data_t *)packet->data)->nonce,
+                            ret = sign_buffer(args->signing_keys, ((signing_response_data_t *)packet->data)->nonce,
                                           INDIGO_NONCE_SIZE, signing_response_data->signed_nonce, NULL);
 
                             // ret = crypto_sign(signing_response_data->signed_nonce, NULL,
@@ -799,8 +800,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                           *process_return);
                                 goto cleanup;
                             }
-                            memcpy(((signing_response_data_t *)packet->data)->signature,
-                                     signing_response_data->signature,
+                            memcpy(((signing_response_data_t *)packet->data)->signature, signing_response_data->signature,
                                      crypto_sign_BYTES);
 
                             ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets, packet,
@@ -976,7 +976,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 xfp_tree->search_release(xfp_tree);
                                 break;
                             }
-                            // if it is a client file (we expect an acception response) we don't receive it
+                            // if it is a client file (we expect an accept response) we don't receive it
                             if (found_xfp->packet_count == XFP_CLIENT_FILE) {
                                 xfp_tree->search_release(xfp_tree);
                                 break;
