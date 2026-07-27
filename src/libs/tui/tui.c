@@ -871,13 +871,13 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
                             fseek(esr->file, 0, SEEK_SET);
 
                             ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&rdev_p);
-                            if (ret == 1) {
+                            if (ret == 1 && rdev_p->session_keys != NULL) {
                                 fwd_packet->address = rdev_p->ip;
                                 fwd_packet->port = rdev_p->port;
                                 esr->session_id.serial = ++(rdev_p->last_fid);
                                 file_sending_request_data->serial = esr->session_id.serial;
 
-                                encrypt_packet(&(fwd_packet->packet), rdev_p->client_tk,nonce);
+                                encrypt_packet(&(fwd_packet->packet), rdev_p->session_keys->client_tk,nonce);
                             }
                             dev_tree->search_release(dev_tree);
 
