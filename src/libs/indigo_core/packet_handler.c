@@ -157,14 +157,14 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     memcpy(public_key, args->signing_keys->public, crypto_sign_PUBLICKEYBYTES);
 
     // create the expected packet table
-    ret = new_tree(&xsr_tree, cmp_xsr, sizeof(xsr_t), BINARY_TREE_FLAG_AVL);
+    ret = new_tree(&xsr_tree, cmp_xsr, free_xsr, sizeof(xsr_t), BINARY_TREE_FLAG_AVL);
     if (ret != INDIGO_SUCCESS) {
         *process_return = ret;
         log_fatal("[packet_handler_thread] new_tree failed to create expected signing response tree | return %d",
                   *process_return, process_return);
         goto cleanup;
     }
-    ret = new_tree(&xfp_tree, cmp_xfp, sizeof(xfp_t), BINARY_TREE_FLAG_AVL);
+    ret = new_tree(&xfp_tree, cmp_xfp, free_xfp, sizeof(xfp_t), BINARY_TREE_FLAG_AVL);
     if (ret != INDIGO_SUCCESS) {
         *process_return = ret;
         log_fatal("[packet_handler_thread] new_tree failed to create expected file packet tree | return %d",
@@ -536,7 +536,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             }
 
                             ret = args->device_tree->insert(args->device_tree, &rdev);
-                            if (ret) {
+                            if (ret < 0) {
                                 sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
                                 free(session_pk);
                                 free(session_sk);
@@ -622,6 +622,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             break;
                         }
                         log_debug("[packet_handler_thread] sent signing response");
+
                         break;
 
                     case MSG_SIGNING_RESPONSE:
@@ -845,8 +846,10 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
                         // remove the expected packet
                         free(xsr.pkx);
-                        sodium_munlock(xsr.skx, crypto_kx_SECRETKEYBYTES);
-                        free(xsr.skx);
+                        if (xsr.skx) {
+                            sodium_munlock(xsr.skx, crypto_kx_SECRETKEYBYTES);
+                            free(xsr.skx);
+                        }
                         xsr_tree->remove(xsr_tree, &xsr);
                         log_debug("it's me, hi! Im the problem it's me (verified)");
                         break;
@@ -1522,7 +1525,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
             }
             if (remove_array){
                 for (size_t i = 0; i < remove_array_size; i++) {
-                    fclose(((xfp_t **)remove_array)[i]->file);
                     avl_delete_unlocked(xfp_tree, ((xfp_t **)remove_array)[i]);
                 }
                 free(remove_array);
@@ -1613,12 +1615,41 @@ cleanup:
 }
 
 // cmp functions (helpers)
-int cmp_xsr(void *s1, void *s2) { return memcmp(((xsr_t *)s1)->id, ((xsr_t *)s2)->id, crypto_sign_PUBLICKEYBYTES); }
+int cmp_xsr(void *s1, void *s2)
+{
+    return memcmp(((xsr_t *)s1)->id, ((xsr_t *)s2)->id, crypto_sign_PUBLICKEYBYTES);
+}
+void free_xsr(void *xsr)
+{
+    if (!xsr) return;
+    if (((xsr_t *)xsr)->skx) {
+        sodium_munlock(((xsr_t *)xsr)->skx, crypto_kx_SECRETKEYBYTES);
+        free(((xsr_t *)xsr)->skx);
+    }
+    free(((xsr_t *)xsr)->pkx);
+    free(xsr);
+}
 
 int cmp_xfp(void *s1, void *s2)
 {
     return memcmp(&((xfp_t *)s1)->session_id, &((xfp_t *)s2)->session_id,
                   (sizeof(uint64_t) + crypto_sign_PUBLICKEYBYTES));
+}
+void free_xfp(void *xfp)
+{
+    range_node_t *curr;
+    range_node_t *next;
+    if (!xfp) return;
+    if (((xfp_t *)xfp)->file) {
+        fclose(((xfp_t *)xfp)->file);
+    }
+    curr = ((xfp_t *)xfp)->missing_range_ll;
+    while (curr != NULL) {
+        next = curr->next;
+        free(curr);
+        curr = next;
+    }
+    free(xfp);
 }
 
 int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t *session_tree, tree_t *xfp_tree,

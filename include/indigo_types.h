@@ -22,7 +22,7 @@ SOFTWARE.
 #ifndef INDIGO_TYPES_H
 #define INDIGO_TYPES_H
 
-
+#include <sodium/utils.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #ifdef _WIN32
@@ -285,6 +285,24 @@ typedef struct ui_file_t {
 static FORCE_INLINE int cmp_rdev(void *s1, void *s2)
 {
     return memcmp(((remote_device_t *)s1)->peer_pk, ((remote_device_t *)s2)->peer_pk, crypto_sign_PUBLICKEYBYTES);
+}
+
+static FORCE_INLINE void free_rdev(void *rdev)
+{
+    fwd_fsr_t *next = NULL;
+    fwd_fsr_t *curr;
+    if (!rdev) return;
+    if (((remote_device_t *)rdev)->session_keys) {
+        sodium_munlock(((remote_device_t *)rdev)->session_keys, sizeof(session_keys_t));
+        free(((remote_device_t *)rdev)->session_keys);
+    }
+    curr = ((remote_device_t *)rdev)->fsr_list;
+    while (curr != NULL) {
+        next = curr->next;
+        free(curr);
+        curr = next;
+    }
+    free(rdev);
 }
 
 static FORCE_INLINE int cmp_ui_file(void *s1, void *s2)

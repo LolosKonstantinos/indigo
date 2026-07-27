@@ -30,8 +30,8 @@ SOFTWARE.
 #define BINARY_TREE_FLAG_RED_BLACK 0x02
 #define BINARY_TREE_FLAG_THREAD_UNSAFE 0x04
 
-typedef int (*cmp_f)(void *, void *);
-typedef void *(*usr_free_f)(void *node);
+typedef int (*cmp_fn)(void *, void *);
+typedef void (*usr_free_fn)(void *);
 
 typedef struct tree_priv_t tree_priv_t;
 typedef struct tree_t tree_t;
@@ -54,7 +54,7 @@ struct tree_t {
     tree_priv_t *priv;
 };
 
-int new_tree(tree_t **t, cmp_f cmp, size_t data_size, char type);
+int new_tree(tree_t **t, cmp_fn cmp, usr_free_fn node_free, size_t data_size, char type);
 void free_tree(tree_t *t);
 tree_node_t *new_node();
 

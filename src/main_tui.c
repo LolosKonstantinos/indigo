@@ -122,19 +122,19 @@ int main(int argc, char *argv[])
     // bypass_password(&master_key);
     // create the device tree
 
-    ret = new_tree(&device_tree, cmp_rdev, sizeof(remote_device_t), BINARY_TREE_FLAG_AVL);
+    ret = new_tree(&device_tree, cmp_rdev, free_rdev, sizeof(remote_device_t), BINARY_TREE_FLAG_AVL);
     if (ret) {
         log_error("[main] new_tree failed");
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
-    ret = new_tree(&file_tree, cmp_ui_file, sizeof(ui_file_t), BINARY_TREE_FLAG_AVL);
+    ret = new_tree(&file_tree, cmp_ui_file, NULL, sizeof(ui_file_t), BINARY_TREE_FLAG_AVL);
     if (ret) {
         log_error("[main] new_tree failed");
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
-    ret = new_tree(&known_key_tree, key_cmp, sizeof(known_key_t), BINARY_TREE_FLAG_AVL);
+    ret = new_tree(&known_key_tree, key_cmp, NULL, sizeof(known_key_t), BINARY_TREE_FLAG_AVL);
     if (ret) {
         log_error("[main] new_tree failed");
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;

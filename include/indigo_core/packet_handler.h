@@ -82,7 +82,9 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args);
 // utilities
 
 int cmp_xsr(void *s1, void *s2);
+void free_xsr(void *xsr);
 int cmp_xfp(void *s1, void *s2);
+void free_xfp(void *xfp);
 
 int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t *session_tree, tree_t *xfp_tree,
                           unsigned char pk[crypto_sign_PUBLICKEYBYTES], socket_ll *sockets, EFLAG *flag);

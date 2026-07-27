@@ -1696,6 +1696,16 @@ int print_device(WINDOW *win, remote_device_t *rdev, int row, char highlight)
         wprintw(win, "[SINISTER]");
         wattroff(win, COLOR_PAIR(1) | A_BOLD);
     }
+    if (rdev->dev_state_flag & RDSF_VERIFIED) {
+        wattron(win, COLOR_PAIR(4));
+        wprintw(win, "[verified]");
+        wattroff(win, COLOR_PAIR(4));
+    }
+    else {
+        wattron(win, COLOR_PAIR(3));
+        wprintw(win, " [not-verified]");
+        wattroff(win, COLOR_PAIR(3));
+    }
     if (rdev->fsr_count > 0) {
         wattron(win, COLOR_PAIR(3));
         wprintw(win, " (%d)", rdev->fsr_count);

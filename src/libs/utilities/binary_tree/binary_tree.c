@@ -45,8 +45,8 @@ struct tree_priv_t {
     pthread_mutex_t mutex;
     tree_node_t *root;
     size_t data_size;
-    cmp_f cmp;          // the function based on which we do struct comparison
-    usr_free_f node_free; //user defined free, to free node data. Can be null if free() is ok.
+    cmp_fn cmp;          // the function based on which we do struct comparison
+    usr_free_fn node_free; //user defined free, to free node data. Can be null if free() is ok.
     uint32_t height;
     unsigned char zero[4];
 };
@@ -68,7 +68,7 @@ struct tree_iterator_t {
 };
 
 
-int new_tree(tree_t **t, const cmp_f cmp, const size_t data_size, const char type) {
+int new_tree(tree_t **t, const cmp_fn cmp, usr_free_fn node_free, const size_t data_size, const char type) {
     tree_t *temp;
     tree_priv_t *priv;
 
@@ -92,6 +92,7 @@ int new_tree(tree_t **t, const cmp_f cmp, const size_t data_size, const char typ
     }
 
     priv->cmp = cmp;
+    priv->node_free = (node_free != NULL) ? node_free : free;
     priv->root = NULL;
     priv->data_size = data_size;
     pthread_mutex_init(&(priv->mutex), NULL);
@@ -122,8 +123,11 @@ void free_tree(tree_t *t) {
     tree_node_t **stack;
     tree_node_t **top;
     tree_node_t *temp;
+    usr_free_fn usr_free;
     if (!t) return;
     priv = t->priv;
+
+    usr_free = priv->node_free;
 
     stack = malloc(sizeof(tree_node_t *) * (2 * priv->height + 2));
     if (!stack) {
@@ -145,7 +149,7 @@ void free_tree(tree_t *t) {
         --top;
         if (temp->left) *(++top) = temp->left;
         if (temp->right) *(++top) = temp->right;
-        free(temp->data);
+        usr_free(temp->data);
         free(temp);
     }
 
@@ -462,7 +466,8 @@ int avl_delete(tree_t *t, void* data) {
     char direction = TREE_ROOT;
     char temp_direction;
     int cmp_res;
-    cmp_f cmp;
+    cmp_fn cmp;
+    usr_free_fn usr_free;
 
     if (!(t && data)) {
         log_error("null tree or no data | return -1");
@@ -473,6 +478,7 @@ int avl_delete(tree_t *t, void* data) {
     priv = t->priv;
     node = priv->root;
     cmp = priv->cmp;
+    usr_free = priv->node_free;
 
     stack = malloc(priv->height * sizeof(tree_node_t *));
     if (!stack) {
@@ -611,7 +617,6 @@ int avl_delete(tree_t *t, void* data) {
 
     }
 
-    //todo: i think that this is the problem
     if (top >= stack) {
         while (top) {
             top = avl_balance(stack, top, priv);
@@ -622,8 +627,7 @@ int avl_delete(tree_t *t, void* data) {
     pthread_mutex_unlock(&(priv->mutex));
 
     free(stack);
-    //todo: use user defined free for data
-    free(node->data);
+    usr_free(node->data);
     free(node);
 
     return 0;
@@ -639,7 +643,8 @@ int avl_delete_unlocked(tree_t *t, void* data) {
     char direction = TREE_ROOT;
     char temp_direction;
     int cmp_res;
-    cmp_f cmp;
+    cmp_fn cmp;
+    usr_free_fn usr_free;
 
     if (!(t && data)) {
         log_error("null tree or no data | return -1");
@@ -649,6 +654,7 @@ int avl_delete_unlocked(tree_t *t, void* data) {
     priv = t->priv;
     node = priv->root;
     cmp = priv->cmp;
+    usr_free = priv->node_free;
 
     stack = malloc(priv->height * sizeof(tree_node_t *));
     if (!stack) {
@@ -796,7 +802,7 @@ int avl_delete_unlocked(tree_t *t, void* data) {
 
     free(stack);
     //todo: use user defined free for data
-    free(node->data);
+    usr_free(node->data);
     free(node);
 
     return 0;
@@ -806,7 +812,7 @@ int avl_search(tree_t* t, void* data) {
     tree_node_t *node;
     tree_node_t *turn_node = NULL;
     int cmp_res;
-    cmp_f cmp;
+    cmp_fn cmp;
 
     if (!(t && data)) {
         log_error("null tree or data | return -1");
@@ -844,7 +850,7 @@ int avl_search_unlocked(tree_t *t, void* data) {
     tree_node_t *node;
     tree_node_t *turn_node = NULL;
     int cmp_res;
-    cmp_f cmp;
+    cmp_fn cmp;
 
     if (!(t && data)) {
         log_error("null tree or no data | return -1");
@@ -878,7 +884,7 @@ int avl_search_pin(tree_t *t, void* data, void** ret_data) {
     tree_node_t *node;
     tree_node_t *turn_node = NULL;
     int cmp_res;
-    cmp_f cmp;
+    cmp_fn cmp;
 
     if (!t || !data || !ret_data) {
         log_error("null tree or no data | return -1");
