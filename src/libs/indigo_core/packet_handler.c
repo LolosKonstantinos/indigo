@@ -742,7 +742,13 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                                                 ((signing_response_data_t *)packet->data)->pkx);
                             if (ret) {
                                 // the peer's public key is not acceptable
-
+                                sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
+                                free(found_rdev->session_keys);
+                                found_rdev->session_keys = NULL;
+                                tree_unlock(args->device_tree);
+                                sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
+                                free(session_pk);
+                                free(session_sk);
                                 break;
                             }
 
@@ -750,9 +756,12 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             signing_response_data->sig_request = 0;
                             memset(signing_response_data->nonce, 0, INDIGO_NONCE_SIZE);
 
-                            ret = crypto_sign(signing_response_data->signed_nonce, NULL,
-                                              ((signing_response_data_t *)packet->data)->nonce, INDIGO_NONCE_SIZE,
-                                              args->signing_keys->secret);
+                            ret = sign_buffer(args->signing_keys, ((signing_request_data_t *)packet->data)->nonce,
+                                          INDIGO_NONCE_SIZE, signing_response_data->signed_nonce, NULL);
+
+                            // ret = crypto_sign(signing_response_data->signed_nonce, NULL,
+                            //                   ((signing_response_data_t *)packet->data)->nonce, INDIGO_NONCE_SIZE,
+                            //                   args->signing_keys->secret);
                             if (ret) {
                                 sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
                                 free(found_rdev->session_keys);
@@ -773,11 +782,15 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             session_pk = NULL;
                             session_sk = NULL;
 
+
                             build_packet(packet, MSG_SIGNING_RESPONSE, public_key, NULL, signing_response_data,
                                          sizeof(signing_response_data_t));
-                            ret = crypto_sign_detached(
-                                signing_response_data->signature, NULL, (unsigned char *)packet,
-                                offsetof(packet_t, data) + offsetof(signing_response_data_t, signature), public_key);
+
+
+                            ret = crypto_sign_detached(signing_response_data->signature, NULL, (unsigned char *)packet,
+                                                      offsetof(packet_t, data)+offsetof(signing_response_data_t,signature),
+                                                      args->signing_keys->secret);
+
                             if (ret) {
                                 tree_unlock(args->device_tree);
                                 *process_return = INDIGO_ERROR_INVALID_PARAM;
