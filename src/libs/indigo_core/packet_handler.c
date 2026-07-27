@@ -580,7 +580,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 session_sk = NULL;
                             }
                         }
-                        strcpy(signing_request_data->username, username);
+                        strncpy(signing_request_data->username, username, MAX_USERNAME_LEN * sizeof(uint32_t));
                         build_packet(packet, MSG_SIGNING_RESPONSE, public_key, NULL, signing_response_data,
                                      sizeof(signing_response_data_t));
 
@@ -684,24 +684,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
                         // check if we need to verify ourselves
                         if (((signing_response_data_t *)(packet->data))->sig_request) {
-                            signing_response_data->zero = 0;
-                            signing_response_data->sig_request = 0;
-                            memset(signing_response_data->nonce, 0, INDIGO_NONCE_SIZE);
-
-                            ret = crypto_sign(signing_response_data->signed_nonce, NULL,
-                                              ((signing_response_data_t *)packet->data)->nonce, INDIGO_NONCE_SIZE,
-                                              args->signing_keys->secret);
-                            if (ret) {
-                                sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
-                                free(found_rdev->session_keys);
-                                found_rdev->session_keys = NULL;
-                                tree_unlock(args->device_tree);
-                                *process_return = INDIGO_ERROR_INVALID_PARAM;
-                                log_fatal("[packet_handler_thread] crypto_sign failed to sign nonce "
-                                          "for signing request | return %d",
-                                          *process_return);
-                                goto cleanup;
-                            }
                             // create session keys
                             /*there is no possible way to have a situation where,
                              * we have created session keys but the other party hasn't verified us
@@ -764,6 +746,24 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 break;
                             }
 
+                            signing_response_data->zero = 0;
+                            signing_response_data->sig_request = 0;
+                            memset(signing_response_data->nonce, 0, INDIGO_NONCE_SIZE);
+
+                            ret = crypto_sign(signing_response_data->signed_nonce, NULL,
+                                              ((signing_response_data_t *)packet->data)->nonce, INDIGO_NONCE_SIZE,
+                                              args->signing_keys->secret);
+                            if (ret) {
+                                sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
+                                free(found_rdev->session_keys);
+                                found_rdev->session_keys = NULL;
+                                tree_unlock(args->device_tree);
+                                *process_return = INDIGO_ERROR_INVALID_PARAM;
+                                log_fatal("[packet_handler_thread] crypto_sign failed to sign nonce "
+                                          "for signing request | return %d",
+                                          *process_return);
+                                goto cleanup;
+                            }
                             memcpy(signing_response_data->pkx, session_pk, crypto_kx_PUBLICKEYBYTES);
 
                             // we no longer need the keys
@@ -786,6 +786,9 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                           *process_return);
                                 goto cleanup;
                             }
+                            memcpy(((signing_response_data_t *)packet->data)->signature,
+                                     signing_response_data->signature,
+                                     crypto_sign_BYTES);
 
                             ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets, packet,
                                               args->flag);
