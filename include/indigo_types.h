@@ -221,6 +221,13 @@ typedef struct fwd_packet_t {
     uint8_t zero[2];
 }fwd_packet_t;
 
+typedef struct session_keys_t {
+    unsigned char client_rk[crypto_kx_SESSIONKEYBYTES];
+    unsigned char client_tk[crypto_kx_SESSIONKEYBYTES];
+    unsigned char server_rk[crypto_kx_SESSIONKEYBYTES];
+    unsigned char server_tk[crypto_kx_SESSIONKEYBYTES];
+}session_keys_t;
+
 typedef struct remote_device_t {
     uint64_t expiration_time; // the time until which we consider the device active,
                             // updated with any packet
@@ -229,10 +236,7 @@ typedef struct remote_device_t {
     uint32_t ip;
     unsigned char peer_pk[crypto_sign_PUBLICKEYBYTES];
 
-    unsigned char *client_rk;
-    unsigned char *client_tk;
-    unsigned char *server_rk;
-    unsigned char *server_tk;
+    session_keys_t *session_keys;
 
     char username[MAX_USERNAME_LEN * sizeof(uint32_t)];
     uint32_t dev_state_flag;

@@ -228,9 +228,15 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                      * todo: one idea is to have separate keys for each session and the peers public key
                      * is the identifier in both the session tree and the packet id field
                      */
-                    ret = decrypt_packet(packet, rdev.server_rk);
+                    if (rdev.session_keys == NULL) {
+                        mempool_free(args->mempool, packet);
+                        packet = NULL;
+                        packet_info = NULL;
+                        continue;
+                    }
+                    ret = decrypt_packet(packet, rdev.session_keys->server_rk);
                     if (ret) {
-                        ret = decrypt_packet(packet, rdev.client_rk);
+                        ret = decrypt_packet(packet, rdev.session_keys->client_rk);
                         if (ret) {
                             // we no longer need the packet
                             mempool_free(args->mempool, packet);
@@ -291,10 +297,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         // the remote device is not on the tree so we add it
                         rdev.expiration_time = time(NULL);
                         rdev.ip = packet_info->address.sin_addr.s_addr;
-                        rdev.client_rk = NULL;
-                        rdev.client_tk = NULL;
-                        rdev.server_rk = NULL;
-                        rdev.server_tk = NULL;
+                        rdev.session_keys = NULL;
                         rdev.fsr_list = NULL;
                         rdev.fsr_count = 0;
                         rdev.dev_state_flag = RDSF_UNVERIFIED; // the device is not verified
@@ -424,6 +427,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         if (!session_pk || !session_sk) {
                             free(session_pk);
                             free(session_sk);
+                            session_pk = NULL;
+                            session_sk = NULL;
                             *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                             log_fatal("[packet_handler_thread] malloc failed allocating %d+%d bytes"
                                       " for session public and private key | return %d",
@@ -434,8 +439,11 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
                         ret = crypto_kx_keypair(session_pk, session_sk);
                         if (ret) {
+                            sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
                             free(session_pk);
                             free(session_sk);
+                            session_pk = NULL;
+                            session_sk = NULL;
                             *process_return = INDIGO_ERROR_INVALID_PARAM;
                             log_fatal("[packet_handler_thread] crypto_kx_keypair() failed creating session keys"
                                       " | return %d",
@@ -470,14 +478,26 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                 ret = xsr_tree->insert(xsr_tree, &xsr);
                                 if (ret < 0) {
                                     tree_unlock(args->device_tree);
+
+                                    sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
+                                    free(session_pk);
+                                    free(session_sk);
+                                    session_pk = NULL;
+                                    session_sk = NULL;
+
                                     args->device_tree->search_release(args->device_tree);
                                     *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                                     log_fatal("[packet_handler_thread] xsr_tree insert failed | return %d",
                                               *process_return);
                                     goto cleanup;
                                 }
-                                else if (ret == 0) log_debug("[packet_handler_thread] xsr insert success");
-                                else log_debug("[packet_handler_thread] xsr insert failed duplicate");
+                                if (ret > 0) {
+                                    sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
+                                    free(session_pk);
+                                    free(session_sk);
+                                    session_pk = NULL;
+                                    session_sk = NULL;
+                                }
                             }
                             else {
                                 // we don't need to send a signature request, we erase the nonce and turn off the flag
@@ -493,10 +513,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             // we detected the device (though it is unverified)
                             rdev.expiration_time = time(NULL);
                             rdev.ip = packet_info->address.sin_addr.s_addr;
-                            rdev.client_rk = NULL;
-                            rdev.client_tk = NULL;
-                            rdev.server_rk = NULL;
-                            rdev.server_tk = NULL;
+                            rdev.session_keys = NULL;
                             rdev.fsr_list = NULL;
                             rdev.fsr_count = 0;
                             memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
@@ -520,8 +537,11 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
                             ret = args->device_tree->insert(args->device_tree, &rdev);
                             if (ret) {
+                                sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
                                 free(session_pk);
                                 free(session_sk);
+                                session_pk = NULL;
+                                session_sk = NULL;
                                 *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                                 log_fatal("[packet_handler_thread] device_tree insert failed inserting device"
                                           " from signing request | return %d",
@@ -540,11 +560,24 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             memcpy(xsr.nonce, signing_response_data->nonce, INDIGO_NONCE_SIZE);
 
                             memcpy(xsr.id, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
-                            if (xsr_tree->insert(xsr_tree, &xsr) < 0) {
+                            ret = xsr_tree->insert(xsr_tree, &xsr);
+                            if (ret < 0) {
+                                sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
+                                free(session_pk);
+                                free(session_sk);
+                                session_pk = NULL;
+                                session_sk = NULL;
                                 *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                                 log_fatal("[packet_handler_thread] xsr_tree insert failed | return %d",
                                           *process_return);
                                 goto cleanup;
+                            }
+                            if (ret > 0) {
+                                sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
+                                free(session_pk);
+                                free(session_sk);
+                                session_pk = NULL;
+                                session_sk = NULL;
                             }
                         }
                         strcpy(signing_request_data->username, username);
@@ -640,6 +673,14 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         found_rdev->dev_state_flag |= RDSF_VERIFIED;
                         found_rdev->dev_state_flag &= (~RDSF_UNVERIFIED);
 
+                        found_rdev->session_keys = malloc(sizeof(session_keys_t));
+                        if (found_rdev->session_keys == NULL) {
+                            tree_unlock(args->device_tree);
+                            log_fatal("[packet_handler_thread] malloc failed to allocate session_keys]");
+                            goto cleanup;
+                        }
+                        sodium_mlock(found_rdev->session_keys, sizeof(session_keys_t));
+
                         // check if we need to verify ourselves
                         if (((signing_response_data_t *)(packet->data))->sig_request) {
                             signing_response_data->zero = 0;
@@ -650,6 +691,9 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                               ((signing_response_data_t *)packet->data)->nonce, INDIGO_NONCE_SIZE,
                                               args->signing_keys->secret);
                             if (ret) {
+                                sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
+                                free(found_rdev->session_keys);
+                                found_rdev->session_keys = NULL;
                                 tree_unlock(args->device_tree);
                                 *process_return = INDIGO_ERROR_INVALID_PARAM;
                                 log_fatal("[packet_handler_thread] crypto_sign failed to sign nonce "
@@ -657,8 +701,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                           *process_return);
                                 goto cleanup;
                             }
-                            log_debug("[packet_handler_thread] sent signing response");
-
                             // create session keys
                             /*there is no possible way to have a situation where,
                              * we have created session keys but the other party hasn't verified us
@@ -667,10 +709,14 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
                             session_pk = malloc(crypto_kx_PUBLICKEYBYTES);
                             session_sk = malloc(crypto_kx_SECRETKEYBYTES);
-                            if (!session_pk || !session_sk) {
-                                tree_unlock(args->device_tree);
+                            if (!session_pk || !session_sk)
+                            {
                                 free(session_pk);
                                 free(session_sk);
+                                sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
+                                free(found_rdev->session_keys);
+                                found_rdev->session_keys = NULL;
+                                tree_unlock(args->device_tree);
                                 *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                                 log_fatal("[packet_handler_thread] malloc failed allocating %d+%d bytes "
                                           "for session keys | return %d",
@@ -681,38 +727,46 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
                             ret = crypto_kx_keypair(session_pk, session_sk);
                             if (ret) {
+                                sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
+                                free(found_rdev->session_keys);
+                                found_rdev->session_keys = NULL;
                                 tree_unlock(args->device_tree);
+                                sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
                                 free(session_pk);
                                 free(session_sk);
                                 *process_return = INDIGO_ERROR_INVALID_PARAM;
                                 log_fatal("[packet_handler_thread] kx_keypair failed | return %d", *process_return);
                                 goto cleanup;
                             }
-                            ret = crypto_kx_client_session_keys(found_rdev->client_rk, found_rdev->client_tk,
+
+                            ret = crypto_kx_client_session_keys(found_rdev->session_keys->client_rk, found_rdev->session_keys->client_tk,
                                                                 session_pk, session_sk,
                                                                 ((signing_response_data_t *)packet->data)->pkx);
                             if (ret) {
                                 // the peer's public key is not acceptable
+                                sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
+                                free(found_rdev->session_keys);
+                                found_rdev->session_keys = NULL;
                                 tree_unlock(args->device_tree);
+                                sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
                                 free(session_pk);
                                 free(session_sk);
                                 break;
                             }
 
-                            ret = crypto_kx_server_session_keys(found_rdev->server_rk, found_rdev->server_tk,
+                            ret = crypto_kx_server_session_keys(found_rdev->session_keys->server_rk, found_rdev->session_keys->server_tk,
                                                                 session_pk, session_sk,
                                                                 ((signing_response_data_t *)packet->data)->pkx);
                             if (ret) {
                                 // the peer's public key is not acceptable
-                                tree_unlock(args->device_tree);
-                                free(session_pk);
-                                free(session_sk);
+
                                 break;
                             }
 
                             memcpy(signing_response_data->pkx, session_pk, crypto_kx_PUBLICKEYBYTES);
 
                             // we no longer need the keys
+                            sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
                             free(session_pk);
                             free(session_sk);
                             session_pk = NULL;
@@ -731,6 +785,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                           *process_return);
                                 goto cleanup;
                             }
+
                             ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets, packet,
                                               args->flag);
                             if (ret) {
@@ -759,19 +814,29 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         else {
                             // todo: improve error handling
                             // create the client and server keys
-                            ret = crypto_kx_client_session_keys(found_rdev->client_rk, found_rdev->client_tk, xsr.pkx,
-                                                              xsr.skx, ((signing_response_data_t *)packet->data)->pkx);
+
+                            ret = crypto_kx_client_session_keys(found_rdev->session_keys->client_rk,
+                                found_rdev->session_keys->client_tk, xsr.pkx,
+                                xsr.skx, ((signing_response_data_t *)packet->data)->pkx);
                             if (ret) {
-                                tree_unlock(args->device_tree);
                                 // the peer's public key is not acceptable
+                                sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
+                                free(found_rdev->session_keys);
+                                found_rdev->session_keys = NULL;
+                                tree_unlock(args->device_tree);
                                 break;
                             }
 
-                            ret = crypto_kx_server_session_keys(found_rdev->server_rk, found_rdev->server_tk, xsr.pkx,
-                                                              xsr.skx, ((signing_response_data_t *)packet->data)->pkx);
+                            ret = crypto_kx_server_session_keys(found_rdev->session_keys->server_rk,
+                                found_rdev->session_keys->server_tk, xsr.pkx,
+                                xsr.skx, ((signing_response_data_t *)packet->data)->pkx);
                             if (ret) {
-                                tree_unlock(args->device_tree);
                                 // the peer's public key is not acceptable
+                                sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
+                                free(found_rdev->session_keys);
+                                found_rdev->session_keys = NULL;
+
+                                tree_unlock(args->device_tree);
                                 break;
                             }
                         }
@@ -780,9 +845,10 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
                         // remove the expected packet
                         free(xsr.pkx);
+                        sodium_munlock(xsr.skx, crypto_kx_SECRETKEYBYTES);
                         free(xsr.skx);
                         xsr_tree->remove(xsr_tree, &xsr);
-                        log_debug("it's me, hi! Im the problem it's me");
+                        log_debug("it's me, hi! Im the problem it's me (verified)");
                         break;
                     case MSG_FILE_SENDING_REQUEST:
                         {
@@ -1632,7 +1698,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     randombytes_buf(nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
     build_packet(packet, MSG_FILE_SENDING_RESPONSE, pk, nonce, &file_sending_response_data,
                  sizeof(file_sending_request_data_t));
-    ret = encrypt_packet(packet, rdev.server_tk, nonce);
+    ret = encrypt_packet(packet, rdev.session_keys->server_tk, nonce);
     if (ret) {
         log_error("[create_server_session] encrypt packet failed | return %d", ret);
         goto cleanup;
