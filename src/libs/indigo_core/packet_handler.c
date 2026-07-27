@@ -861,11 +861,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         args->device_tree->search_release(args->device_tree);
 
                         // remove the expected packet
-                        free(xsr.pkx);
-                        if (xsr.skx) {
-                            sodium_munlock(xsr.skx, crypto_kx_SECRETKEYBYTES);
-                            free(xsr.skx);
-                        }
                         xsr_tree->remove(xsr_tree, &xsr);
                         log_debug("it's me, hi! Im the problem it's me (verified)");
                         break;
