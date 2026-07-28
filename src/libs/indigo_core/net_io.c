@@ -1740,6 +1740,7 @@ int *recv_thread(RECV_ARGS *args)
                     mempool_free(mempool, recv_buffer);
                     break;
                 }
+                log_debug("[recv_thread] received packet");
                 if (lret > sizeof(packet_t) || lret < PAC_MIN_BYTES) {
                     mempool_free(mempool, recv_buffer);
                     continue;
@@ -1762,6 +1763,7 @@ int *recv_thread(RECV_ARGS *args)
                     goto cleanup;
                 }
                 set_event_flag(args->ph_flag, EF_NEW_PACKET);
+
             }
         }
     }
