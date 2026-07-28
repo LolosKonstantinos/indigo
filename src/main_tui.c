@@ -68,6 +68,8 @@ int main(int argc, char *argv[])
     // the manager queue
     QUEUE *manager_queue = NULL;
 
+    EFLAG *send_flag = NULL;
+
     MANAGER_ARGS *manager_args;
     pthread_t manager_tid;
     unsigned char pk[crypto_sign_PUBLICKEYBYTES] = {0};
@@ -196,12 +198,26 @@ int main(int argc, char *argv[])
         goto cleanup;
     }
 
+    send_flag = create_event_flag();
+    if (send_flag == NULL) {
+        log_error( "[main] create_event_flag() failed | return 1");
+        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        goto cleanup;
+    }
+
     inet_pton(AF_INET, MULTICAST_ADDR, &multicast_addr);
     port = PORT;
 
-    ret = create_thread_manager_thread(&manager_args, master_key, port, multicast_addr, device_tree,
-                         known_key_tree, ui_queue, ph_queue, send_queue, manager_queue, &manager_tid);
+    ret = create_thread_manager_thread(&manager_args, master_key, port, multicast_addr, device_tree, known_key_tree,
+                                       ui_queue, ph_queue, send_queue, send_flag, manager_queue, &manager_tid);
     if (ret != INDIGO_SUCCESS) {
+        free_event_flag(send_flag);
+        destroy_queue(manager_queue);
+        destroy_queue(send_queue);
+        destroy_queue(ph_queue);
+        free(manager_queue);
+        free(send_queue);
+        free(ph_queue);
         log_error("[main] create_thread_manager_thread failed\n");
         goto cleanup;
     }
@@ -225,9 +241,11 @@ int main(int argc, char *argv[])
     init_pair(12, COLOR_BLUE, COLOR_WHITE);
     init_pair(12, COLOR_BLACK, COLOR_WHITE);
 
-    create_main_interface(device_tree, file_tree, known_key_tree, ui_queue, ph_queue, send_queue, pk);
+    create_main_interface(device_tree, file_tree, known_key_tree, ui_queue, ph_queue, send_queue, pk, send_flag);
 
     endwin();
+    destroy_queue(ui_queue);
+    free(ui_queue);
     free_tree(file_tree);
     free_tree(device_tree);
     free_tree(known_key_tree);
@@ -238,6 +256,8 @@ cleanup:
     WSACleanup();
 #endif
     endwin();
+    destroy_queue(ui_queue);
+    free(ui_queue);
     free_tree(file_tree);
     free_tree(device_tree);
     free_tree(known_key_tree);

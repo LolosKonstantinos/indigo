@@ -246,6 +246,26 @@ void queue_remove_front_tu(QUEUE *queue)
     free(temp);
 }
 
+void queue_remove_front_no_free_tu(QUEUE *queue){
+    if (queue == NULL) {
+        return;
+    }
+    if (queue->firstNode == NULL) {
+        return;
+    }
+
+    QNODE *temp = queue->firstNode;
+
+    queue->firstNode = queue->firstNode->next;
+
+    if (queue->firstNode == NULL) {
+        queue->lastNode = NULL;
+    }
+    queue->qsize--;
+
+    free(temp);
+}
+
 uint8_t queue_push(QUEUE *queue, void *const data, QET type)
 {
     QNODE *temp = NULL;

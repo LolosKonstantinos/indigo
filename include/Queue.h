@@ -114,6 +114,7 @@ uint8_t queue_push_tu(QUEUE *queue, void *data, QET type);
 QNODE *queue_pop_tu(QUEUE *queue, QOPT option);
 QNODE *queue_peek_tu(QUEUE *queue);
 void queue_remove_front_tu(QUEUE *queue);
+void queue_remove_front_no_free_tu(QUEUE *queue);
 
 // add and get from the queue
 uint8_t queue_push(QUEUE *queue, void *data, QET type);

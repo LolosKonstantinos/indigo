@@ -28,7 +28,9 @@ SOFTWARE.
 #include <Queue.h>
 #include <binary_tree.h>
 #include <lht.h>
-//#include <ncursesw/curses.h>
+// #include <ncursesw/curses.h>
+#include "event_flags.h"
+
 #include <curses.h>
 #include <stdint.h>
 
@@ -44,7 +46,7 @@ int iswspecialchar(wint_t ch);
 int get_user_input(WINDOW *win, utf8_char_t *input);
 
 int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key_tree, QUEUE *ui_queue, QUEUE *ph_queue,
-                          QUEUE *send_queue, unsigned char pk[]);
+                          QUEUE *send_queue, unsigned char pk[], EFLAG *send_flag);
 int pathfinder(char path[PATH_MAX]);
 int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_t *id_count,
                   unsigned char last_id[crypto_sign_PUBLICKEYBYTES], int *last_row);

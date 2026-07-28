@@ -16,6 +16,7 @@ target_link_libraries(${PROJECT_NAME}_tui PRIVATE indigo_core
                                                   logger
                                                   tp_logger
                                                   config
+                                                  event_flags
 )
 if(WIN32)
     target_link_libraries(${PROJECT_NAME}_tui PRIVATE ws2_32 IPHLPAPI)

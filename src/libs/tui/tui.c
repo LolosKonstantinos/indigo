@@ -586,7 +586,7 @@ int get_user_input(WINDOW *win, utf8_char_t *input)
 }
 
 int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key_tree, QUEUE *ui_queue, QUEUE *ph_queue,
-                          QUEUE *send_queue, unsigned char pk[crypto_sign_PUBLICKEYBYTES])
+                          QUEUE *send_queue, unsigned char pk[crypto_sign_PUBLICKEYBYTES], EFLAG *send_flag)
 {
     tree_iterator_t *dev_iter;
     WINDOW *device_pad;
@@ -879,6 +879,14 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
 
                                 encrypt_packet(&(fwd_packet->packet), rdev_p->session_keys->client_tk,nonce);
                             }
+                            else {
+                                tree_unlock(dev_tree);
+                                free(fwd_packet);
+                                free(esr);
+                                esr = NULL;
+                                fwd_packet = NULL;
+                                continue;
+                            }
                             dev_tree->search_release(dev_tree);
 
 
@@ -891,6 +899,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
                                 log_error("queue_push() failed | return %d", ret);
                                 goto cleanup;
                             }
+                            set_event_flag(send_flag, EF_CHECK_QUEUE);
                             ret = queue_push(ph_queue, esr,QET_EXPECT_SEND_RESPONSE);
                             if (ret) {
                                 free(fwd_packet);
@@ -901,6 +910,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
                                 goto cleanup;
                             }
                             fwd_packet = NULL;
+                            log_debug("[create_main_interface] pushed to queue esr and send_packet");
                         }
                     }
                     else {
@@ -1783,7 +1793,7 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
     temp_row = y;
     for (fwd_fsr_t *fsr = found_rdev->fsr_list; fsr != NULL; fsr = fsr->next) {
         file_name = g_utf8_make_valid(fsr->file_name, NAME_MAX);
-        if (!username) {
+        if (!file_name) {
             tree_unlock(dev_tree);
             return -1;
         }

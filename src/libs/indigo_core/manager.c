@@ -156,7 +156,7 @@ int *thread_manager_thread(MANAGER_ARGS *args)
     memcpy(signing_pk, signing_key_pair->public, crypto_sign_PUBLICKEYBYTES);
 
     // create threads
-    if (create_sending_thread(&send_args, args->port, args->multicast_addr, sockets, args->flag, send_queue,
+    if (create_sending_thread(&send_args, args->port, args->multicast_addr, sockets, args->flag, args->send_flag, send_queue,
                               args->master_key, &tid_send)) {
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_error("[thread_manager_thread] send thread creation failed | return %d", INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
@@ -452,7 +452,7 @@ int cancel_device_discovery(pthread_t tid, EFLAG *flag)
 }
 int create_thread_manager_thread(MANAGER_ARGS **args, void *master_key, int port, uint32_t multicast_address,
                                  tree_t *dev_tree, tree_t *known_keys_tree, QUEUE *ui_queue, QUEUE *ph_queue,
-                                 QUEUE *send_queue, QUEUE *manager_queue, pthread_t *tid)
+                                 QUEUE *send_queue, EFLAG *send_flag, QUEUE *manager_queue, pthread_t *tid)
 {
     pthread_t thread;
 
@@ -480,6 +480,7 @@ int create_thread_manager_thread(MANAGER_ARGS **args, void *master_key, int port
     manager_args->ui_queue = ui_queue;
     manager_args->ph_queue = ph_queue;
     manager_args->send_queue = send_queue;
+    manager_args->send_flag = send_flag;
 
     if (pthread_create(&thread, NULL, (void *)(&thread_manager_thread), manager_args)) {
         free_event_flag(flag);
@@ -490,11 +491,11 @@ int create_thread_manager_thread(MANAGER_ARGS **args, void *master_key, int port
 
     *tid = thread;
 
-    return 0;
+    return INDIGO_SUCCESS;
 }
 
 int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, socket_ll *sockets, EFLAG *wake_mngr,
-                          QUEUE *queue, const void *master_key, pthread_t *tid)
+                          EFLAG *send_flag, QUEUE *queue, const void *master_key, pthread_t *tid)
 {
     pthread_t thread;
 
@@ -505,12 +506,6 @@ int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address
     }
     *args = send_args;
 
-    EFLAG *flag = create_event_flag();
-    if (flag == NULL) {
-        log_error( "[create_sending_thread] create_event_flag() failed | return 1");
-        free(send_args);
-        return 1;
-    }
     send_args->sign_keys = sodium_malloc(sizeof(signing_key_pair_t));
     if (!send_args->sign_keys) {
         log_error( "[create_sending_thread] sodium_malloc() failed allocating %d bytes for signing key pair | return 1", sizeof(signing_key_pair_t));
@@ -528,11 +523,11 @@ int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address
     send_args->multicast_addr = multicast_address;
     send_args->sockets = sockets;
     send_args->wake = wake_mngr;
-    send_args->flag = flag;
+    send_args->flag = send_flag;
     send_args->queue = queue;
 
     if (pthread_create(&thread, NULL, (void *)(&send_thread), send_args)) {
-        free_event_flag(flag);
+        free_event_flag(send_flag);
         free(send_args);
         log_error("[create_sending_thread] pthread_create() failed to create send thread | return 1 | errno %d", errno);
         return 1;

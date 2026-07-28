@@ -819,6 +819,7 @@ int init_packet_routine(packet_t *packet, packet_info_t *packet_info, tree_t *de
     if (ret == 1) {
         found_rdev->expiration_time = time(NULL); // renew the timestamp
         found_rdev->ip = packet_info->address.sin_addr.s_addr;
+        found_rdev->port = packet_info->address.sin_port;
         // copy the username
         memcpy(tmp_username, ((init_packet_data_t *)packet->data)->username, MAX_USERNAME_LEN * sizeof(wchar_t));
         sanitize_username(tmp_username);
@@ -833,6 +834,7 @@ int init_packet_routine(packet_t *packet, packet_info_t *packet_info, tree_t *de
     // the remote device is not on the tree so we add it
     rdev.expiration_time = time(NULL);
     rdev.ip = packet_info->address.sin_addr.s_addr;
+    rdev.port = packet_info->address.sin_port;
     rdev.session_keys = NULL;
     rdev.fsr_list = NULL;
     rdev.fsr_count = 0;
@@ -966,6 +968,7 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
         // the device is found
         found_rdev->expiration_time = time(NULL);
         found_rdev->ip = packet_info->address.sin_addr.s_addr;
+        found_rdev->port = packet_info->address.sin_port;
 
         memset(signing_response_data.nonce, 0, INDIGO_NONCE_SIZE);
         signing_response_data.sig_request = 0;

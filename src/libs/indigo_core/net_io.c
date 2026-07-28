@@ -1858,24 +1858,34 @@ int *send_thread(SEND_ARGS *args)
             }
 
             if (node->type == QET_SEND_FILE) {
-                queue_remove_front_tu(args->queue);
+                queue_remove_front_no_free_tu(args->queue);
                 queue_unlock(args->queue);
+
                 ret = active_files->insert(active_files, &(((active_file_t *)node->data)->session_id), node->data);
                 if (ret) {
                     // todo: do something
                 }
             }
             else if (node->type == QET_SEND_PACKET) {
-                queue_remove_front_tu(args->queue);
+                queue_remove_front_no_free_tu(args->queue);
                 queue_unlock(args->queue);
 
                 fwd_packet = node->data;
 
-                send_packet(fwd_packet->port,fwd_packet->address, args->sockets, &(fwd_packet->packet),args->flag);
+                ret = send_packet(fwd_packet->port,fwd_packet->address, args->sockets, &(fwd_packet->packet),args->flag);
+                if (ret) {
+                    delete_lht(active_files);
+                    *process_return = ret;
+                    log_info("[send_thread] send_packet() failed | return %d", *process_return);
+                    return process_return;
+                }
+                log_debug("[send_thread] sent file sending request | return %d", *process_return);
+
             }
             else if (node->type == QET_RESEND_FILE_CHUNK) {
-                queue_remove_front_tu(args->queue);
+                queue_remove_front_no_free_tu(args->queue);
                 queue_unlock(args->queue);
+
                 active_file_t *af;
                 transmission_control_data_t data = ((Q_RESEND_FILE_CHUNK *)(node->data))->control;
 
@@ -1904,15 +1914,15 @@ int *send_thread(SEND_ARGS *args)
                 }
             }
             else if (node->type == QET_STOP_FILE_TRANSMISSION) {
-                queue_remove_front_tu(args->queue);
+                queue_remove_front_no_free_tu(args->queue);
                 queue_unlock(args->queue);
             }
             else if (node->type == QET_CONTINUE_FILE_TRANSMISSION) {
-                queue_remove_front_tu(args->queue);
+                queue_remove_front_no_free_tu(args->queue);
                 queue_unlock(args->queue);
             }
             else if (node->type == QET_PAUSE_FILE_TRANSMISSION) {
-                queue_remove_front_tu(args->queue);
+                queue_remove_front_no_free_tu(args->queue);
                 queue_unlock(args->queue);
             }
             else {

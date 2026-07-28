@@ -32,6 +32,7 @@ typedef struct MANAGER_ARGS {
     int port;
     uint32_t multicast_addr;
     EFLAG *flag;
+    EFLAG *send_flag;
     void *master_key;
     QUEUE *queue;
     QUEUE *ui_queue;
@@ -62,10 +63,10 @@ int cancel_device_discovery(pthread_t tid, EFLAG *flag);
 
 int create_thread_manager_thread(MANAGER_ARGS **args, void *master_key, int port, uint32_t multicast_address,
                                  tree_t *dev_tree, tree_t *known_keys_tree, QUEUE *ui_queue, QUEUE *ph_queue,
-                                 QUEUE *send_queue, QUEUE *manager_queue, pthread_t *tid);
+                                 QUEUE *send_queue, EFLAG *send_flag, QUEUE *manager_queue, pthread_t *tid);
 
 int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, socket_ll *sockets, EFLAG *wake_mngr,
-                          QUEUE *queue, const void *master_key, pthread_t *tid);
+                          EFLAG *send_flag, QUEUE *queue, const void *master_key, pthread_t *tid);
 
 int create_receiving_thread(RECV_ARGS **args, socket_ll *sockets, QUEUE *packet_queue, EFLAG *ph_flag,
                             mempool_t *mempool, EFLAG *wake_mngr, uint32_t multicast_addr, int port, pthread_t *tid);
