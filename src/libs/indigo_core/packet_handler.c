@@ -70,8 +70,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
     unsigned char iterations_until_cleanup = 10;
 
-    unsigned char nonce[INDIGO_NONCE_SIZE];
-
     unsigned char public_key[crypto_sign_PUBLICKEYBYTES];
 
     packet_t *packet = NULL;
@@ -80,14 +78,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     remote_device_t rdev;
     remote_device_t *found_rdev = NULL;
 
-    signing_request_data_t *signing_request_data = NULL;
-    signing_response_data_t *signing_response_data = NULL;
-    file_sending_request_data_t *file_sending_request_data = NULL;
-    file_sending_response_data_t *file_sending_response_data = NULL;
-
     // the expected signing response table
     tree_t *xsr_tree = NULL;
-    xsr_t xsr;
     xsr_t *found_xsr;
     tree_iterator_t *xsr_iterator = NULL;
 
@@ -102,22 +94,14 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
     Q_FILE_SENDING_REQUEST *fwd = NULL;
 
-    session_t *session = NULL;
-    session_t *found_session = NULL;
-    unsigned char *session_pk = NULL;
-    unsigned char *session_sk = NULL;
-
-    tree_iterator_t *session_iterator = NULL;
     tree_iterator_t *rdev_iterator = NULL;
 
-    known_key_t known_key;
     tree_t *known_keys_tree = NULL;
+    tree_t *dev_tree = NULL;
 
-    char tmp_username[MAX_USERNAME_LEN * sizeof(utf8_char_t)];
     char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1] = {0};
 
-    range_node_t *range_node;
-    range_node_t *prev_node;
+
 
     int ret = 0; // general purpose return variable
 
@@ -139,19 +123,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     *process_return = 0;
 
     known_keys_tree = args->known_keys_tree;
-
-    signing_request_data = malloc(sizeof(signing_request_data_t));
-    signing_response_data = malloc(sizeof(signing_response_data_t));
-    file_sending_request_data = malloc(sizeof(file_sending_request_data_t));
-    file_sending_response_data = malloc(sizeof(file_sending_response_data_t));
-    if (!signing_request_data || !signing_response_data || !file_sending_request_data || !file_sending_response_data) {
-        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        log_fatal("[packet_handler_thread] malloc failed allocating %d %d %d %d bytes for signing request"
-                  " and response and file sending request and response data respectively | return %d",
-                  sizeof(signing_request_data_t), sizeof(signing_response_data_t), sizeof(file_sending_request_data_t),
-                  sizeof(file_sending_response_data_t), *process_return);
-        goto cleanup;
-    }
+    dev_tree = args->device_tree;
 
     // the less the private key is exposed the better, we copy the public key since it is frequently used
     memcpy(public_key, args->signing_keys->public, crypto_sign_PUBLICKEYBYTES);
@@ -254,685 +226,27 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 switch (packet_header.pac_type) {
                     case MSG_INIT_PACKET:
                         log_info("[packet_handler_thread] received init packet");
-                        // validate the public key (this is not decryption, nothing is encrypted here)
-                        ret = crypto_sign_verify_detached(
-                            ((init_packet_data_t *)packet->data)->signature, (unsigned char *)packet,
-                            offsetof(packet_t, data) + offsetof(init_packet_data_t, signature), packet->id);
-
-                        if (ret == 0) {
-                            // validate timestamp
-                            // todo: this is not valid for unsynchronised offline systems
-                            curr_time = time(NULL);
-                            if ((((init_packet_data_t *)packet->data)->timestamp < curr_time - 60) ||
-                                (((init_packet_data_t *)packet->data)->timestamp > curr_time + 60)) {
-                                log_debug("[packet_handler_thread] time rejected init packet current time %lld received"
-                                          " time %lld",
-                                          curr_time, ((init_packet_data_t *)packet->data)->timestamp);
-                                break;
-                            }
-                        }
-                        else {
-                            log_debug("[packet_handler_thread] failed to verify signed init packet ret %d", ret);
-                            break;
-                        }
-
-                        // search in the tree
-                        ret = args->device_tree->search_pin(args->device_tree, &rdev, (void **)&found_rdev);
-
-                        if (ret == 1) {
-                            found_rdev->expiration_time = time(NULL); // renew the timestamp
-                            found_rdev->ip = packet_info->address.sin_addr.s_addr;
-                            // copy the username
-                            memcpy(tmp_username, ((init_packet_data_t *)packet->data)->username,
-                                   MAX_USERNAME_LEN * sizeof(wchar_t));
-                            sanitize_username(tmp_username);
-                            log_debug("[packet_handler_thread] found device with username %s",tmp_username);
-                            memcpy(found_rdev->username, tmp_username, MAX_USERNAME_LEN * sizeof(uint32_t));
-
-                            args->device_tree->search_release(args->device_tree);
-                            break;
-                        }
-                        args->device_tree->search_release(args->device_tree);
-
-                        // the remote device is not on the tree so we add it
-                        rdev.expiration_time = time(NULL);
-                        rdev.ip = packet_info->address.sin_addr.s_addr;
-                        rdev.session_keys = NULL;
-                        rdev.fsr_list = NULL;
-                        rdev.fsr_count = 0;
-                        rdev.dev_state_flag = RDSF_UNVERIFIED; // the device is not verified
-
-                        memcpy(tmp_username, ((init_packet_data_t *)packet->data)->username,
-                                   MAX_USERNAME_LEN * sizeof(wchar_t));
-                        sanitize_username(tmp_username);
-                        memcpy(rdev.username, tmp_username, MAX_USERNAME_LEN * sizeof(uint32_t));
-
-                        memcpy(known_key.key, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
-                        if (known_keys_tree->search(known_keys_tree, &known_key)) {
-                            log_debug("[packet_handler_thread] key was found");
-                            rdev.dev_state_flag |= known_key.status;
-                        }
-                        else {
-                            log_debug("[packet_handler_thread] key not found thus inserted");
-                            ins_known_key(known_keys_tree,known_key.key, KNOWN_KEY_STATUS_UNKNOWN);
-                            rdev.dev_state_flag |= KNOWN_KEY_STATUS_UNKNOWN;
-                        }
-
-                        ret = args->device_tree->insert(args->device_tree, &rdev);
-
-                        if (ret) {
-                            *process_return = ret;
-                            log_fatal("[packet_handler_thread] device_tree insert() failed| return %d", ret);
-                            goto cleanup;
-                        }
-                        log_debug("[packet_handler_thread] device inserted to tree");
-
-                        // send signing request
-                        randombytes_buf(signing_request_data->nonce, INDIGO_NONCE_SIZE);
-                        signing_request_data->timestamp = time(NULL);
-                        strcpy(signing_request_data->username, username);
-
-                        build_packet(packet, MSG_SIGNING_REQUEST, public_key, NULL, signing_request_data,
-                                     sizeof(signing_request_data_t));
-
-                        ret = crypto_sign_detached(signing_request_data->signature, NULL, (unsigned char *)packet,
-                                                 offsetof(packet_t, data) + offsetof(signing_request_data_t, signature),
-                                                 args->signing_keys->secret);
-                        if (ret) {
-                            *process_return = INDIGO_ERROR_INVALID_PARAM;
-                            log_fatal("[packet_handler_thread] crypto_sign_detached failed | return %d",
-                                      *process_return);
-                            goto cleanup;
-                        }
-
-                        memcpy(((signing_request_data_t *)packet->data)->signature, signing_request_data->signature,
-                               crypto_sign_BYTES);
-
-                        ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets, packet, args->flag);
-
-                        if (ret) {
-                            switch (ret) {
-                                case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
-                                case INDIGO_ERROR_INVALID_PARAM:
-                                case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
-                                    *process_return = ret;
-                                    log_fatal("[packet_handler_thread] send_packet() failed to send signing request "
-                                              "| return %d",
-                                              ret);
-                                    goto cleanup;
-                                case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should terminate for that
-                                    break;
-                                case INDIGO_ERROR_NETWORK_RESET:
-                                    set_event_flag(args->flag, EF_RESET_SOCKETS);
-                                    break;
-                                default:
-                                    break; // winlib errors go here
-                            }
-                            break;
-                        }
-                        log_debug("[packet_handler_thread] sent signing request");
-                        // add signing response to expected packets
-                        memset(&xsr, 0, sizeof(xsr_t));
-                        xsr.expiration_time = time(NULL);
-                        memcpy(xsr.nonce, signing_request_data->nonce, INDIGO_NONCE_SIZE);
-                        memset(signing_request_data, 0, sizeof(signing_request_data_t));
-                        memcpy(xsr.id, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
-                        ret = xsr_tree->insert(xsr_tree, &xsr);
-                        if (ret < 0) {
-                            *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                            log_fatal("[packet_handler_thread] xsr_tree insert failed | return %d", *process_return);
-                            goto cleanup;
-                        }
-
+                        ret = init_packet_routine(packet, packet_info, dev_tree, xsr_tree, known_keys_tree, username,
+                                                  args->signing_keys, args->sockets, args->flag);
                         break;
                     case MSG_SIGNING_REQUEST:
                         log_debug("[packet_handler_thread] received signing request");
-                        // validate the public key
-                        ret = crypto_sign_verify_detached(
-                            ((signing_request_data_t *)packet->data)->signature, (unsigned char *)packet,
-                            offsetof(packet_t, data) + offsetof(signing_request_data_t, signature), packet->id);
-                        // todo: time errors probable (same as above)
-                        if (!ret) {
-                            // validate the timestamp
-                            curr_time = time(NULL);
-                            if ((((signing_request_data_t *)packet->data)->timestamp < curr_time - 60) ||
-                                (((signing_request_data_t *)packet->data)->timestamp > curr_time + 60)) {
-
-                                log_info("[packet_handler_thread] signing request rejected due to "
-                                         "expired header time stamp");
-                                break;
-                            }
-                        }
-                        else {
-                            log_debug("[packet_handler_thread] signing request rejected, invalid signature");
-                            break;
-                        }
-
-                        // sign the nonce and send the signature with the public key and a new nonce
-                        ret = sign_buffer(args->signing_keys, ((signing_request_data_t *)packet->data)->nonce,
-                                          INDIGO_NONCE_SIZE, signing_response_data->signed_nonce, NULL);
-                        // can fail only dew to wrong usage
-                        if (ret) {
-                            *process_return = INDIGO_ERROR_INVALID_PARAM;
-                            log_fatal("[packet_handler_thread] sign_buffer failed signing a peer signing request nonce "
-                                      "| return %d",
-                                      ret);
-                            goto cleanup;
-                        }
-
-                        // create session keys
-                        session_pk = malloc(crypto_kx_PUBLICKEYBYTES);
-                        session_sk = malloc(crypto_kx_SECRETKEYBYTES);
-                        if (!session_pk || !session_sk) {
-                            free(session_pk);
-                            free(session_sk);
-                            session_pk = NULL;
-                            session_sk = NULL;
-                            *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                            log_fatal("[packet_handler_thread] malloc failed allocating %d+%d bytes"
-                                      " for session public and private key | return %d",
-                                      crypto_kx_PUBLICKEYBYTES, crypto_kx_SECRETKEYBYTES, *process_return);
-                            goto cleanup;
-                        }
-                        sodium_mlock(session_sk, crypto_kx_SECRETKEYBYTES);
-
-                        ret = crypto_kx_keypair(session_pk, session_sk);
-                        if (ret) {
-                            sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
-                            free(session_pk);
-                            free(session_sk);
-                            session_pk = NULL;
-                            session_sk = NULL;
-                            *process_return = INDIGO_ERROR_INVALID_PARAM;
-                            log_fatal("[packet_handler_thread] crypto_kx_keypair() failed creating session keys"
-                                      " | return %d",
-                                      *process_return);
-                            goto cleanup;
-                        }
-
-                        memcpy(signing_response_data->pkx, session_pk, crypto_kx_PUBLICKEYBYTES);
-                        signing_response_data->zero = 0;
-
-                        // if the peer is verified we don't need to send a signing request
-                        ret = args->device_tree->search_pin(args->device_tree, &rdev, (void **)&found_rdev);
-                        if (ret == 1) {
-                            // the device is found
-
-                            found_rdev->expiration_time = time(NULL);
-                            found_rdev->ip = packet_info->address.sin_addr.s_addr;
-
-                            if (found_rdev->dev_state_flag & RDSF_UNVERIFIED) {
-                                randombytes_buf(signing_response_data->nonce, INDIGO_NONCE_SIZE);
-                                signing_response_data->sig_request = 1;
-
-                                // insert into xsr
-                                memset(&xsr, 0, sizeof(xsr_t));
-                                xsr.expiration_time = time(NULL);
-                                xsr.pkx = session_pk;
-
-                                xsr.skx = session_sk;
-                                memcpy(xsr.nonce, signing_response_data->nonce, INDIGO_NONCE_SIZE);
-
-                                memcpy(xsr.id, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
-                                ret = xsr_tree->insert(xsr_tree, &xsr);
-                                if (ret < 0) {
-                                    tree_unlock(args->device_tree);
-
-                                    sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
-                                    free(session_pk);
-                                    free(session_sk);
-                                    session_pk = NULL;
-                                    session_sk = NULL;
-
-                                    args->device_tree->search_release(args->device_tree);
-                                    *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                                    log_fatal("[packet_handler_thread] xsr_tree insert failed | return %d",
-                                              *process_return);
-                                    goto cleanup;
-                                }
-                                if (ret > 0) {
-                                    sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
-                                    free(session_pk);
-                                    free(session_sk);
-                                    session_pk = NULL;
-                                    session_sk = NULL;
-                                }
-                            }
-                            else {
-                                // we don't need to send a signature request, we erase the nonce and turn off the flag
-                                memset(signing_response_data->nonce, 0, INDIGO_NONCE_SIZE);
-                                signing_response_data->sig_request = 0;
-                            }
-                            tree_unlock(args->device_tree);
-                        }
-                        else {
-                            // in this case they found us before we received their discovery packet (if they sent any)
-                            tree_unlock(args->device_tree);
-                            // add the device to the device table
-                            // we detected the device (though it is unverified)
-                            rdev.expiration_time = time(NULL);
-                            rdev.ip = packet_info->address.sin_addr.s_addr;
-                            rdev.session_keys = NULL;
-                            rdev.fsr_list = NULL;
-                            rdev.fsr_count = 0;
-                            memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
-                            rdev.dev_state_flag = RDSF_UNVERIFIED; // the device is not verified
-
-                            memcpy(tmp_username, ((init_packet_data_t *)packet->data)->username,
-                                   MAX_USERNAME_LEN * sizeof(wchar_t));
-                            sanitize_username(tmp_username);
-                            memcpy(rdev.username, tmp_username, MAX_USERNAME_LEN * sizeof(uint32_t));
-
-                            memcpy(known_key.key, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
-                            if (known_keys_tree->search(known_keys_tree, &known_key)) {
-                                log_debug("[packet_handler_thread] key was found");
-                                rdev.dev_state_flag |= known_key.status;
-                            }
-                            else {
-                                log_debug("[packet_handler_thread] key not found thus inserted");
-                                ins_known_key(known_keys_tree,known_key.key, KNOWN_KEY_STATUS_UNKNOWN);
-                                rdev.dev_state_flag |= KNOWN_KEY_STATUS_UNKNOWN;
-                            }
-
-                            ret = args->device_tree->insert(args->device_tree, &rdev);
-                            if (ret < 0) {
-                                sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
-                                free(session_pk);
-                                free(session_sk);
-                                session_pk = NULL;
-                                session_sk = NULL;
-                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                                log_fatal("[packet_handler_thread] device_tree insert failed inserting device"
-                                          " from signing request | return %d",
-                                          *process_return);
-                                goto cleanup;
-                            }
-
-                            // send a nonce to verify them
-                            randombytes_buf(signing_response_data->nonce, INDIGO_NONCE_SIZE);
-                            signing_response_data->sig_request = 1;
-                            // add signing response to expected packets
-                            memset(&xsr, 0, sizeof(xsr_t));
-                            xsr.expiration_time = time(NULL);
-                            xsr.pkx = session_pk;
-                            xsr.skx = session_sk;
-                            memcpy(xsr.nonce, signing_response_data->nonce, INDIGO_NONCE_SIZE);
-
-                            memcpy(xsr.id, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
-                            ret = xsr_tree->insert(xsr_tree, &xsr);
-                            if (ret < 0) {
-                                sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
-                                free(session_pk);
-                                free(session_sk);
-                                session_pk = NULL;
-                                session_sk = NULL;
-                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                                log_fatal("[packet_handler_thread] xsr_tree insert failed | return %d",
-                                          *process_return);
-                                goto cleanup;
-                            }
-                            if (ret > 0) {
-                                log_debug("[packet_handler_thread] xsr already exists");
-                                sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
-                                free(session_pk);
-                                free(session_sk);
-                                session_pk = NULL;
-                                session_sk = NULL;
-                            }
-                        }
-
-                        strncpy(signing_request_data->username, username, MAX_USERNAME_LEN * sizeof(uint32_t));
-                        build_packet(packet, MSG_SIGNING_RESPONSE, public_key, NULL, signing_response_data,
-                                     sizeof(signing_response_data_t));
-
-                        ret = crypto_sign_detached(signing_response_data->signature, NULL, (unsigned char *)packet,
-                                                  offsetof(packet_t, data)+offsetof(signing_response_data_t,signature),
-                                                  args->signing_keys->secret);
-                        if (ret) {
-                            *process_return = INDIGO_ERROR_INVALID_PARAM;
-                            log_fatal("[packet_handler_thread] crypto_sign_detached() failed signing nonce for"
-                                      " signing request | return %d",
-                                      *process_return);
-                            goto cleanup;
-                        }
-
-                        memcpy(((signing_response_data_t *)packet->data)->signature, signing_response_data->signature,
-                               crypto_sign_BYTES);
-
-                        ret =
-                            send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets, packet, args->flag);
-                        if (ret) {
-                            switch (ret) {
-                                case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
-                                case INDIGO_ERROR_INVALID_PARAM:
-                                case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
-                                    *process_return = ret;
-                                    log_fatal("[packet_handler_thread] send_packet() failed sending "
-                                              "signing response| return %d",
-                                              *process_return);
-                                    goto cleanup;
-                                case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should terminate for that
-                                    break;
-                                case INDIGO_ERROR_NETWORK_RESET:
-                                    set_event_flag(args->flag, EF_RESET_SOCKETS);
-                                    break;
-                                default:
-                                    break; // winlib errors go here
-                            }
-                            log_debug("[packet_handler_thread] send_packet() failed");
-                            break;
-                        }
-                        log_debug("[packet_handler_thread] sent signing response");
-
+                        ret = signing_request_routine(packet, packet_info, dev_tree, xsr_tree, known_keys_tree,
+                                                      args->signing_keys, args->sockets, args->flag);
                         break;
 
                     case MSG_SIGNING_RESPONSE:
                         log_debug("[packet_handler_thread] received signing response");
-                        ret = crypto_sign_verify_detached(
-                            ((signing_response_data_t *)packet->data)->signature, (unsigned char *)packet,
-                            offsetof(packet_t, data) + offsetof(signing_response_data_t, signature), packet->id);
-                        if (ret) {
-                            log_debug("[packet_handler_thread] invalid signing response");
-                            break;
-                        }
-                        // we don't validate signed time, since there is already a signed nonce to verify
-                        memcpy(xsr.id, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
-                        ret = xsr_tree->search(xsr_tree, &xsr);
-                        if (ret == 0){
-                            log_debug("[packet_handler_thread] signing response not expected");
-                            break; // if there is no expected signing response, there is nothing to process
-                        }
-
-                        // verify the signed nonce
-                        ret = crypto_sign_open(nonce, NULL, ((signing_response_data_t *)packet->data)->signed_nonce,
-                                               INDIGO_NONCE_SIZE + crypto_sign_BYTES, packet->id);
-                        if (ret == 1) {
-                            log_debug("[packet_handler_thread] failed to verify response, bad signature");
-                            break;
-                        }
-
-                        // if the nonce signed is the same as the one we sent to be signed
-                        if (memcmp(xsr.nonce, nonce, INDIGO_NONCE_SIZE) != 0) {
-                            log_debug("[packet_handler_thread] failed to verify response, bad nonce");
-                            break;
-                        }
-
-                        // the device got verified
-                        // todo: so we need to create the client and server keys, if we need to sing nonce, we
-                        // create keys no xsr, otherwise use xsr
-                        ret = args->device_tree->search_pin(args->device_tree, &rdev, (void **)&found_rdev);
-                        /* I am not sure how we could get an expected packet for a device
-                         * that isn't in the device tree
-                         */
-                        if (ret == 0) {
-                            tree_unlock(args->device_tree);
-                            break;
-                        }
-
-                        found_rdev->expiration_time = time(NULL);
-                        found_rdev->ip = packet_info->address.sin_addr.s_addr; // ip may have changed
-
-                        found_rdev->dev_state_flag |= RDSF_VERIFIED;
-                        found_rdev->dev_state_flag &= (~RDSF_UNVERIFIED);
-
-                        found_rdev->session_keys = malloc(sizeof(session_keys_t));
-                        if (found_rdev->session_keys == NULL) {
-                            tree_unlock(args->device_tree);
-                            log_fatal("[packet_handler_thread] malloc failed to allocate session_keys]");
-                            goto cleanup;
-                        }
-                        sodium_mlock(found_rdev->session_keys, sizeof(session_keys_t));
-
-                        // check if we need to verify ourselves
-                        if (((signing_response_data_t *)(packet->data))->sig_request) {
-                            // create session keys
-                            /*there is no possible way to have a situation where,
-                             * we have created session keys but the other party hasn't verified us
-                             * it could happen if the other party runs slightly modified code, me not happy
-                             */
-
-                            session_pk = malloc(crypto_kx_PUBLICKEYBYTES);
-                            session_sk = malloc(crypto_kx_SECRETKEYBYTES);
-                            if (!session_pk || !session_sk)
-                            {
-                                free(session_pk);
-                                free(session_sk);
-                                sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
-                                free(found_rdev->session_keys);
-                                found_rdev->session_keys = NULL;
-                                tree_unlock(args->device_tree);
-                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                                log_fatal("[packet_handler_thread] malloc failed allocating %d+%d bytes "
-                                          "for session keys | return %d",
-                                          crypto_kx_SECRETKEYBYTES, crypto_kx_SECRETKEYBYTES, *process_return);
-                                goto cleanup;
-                            }
-                            sodium_mlock(session_sk, crypto_kx_SECRETKEYBYTES);
-
-                            ret = crypto_kx_keypair(session_pk, session_sk);
-                            if (ret) {
-                                sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
-                                free(found_rdev->session_keys);
-                                found_rdev->session_keys = NULL;
-                                tree_unlock(args->device_tree);
-                                sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
-                                free(session_pk);
-                                free(session_sk);
-                                *process_return = INDIGO_ERROR_INVALID_PARAM;
-                                log_fatal("[packet_handler_thread] kx_keypair failed | return %d", *process_return);
-                                goto cleanup;
-                            }
-
-                            ret = crypto_kx_client_session_keys(found_rdev->session_keys->client_rk, found_rdev->session_keys->client_tk,
-                                                                session_pk, session_sk,
-                                                                ((signing_response_data_t *)packet->data)->pkx);
-                            if (ret) {
-                                // the peer's public key is not acceptable
-                                sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
-                                free(found_rdev->session_keys);
-                                found_rdev->session_keys = NULL;
-                                tree_unlock(args->device_tree);
-                                sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
-                                free(session_pk);
-                                free(session_sk);
-                                break;
-                            }
-
-                            ret = crypto_kx_server_session_keys(found_rdev->session_keys->server_rk, found_rdev->session_keys->server_tk,
-                                                                session_pk, session_sk,
-                                                                ((signing_response_data_t *)packet->data)->pkx);
-                            if (ret) {
-                                // the peer's public key is not acceptable
-                                sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
-                                free(found_rdev->session_keys);
-                                found_rdev->session_keys = NULL;
-                                tree_unlock(args->device_tree);
-                                sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
-                                free(session_pk);
-                                free(session_sk);
-                                break;
-                            }
-
-                            signing_response_data->zero = 0;
-                            signing_response_data->sig_request = 0;
-                            memset(signing_response_data->nonce, 0, INDIGO_NONCE_SIZE);
-
-                            ret = sign_buffer(args->signing_keys, ((signing_response_data_t *)packet->data)->nonce,
-                                          INDIGO_NONCE_SIZE, signing_response_data->signed_nonce, NULL);
-
-                            // ret = crypto_sign(signing_response_data->signed_nonce, NULL,
-                            //                   ((signing_response_data_t *)packet->data)->nonce, INDIGO_NONCE_SIZE,
-                            //                   args->signing_keys->secret);
-                            if (ret) {
-                                sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
-                                free(found_rdev->session_keys);
-                                found_rdev->session_keys = NULL;
-                                tree_unlock(args->device_tree);
-                                *process_return = INDIGO_ERROR_INVALID_PARAM;
-                                log_fatal("[packet_handler_thread] crypto_sign failed to sign nonce "
-                                          "for signing request | return %d",
-                                          *process_return);
-                                goto cleanup;
-                            }
-                            memcpy(signing_response_data->pkx, session_pk, crypto_kx_PUBLICKEYBYTES);
-
-                            // we no longer need the keys
-                            sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
-                            free(session_pk);
-                            free(session_sk);
-                            session_pk = NULL;
-                            session_sk = NULL;
-
-
-                            build_packet(packet, MSG_SIGNING_RESPONSE, public_key, NULL, signing_response_data,
-                                         sizeof(signing_response_data_t));
-
-
-                            ret = crypto_sign_detached(signing_response_data->signature, NULL, (unsigned char *)packet,
-                                                      offsetof(packet_t, data)+offsetof(signing_response_data_t,signature),
-                                                      args->signing_keys->secret);
-
-                            if (ret) {
-                                tree_unlock(args->device_tree);
-                                *process_return = INDIGO_ERROR_INVALID_PARAM;
-                                log_fatal("[packet_handler_thread] crypto_sing_detached failed signing"
-                                          " signing response packet | return %d",
-                                          *process_return);
-                                goto cleanup;
-                            }
-                            memcpy(((signing_response_data_t *)packet->data)->signature, signing_response_data->signature,
-                                     crypto_sign_BYTES);
-
-                            ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets, packet,
-                                              args->flag);
-                            if (ret) {
-                                switch (ret) {
-                                    case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
-                                    case INDIGO_ERROR_INVALID_PARAM:
-                                    case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
-                                        *process_return = ret;
-                                        log_fatal("[packet_handler_thread] send_packet failed sending"
-                                                  " signing response | return &d",
-                                                  *process_return);
-                                        goto cleanup;
-                                    case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should
-                                        // terminate for that
-                                        break;
-                                    case INDIGO_ERROR_NETWORK_RESET:
-                                        set_event_flag(args->flag, EF_RESET_SOCKETS);
-                                        break;
-                                    default:
-                                        break; // winlib errors go here
-                                }
-                                tree_unlock(args->device_tree);
-                            }
-                            log_debug("[packet_handler_thread] sent signing response");
-                        }
-                        else {
-                            // todo: improve error handling
-                            // create the client and server keys
-
-                            ret = crypto_kx_client_session_keys(found_rdev->session_keys->client_rk,
-                                found_rdev->session_keys->client_tk, xsr.pkx,
-                                xsr.skx, ((signing_response_data_t *)packet->data)->pkx);
-                            if (ret) {
-                                // the peer's public key is not acceptable
-                                sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
-                                free(found_rdev->session_keys);
-                                found_rdev->session_keys = NULL;
-                                tree_unlock(args->device_tree);
-                                break;
-                            }
-
-                            ret = crypto_kx_server_session_keys(found_rdev->session_keys->server_rk,
-                                found_rdev->session_keys->server_tk, xsr.pkx,
-                                xsr.skx, ((signing_response_data_t *)packet->data)->pkx);
-                            if (ret) {
-                                // the peer's public key is not acceptable
-                                sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
-                                free(found_rdev->session_keys);
-                                found_rdev->session_keys = NULL;
-
-                                tree_unlock(args->device_tree);
-                                break;
-                            }
-                        }
-
-                        args->device_tree->search_release(args->device_tree);
-
-                        // remove the expected packet
-                        xsr_tree->remove(xsr_tree, &xsr);
-                        log_debug("it's me, hi! Im the problem it's me (verified)");
+                        ret = signing_response_routine(packet, packet_info, dev_tree, xsr_tree, args->signing_keys,
+                                                       args->sockets, args->flag);
                         break;
                     case MSG_FILE_SENDING_REQUEST:
-                        {
-                            // we need permission to proceed, so we push it to the manager to handle
-                            // tell the interface (ui via queue), the interface will ask the user
-                            // if the user agrees, we send back a response containing the preferred session serial
-                            // number if it gets accepted we receive a session_t struct via queue, and store an expected
-                            // file packet
-
-                            Q_FILE_SENDING_REQUEST *fsr;
-                            Q_FILE_SENDING_REQUEST *temp_fsr = NULL;
-                            file_sending_request_data_t *data;
-
-                            if (packet->magic_number != MAGIC_NUMBER_2)
-                                break;
-                            fsr = malloc(sizeof(Q_FILE_SENDING_REQUEST));
-                            if (!fsr) {
-                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                                log_fatal("[packet_handler_thread] malloc failed allocating %d bytes for queue"
-                                          " file sending request | return %d",
-                                          *process_return);
-                                goto cleanup;
-                            }
-
-                            data = (file_sending_request_data_t *)packet->data;
-                            memcpy(fsr->id, packet->id, crypto_sign_PUBLICKEYBYTES);
-                            fsr->file_size = data->file_size;
-                            memcpy(fsr->file_name, data->file_name, NAME_MAX);
-                            fsr->file_name[NAME_MAX - 1] = '\0';
-                            fsr->addr = packet_info->address.sin_addr.s_addr;
-
-                            if (args->device_tree->search_pin(args->device_tree, &rdev, (void **)&found_rdev)) {
-                                if (found_rdev->dev_state_flag & KNOWN_KEY_STATUS_TOO_GOOD) {
-                                    // in this case and this case only the user has specified
-                                    // that this peer does not need approval
-                                    ret = create_server_session(fwd, args->device_tree, args->session_tree, xfp_tree,
-                                                                public_key, args->sockets, args->flag);
-                                    if (ret) {
-                                        // todo: create_server_session() uses send_packet() and returns its errors
-                                        // todo: do more complex error handling
-                                        *process_return = ret;
-                                        log_fatal("[packet_handler_thread] failed to create server session "
-                                                  "| return %d",
-                                                  *process_return);
-                                        goto cleanup;
-                                    }
-                                    break;
-                                }
-                                if (found_rdev->fsr_count == MAX_SEND_REQUEST_COUNT) {
-                                    // remove the last request
-                                    for (Q_FILE_SENDING_REQUEST *i = found_rdev->fsr_list; i->next != NULL;
-                                         i = i->next) {
-                                        temp_fsr = i;
-                                    }
-                                    if (temp_fsr) {
-                                        free(temp_fsr->next);
-                                        temp_fsr->next = NULL;
-                                    }
-                                    (found_rdev->fsr_count)--;
-                                }
-                                (found_rdev->fsr_count)++;
-                                temp_fsr = found_rdev->fsr_list;
-                                found_rdev->fsr_list = fsr;
-                                fsr->next = temp_fsr;
-                            }
-                            args->device_tree->search_release(args->device_tree);
-
-                            break;
-                        }
+                        log_debug("[packet_handler_thread] received file sending request");
+                        ret = file_sending_request_routine(packet, packet_info, dev_tree, xfp_tree, args->session_tree,
+                                                           args->signing_keys, args->sockets, args->flag);
+                        break;
                     case MSG_FILE_SENDING_RESPONSE:
+                        log_debug("[packet_handler_thread] received file sending response");
                         if (packet->magic_number != MAGIC_NUMBER_2)
                             break;
                         ret = create_client_session(packet, packet_info, args->device_tree, args->session_tree,
@@ -946,433 +260,26 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         }
                         break;
                     case MSG_FILE_CHUNK:
-                        {
-                            /*TODO: the thing is that the file descriptor is in xfp, (and we need to check xfp anyway
-                             *      but we need to update the session too, it contains stats mainly
-                             *      we will do only one tree search, idc, and xfp needs to be found
-                             *      we may have to merge xfp and session
-                             *      session is not used as for now, i think its for the ui primarily
-                             *      FOR NOW JUST DO 2 SEARCHES AND UPDATE BOTH
-                             */
-                            size_t ret_val;
-                            uint64_t chunk_number;
-                            alignas(8) packet_t temp_packet;
-
-                            // ensure that the packet was encrypted
-                            if (packet->magic_number != MAGIC_NUMBER_2)
-                                break;
-
-                            // find the expected file packet node
-                            memcpy(xfp.session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
-                            xfp.session_id.serial = ((file_chunk_data_t *)packet->data)->serial;
-
-                            ret = xfp_tree->search_pin(xfp_tree, &xfp, (void **)&found_xfp);
-                            if (ret == 0) {
-                                xfp_tree->search_release(xfp_tree);
-                                break;
-                            }
-                            // if it is a client file (we expect an accept response) we don't receive it
-                            if (found_xfp->packet_count == XFP_CLIENT_FILE) {
-                                xfp_tree->search_release(xfp_tree);
-                                break;
-                            }
-
-                            // find the session node
-                            memcpy(&(session->session_id), &(xfp.session_id), sizeof(session_id_t));
-                            ret = args->session_tree->search_pin(args->session_tree, session, (void **)&found_session);
-                            if (ret == 0) {
-                                xfp_tree->search_release(xfp_tree);
-                                args->session_tree->search_release(args->session_tree);
-                                break;
-                            }
-
-                            found_xfp->expiration_time = time(NULL);
-
-                            chunk_number = ((file_chunk_data_t *)packet->data)->chunk_number;
-
-                            if (chunk_number < found_xfp->last_chunk) {
-                                // we either received a duplicate packet or a resend
-                                // in this case we don't update the packet number
-
-                                prev_node = NULL;
-                                for (range_node = found_xfp->missing_range_ll; range_node != NULL;
-                                     range_node = range_node->next) {
-                                    if (in_range(&(range_node->r), chunk_number))
-                                        break;
-                                    prev_node = range_node;
-                                }
-                                if (range_node == NULL)
-                                    break;
-
-                                // remove the file chunk from the range
-                                if (range_node->r.start == range_node->r.end) {
-                                    if (prev_node)
-                                        prev_node->next = range_node->next;
-                                    else {
-                                        found_xfp->missing_range_ll = range_node->next;
-                                    }
-                                    prev_node = NULL;
-                                    free(range_node);
-                                    range_node = NULL;
-                                }
-                                else {
-                                    if (chunk_number == range_node->r.start) {
-                                        --(range_node->r.start);
-                                    }
-                                    else if (chunk_number == range_node->r.end) {
-                                        --(range_node->r.end);
-                                    }
-                                    else {
-                                        // in this case we have to split the range
-
-                                        // here prev node is used a temporary node and not an actual previous node
-                                        prev_node = malloc(sizeof(range_node_t));
-                                        if (!prev_node) {
-                                            // IDK do something
-                                            xfp_tree->search_release(xfp_tree);
-                                            args->session_tree->search_release(args->session_tree);
-                                            *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                                            goto cleanup;
-                                        }
-                                        prev_node->r.start = chunk_number + 1;
-                                        prev_node->r.end = range_node->r.end;
-                                        range_node->r.end = chunk_number - 1;
-
-                                        tmp_ptr = found_xfp->missing_range_ll;
-                                        found_xfp->missing_range_ll = prev_node;
-                                        prev_node->next = tmp_ptr;
-                                        tmp_ptr = NULL;
-                                    }
-                                }
-
-                                // write the file chunk
-                                if (chunk_number * PAC_DATA_PAYLOAD_BYTES < LLONG_MAX) {
-                                    fseeko64(found_xfp->file, (long long)(chunk_number * PAC_DATA_PAYLOAD_BYTES),
-                                             SEEK_SET);
-                                }
-                                else {
-                                    // not very sure who owns a file bigger than 2 exbi-bytes, but why not
-                                    fseeko64(found_xfp->file, LLONG_MAX, SEEK_SET);
-                                    fseeko64(found_xfp->file,
-                                             (long long)((chunk_number * PAC_DATA_PAYLOAD_BYTES) - LLONG_MAX),
-                                             SEEK_CUR);
-                                }
-
-                                ret_val = fwrite(((file_chunk_data_t *)packet->data)->data, 1, PAC_DATA_PAYLOAD_BYTES,
-                                                 found_xfp->file);
-                                if (ret_val != PAC_DATA_PAYLOAD_BYTES) {
-                                    ret = ferror(found_xfp->file);
-                                    // TODO: here are all the errors of fwrite, handle them. these are bad errors,
-                                    //       most of them
-                                    switch (ret) {
-                                        case EAGAIN:
-                                        case EBADF:
-                                        case EFBIG:
-                                        case EINTR:
-                                        case EIO:
-                                        case ENOSPC:
-                                        case EPIPE:
-                                        case ENOMEM:
-                                        case ENXIO:
-                                        default:
-                                            xfp_tree->search_release(xfp_tree);
-                                            args->session_tree->search_release(args->session_tree);
-                                            break;
-                                    }
-                                    break;
-                                }
-                                found_session->bytes_moved += PAC_DATA_PAYLOAD_BYTES;
-                                ++(found_xfp->packets_writen);
-
-                                // check if we have received the whole file
-                                if (found_xfp->packets_writen == found_xfp->packet_count) {
-                                    // the missing packets should be NULL but well it does not hurt to check
-                                    for (range_node_t *r = found_xfp->missing_range_ll; r != NULL; r = prev_node) {
-                                        prev_node = r->next;
-                                        free(prev_node);
-                                    }
-                                    // TODO: rename the file
-                                    fclose(found_xfp->file);
-                                    xfp_tree->search_release(xfp_tree);
-                                    args->session_tree->search_release(args->session_tree);
-
-                                    xfp_tree->remove(xfp_tree, &xfp);
-                                    args->session_tree->remove(args->session_tree, &session);
-                                    break;
-                                }
-
-                                build_packet(&temp_packet, MSG_RESEND, public_key, NULL, NULL, 0);
-                                ((transmission_control_data_t *)(temp_packet.data))->serial =
-                                    ((file_chunk_data_t *)packet->data)->serial;
-
-                                for (range_node = found_xfp->missing_range_ll; range_node != NULL;
-                                     range_node = range_node->next) {
-                                    // send a resend packet for each range we have
-                                    ((transmission_control_data_t *)(temp_packet.data))->range = range_node->r;
-                                    // send the packet
-                                    ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets,
-                                                      &temp_packet, args->flag);
-                                    if (ret) {
-                                        xfp_tree->search_release(xfp_tree);
-                                        args->session_tree->search_release(args->session_tree);
-                                        switch (ret) {
-                                            case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
-                                            case INDIGO_ERROR_INVALID_PARAM:
-                                            case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
-                                                *process_return = ret;
-                                                log_fatal("[packet_handler_thread] send_packet failed "
-                                                          "sending resend packets | return %d",
-                                                          *process_return);
-                                                goto cleanup;
-                                            case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should
-                                                // terminate for that
-                                                break;
-                                            case INDIGO_ERROR_NETWORK_RESET:
-                                                set_event_flag(args->flag, EF_RESET_SOCKETS);
-                                                break;
-                                            default:
-                                                break; // winlib errors go here
-                                        }
-                                    }
-                                }
-                                range_node = NULL;
-
-                                xfp_tree->search_release(xfp_tree);
-                                args->session_tree->search_release(args->session_tree);
-                                break;
-                            }
-                            if (chunk_number > found_xfp->last_chunk) {
-                                // we lost a packet, send a re-send packet
-
-                                range_node = malloc(sizeof(range_node_t));
-                                if (!range_node) {
-                                    xfp_tree->search_release(xfp_tree);
-                                    args->session_tree->search_release(args->session_tree);
-                                    *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                                    log_fatal("[packet_handler_thread] malloc failed allocating %d bytes for "
-                                              "missing packet range node | return %d",
-                                              *process_return);
-                                    goto cleanup;
-                                }
-                                range_node->r.start = found_xfp->last_chunk;
-                                range_node->r.end = chunk_number - 1;
-                                tmp_ptr = found_xfp->missing_range_ll;
-                                range_node->next = tmp_ptr;
-                                found_xfp->missing_range_ll = range_node;
-                                range_node = NULL;
-
-                                // create the packet
-                                build_packet(&temp_packet, MSG_RESEND, public_key, NULL, NULL, 0);
-                                ((transmission_control_data_t *)(temp_packet.data))->serial =
-                                    ((file_chunk_data_t *)packet->data)->serial;
-                                ((transmission_control_data_t *)(temp_packet.data))->range.start =
-                                    found_xfp->last_chunk;
-                                ((transmission_control_data_t *)(temp_packet.data))->range.end = chunk_number - 1;
-                                // send the packet
-                                ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets,
-                                                  &temp_packet, args->flag);
-                                if (ret) {
-                                    xfp_tree->search_release(xfp_tree);
-                                    args->session_tree->search_release(args->session_tree);
-                                    switch (ret) {
-                                        case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
-                                        case INDIGO_ERROR_INVALID_PARAM:
-                                        case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
-                                            *process_return = ret;
-                                            log_fatal("[packet_handler_thread] send_packet failed "
-                                                      "sending resend packets | return %d",
-                                                      *process_return);
-                                            goto cleanup;
-                                        case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should terminate
-                                            break;
-                                        case INDIGO_ERROR_NETWORK_RESET:
-                                            set_event_flag(args->flag, EF_RESET_SOCKETS);
-                                            break;
-                                        default:
-                                            break; // winlib errors go here
-                                    }
-                                }
-                            }
-
-                            // set the position in the file (we are not writing necessarily at the end of the last
-                            // write)
-                            if (chunk_number * PAC_DATA_PAYLOAD_BYTES < LLONG_MAX) {
-                                fseeko64(found_xfp->file, (long long)(chunk_number * PAC_DATA_PAYLOAD_BYTES), SEEK_SET);
-                            }
-                            else {
-                                // not very sure who owns a file bigger than 2 exbi-bytes, but why not
-                                fseeko64(found_xfp->file, LLONG_MAX, SEEK_SET);
-                                fseeko64(found_xfp->file,
-                                         (long long)((chunk_number * PAC_DATA_PAYLOAD_BYTES) - LLONG_MAX), SEEK_CUR);
-                            }
-
-                            ret_val = fwrite(((file_chunk_data_t *)packet->data)->data, 1, PAC_DATA_PAYLOAD_BYTES,
-                                             found_xfp->file);
-                            if (ret_val != PAC_DATA_PAYLOAD_BYTES) {
-                                xfp_tree->search_release(xfp_tree);
-                                args->session_tree->search_release(args->session_tree);
-                                log_fatal("[packet_handler_thread] send_packet fwrite failed writing file chunk "
-                                          "to file | return %d | errno %d",
-                                          &process_return, errno);
-                                ret = ferror(found_xfp->file);
-                                // todo: here are all the errors of fwrite, handle them. these are bad errors, most of
-                                // them
-                                switch (ret) {
-                                    case EAGAIN:
-                                    case EBADF:
-                                    case EFBIG:
-                                    case EINTR:
-                                    case EIO:
-                                    case ENOSPC:
-                                    case EPIPE:
-                                    case ENOMEM:
-                                    case ENXIO:
-                                    default:
-                                        break;
-                                }
-                            }
-                            if (chunk_number >= found_xfp->last_chunk)
-                                found_xfp->last_chunk = chunk_number + 1;
-                            found_session->bytes_moved += PAC_DATA_PAYLOAD_BYTES;
-                            ++(found_xfp->packets_writen);
-
-                            if (found_xfp->packets_writen == found_xfp->packet_count) {
-                                // the missing packets should be NULL but well it does not hurt to check
-                                for (range_node_t *r = found_xfp->missing_range_ll; r != NULL; r = prev_node) {
-                                    prev_node = r->next;
-                                    free(prev_node);
-                                }
-                                // TODO: rename the file
-                                fclose(found_xfp->file);
-                                xfp_tree->search_release(xfp_tree);
-                                args->session_tree->search_release(args->session_tree);
-
-                                xfp_tree->remove(xfp_tree, &xfp);
-                                args->session_tree->remove(args->session_tree, &session);
-                                break;
-                            }
-
-                            xfp_tree->search_release(xfp_tree);
-                            args->session_tree->search_release(args->session_tree);
-                            break;
-                        }
+                        log_debug("[packet_handler_thread] received file chunk");
+                        ret = file_chunk_routine(packet, packet_info, xfp_tree, args->session_tree, args->signing_keys,
+                                                 args->sockets, args->flag);
+                        break;
                     case MSG_RESEND:
-                        {
-                            Q_RESEND_FILE_CHUNK *qdata;
-                            if (packet->magic_number != MAGIC_NUMBER_2)
-                                break;
-                            fprintf(stderr, "DEBUG: Resend attempted\n");
-                            qdata = malloc(sizeof(Q_RESEND_FILE_CHUNK));
-                            if (qdata == NULL) {
-                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                                log_fatal("[packet_handler_thread] malloc failed allocating %d for queue resend file "
-                                          "chunk data | return %d",
-                                          sizeof(Q_RESEND_FILE_CHUNK), *process_return);
-                                goto cleanup;
-                            }
-                            memcpy(&(qdata->control), packet->data, sizeof(transmission_control_data_t));
-                            memcpy(qdata->session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
-                            qdata->session_id.serial = qdata->control.serial;
-
-                            set_event_flag(args->send_flag, EF_RESEND_FILE_CHUNK);
-                            ret = queue_push(args->send_queue, qdata, QET_RESEND_FILE_CHUNK);
-                            if (ret) {
-                                free(qdata);
-                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                                log_fatal("[packet_handler_thread] queue_push failed pushing resend file chunk node to "
-                                          "send thread | return %d",
-                                          *process_return);
-                                goto cleanup;
-                            }
-                            break;
-                        }
+                        log_debug("[packet_handler_thread] received resend");
+                        ret = resend_routine(packet, args->send_queue, args->send_flag);
+                        break;
                     case MSG_STOP_FILE_TRANSMISSION:
-                        {
-                            Q_CONTROL_FILE_TRANSMISSION *qdata;
-                            if (packet->magic_number != MAGIC_NUMBER_2)
-                                break;
-                            qdata = malloc(sizeof(Q_CONTROL_FILE_TRANSMISSION));
-                            if (qdata == NULL) {
-                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                                log_fatal("[packet_handler_thread] malloc failed allocating %d bytes for queue stop "
-                                          "file transmission data  | return %d",
-                                          sizeof(Q_CONTROL_FILE_TRANSMISSION), *process_return);
-                                goto cleanup;
-                            }
-                            memcpy(&(qdata->control), packet->data, sizeof(transmission_control_data_t));
-                            memcpy(qdata->session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
-                            qdata->session_id.serial = qdata->control.serial;
-
-                            set_event_flag(args->send_flag, EF_STOP_FILE_TRANSMISSION);
-                            ret = queue_push(args->send_queue, qdata, QET_STOP_FILE_TRANSMISSION);
-                            if (ret) {
-                                free(qdata);
-                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                                log_fatal("[packet_handler_thread] queue_push failed pushing stop file transmission "
-                                          "node to send thread | return %d",
-                                          *process_return);
-                                goto cleanup;
-                            }
-                            break;
-                        }
+                        log_debug("[packet_handler_thread] received stop file transmission");
+                        ret = stop_file_transmission_routine(packet, args->send_queue, args->send_flag);
+                        break;
                     case MSG_PAUSE_FILE_TRANSMISSION:
-                        {
-                            Q_CONTROL_FILE_TRANSMISSION *qdata;
-                            if (packet->magic_number != MAGIC_NUMBER_2)
-                                break;
-                            qdata = malloc(sizeof(Q_CONTROL_FILE_TRANSMISSION));
-                            if (qdata == NULL) {
-                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                                log_fatal("[packet_handler_thread] malloc failed allocating %d bytes for queue pause "
-                                          "file transmission data  | return %d",
-                                          sizeof(Q_CONTROL_FILE_TRANSMISSION), *process_return);
-                                goto cleanup;
-                            }
-                            memcpy(&(qdata->control), packet->data, sizeof(transmission_control_data_t));
-                            memcpy(qdata->session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
-                            qdata->session_id.serial = qdata->control.serial;
-
-                            set_event_flag(args->send_flag, EF_PAUSE_FILE_TRANSMISSION);
-                            ret = queue_push(args->send_queue, qdata, QET_PAUSE_FILE_TRANSMISSION);
-                            if (ret) {
-                                free(qdata);
-                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                                log_fatal("[packet_handler_thread] queue_push failed pushing pause file transmission "
-                                          "node to send thread | return %d",
-                                          *process_return);
-                                goto cleanup;
-                            }
-                            break;
-                        }
+                        log_debug("[packet_handler_thread] received pause file transmission");
+                        ret = pause_file_transmission_routine(packet, args->send_queue, args->send_flag);
+                        break;
                     case MSG_CONTINUE_FILE_TRANSMISSION:
-                        {
-                            Q_CONTROL_FILE_TRANSMISSION *qdata;
-                            if (packet->magic_number != MAGIC_NUMBER_2)
-                                break;
-                            qdata = malloc(sizeof(Q_CONTROL_FILE_TRANSMISSION));
-                            if (qdata == NULL) {
-                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                                log_fatal("[packet_handler_thread] malloc failed allocating %d bytes for queue "
-                                          "continue file transmission data  | return %d",
-                                          sizeof(Q_CONTROL_FILE_TRANSMISSION), *process_return);
-                                goto cleanup;
-                            }
-                            memcpy(&(qdata->control), packet->data, sizeof(transmission_control_data_t));
-                            memcpy(qdata->session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
-                            qdata->session_id.serial = qdata->control.serial;
-
-                            set_event_flag(args->send_flag, EF_CONTINUE_FILE_TRANSMISSION);
-                            ret = queue_push(args->send_queue, qdata, QET_CONTINUE_FILE_TRANSMISSION);
-                            if (ret) {
-                                free(qdata);
-                                *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                                log_fatal("[packet_handler_thread] queue_push failed pushing continue file "
-                                          "transmission node to send thread | return %d",
-                                          *process_return);
-                                goto cleanup;
-                            }
-                            break;
-                        }
+                        log_debug("[packet_handler_thread] received continue file transmission");
+                        ret = continue_file_transmission_routine(packet, args->send_queue, args->send_flag);
+                        break;
                     case MSG_IP_CHANGE:
                         if (packet->magic_number != MAGIC_NUMBER_2)
                             break;
@@ -1385,6 +292,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         printf("\noops...\n");
                         break;
                 }
+                if (ret < 0) goto cleanup;
 
                 // we no longer need the packet
                 mempool_free(args->mempool, packet);
@@ -1490,7 +398,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
             }
             // clangd says that there is a use after free and double free or remove array.
             // this is clearly impossible to happen
-            if (remove_array){
+            if (remove_array) {
                 for (size_t i = 0; i < remove_array_size; i++) {
                     avl_delete_unlocked(xsr_tree, ((xsr_t **)remove_array)[i]);
                 }
@@ -1498,7 +406,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
             }
             free_tree_iterator(&xsr_iterator);
         }
-        if (remove_array_size > 0)log_debug("[packet_handler_thread] removed %llu xsr", remove_array_size);
+        if (remove_array_size > 0)
+            log_debug("[packet_handler_thread] removed %llu xsr", remove_array_size);
         remove_array = NULL;
         remove_array_size = 0;
 
@@ -1534,7 +443,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                                ((lowest_time - time_diff) >> (sizeof(time_t) * CHAR_BIT - 1)));
                 }
             }
-            if (remove_array){
+            if (remove_array) {
                 for (size_t i = 0; i < remove_array_size; i++) {
                     avl_delete_unlocked(xfp_tree, ((xfp_t **)remove_array)[i]);
                 }
@@ -1576,7 +485,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                                ((lowest_time - time_diff) >> (sizeof(time_t) * CHAR_BIT - 1)));
                 }
             }
-            if (remove_array){
+            if (remove_array) {
                 for (size_t i = 0; i < remove_array_size; i++) {
                     avl_delete_unlocked(args->device_tree, ((remote_device_t **)remove_array)[i]);
                 }
@@ -1603,10 +512,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
     free_tree(xsr_tree);
     free_tree(xfp_tree);
-    free(signing_request_data);
-    free(signing_response_data);
-    free(file_sending_request_data);
-    free(file_sending_response_data);
     log_info("[packet_handler_thread] thread successful exit");
     return process_return;
 
@@ -1614,10 +519,6 @@ cleanup:
     destroy_qnode(node);
     free_tree(xsr_tree);
     free_tree(xfp_tree);
-    free(signing_request_data);
-    free(signing_response_data);
-    free(file_sending_request_data);
-    free(file_sending_response_data);
 
     set_event_flag(args->flag, EF_TERMINATION);
     set_event_flag(args->wake, EF_WAKE_MANAGER);
@@ -1626,13 +527,11 @@ cleanup:
 }
 
 // cmp functions (helpers)
-int cmp_xsr(void *s1, void *s2)
-{
-    return memcmp(((xsr_t *)s1)->id, ((xsr_t *)s2)->id, crypto_sign_PUBLICKEYBYTES);
-}
+int cmp_xsr(void *s1, void *s2) { return memcmp(((xsr_t *)s1)->id, ((xsr_t *)s2)->id, crypto_sign_PUBLICKEYBYTES); }
 void free_xsr(void *xsr)
 {
-    if (!xsr) return;
+    if (!xsr)
+        return;
     if (((xsr_t *)xsr)->skx) {
         sodium_munlock(((xsr_t *)xsr)->skx, crypto_kx_SECRETKEYBYTES);
         free(((xsr_t *)xsr)->skx);
@@ -1650,7 +549,8 @@ void free_xfp(void *xfp)
 {
     range_node_t *curr;
     range_node_t *next;
-    if (!xfp) return;
+    if (!xfp)
+        return;
     if (((xfp_t *)xfp)->file) {
         fclose(((xfp_t *)xfp)->file);
     }
@@ -1876,4 +776,1055 @@ cleanup:
     free(session);
     xfp_tree->remove(xfp_tree, &xfp);
     return ret;
+}
+
+int init_packet_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *xsr_tree,
+                        tree_t *known_keys_tree, char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1],
+                        signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag)
+{
+    int ret;
+    uint64_t curr_time;
+    remote_device_t rdev;
+    remote_device_t *found_rdev;
+    known_key_t known_key;
+    xsr_t xsr = {0};
+    signing_request_data_t signing_request_data;
+    char tmp_username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1];
+
+    // validate the public key (this is not decryption, nothing is encrypted here)
+    ret = crypto_sign_verify_detached(((init_packet_data_t *)packet->data)->signature, (unsigned char *)packet,
+                                      offsetof(packet_t, data) + offsetof(init_packet_data_t, signature), packet->id);
+
+    if (ret == 0) {
+        // validate timestamp
+        // todo: this is not valid for unsynchronised offline systems
+        curr_time = time(NULL);
+        if ((((init_packet_data_t *)packet->data)->timestamp < curr_time - 60) ||
+            (((init_packet_data_t *)packet->data)->timestamp > curr_time + 60)) {
+            log_debug("[init_packet_routine] time rejected init packet current time %lld received"
+                      " time %lld",
+                      curr_time, ((init_packet_data_t *)packet->data)->timestamp);
+            return 1;
+        }
+    }
+    else {
+        log_debug("[init_packet_routine] failed to verify signed init packet ret %d", ret);
+        return 1;
+    }
+
+    // search in the tree
+    ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev);
+
+    if (ret == 1) {
+        found_rdev->expiration_time = time(NULL); // renew the timestamp
+        found_rdev->ip = packet_info->address.sin_addr.s_addr;
+        // copy the username
+        memcpy(tmp_username, ((init_packet_data_t *)packet->data)->username, MAX_USERNAME_LEN * sizeof(wchar_t));
+        sanitize_username(tmp_username);
+        log_debug("[init_packet_routine] found device with username %s", tmp_username);
+        memcpy(found_rdev->username, tmp_username, MAX_USERNAME_LEN * sizeof(uint32_t));
+
+        dev_tree->search_release(dev_tree);
+        return 0;
+    }
+    dev_tree->search_release(dev_tree);
+
+    // the remote device is not on the tree so we add it
+    rdev.expiration_time = time(NULL);
+    rdev.ip = packet_info->address.sin_addr.s_addr;
+    rdev.session_keys = NULL;
+    rdev.fsr_list = NULL;
+    rdev.fsr_count = 0;
+    rdev.dev_state_flag = RDSF_UNVERIFIED; // the device is not verified
+
+    memcpy(tmp_username, ((init_packet_data_t *)packet->data)->username, MAX_USERNAME_LEN * sizeof(wchar_t));
+    sanitize_username(tmp_username);
+    memcpy(rdev.username, tmp_username, MAX_USERNAME_LEN * sizeof(uint32_t));
+
+    memcpy(known_key.key, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
+    if (known_keys_tree->search(known_keys_tree, &known_key)) {
+        log_debug("[init_packet_routine] key was found");
+        rdev.dev_state_flag |= known_key.status;
+    }
+    else {
+        log_debug("[init_packet_routine] key not found thus inserted");
+        ins_known_key(known_keys_tree, known_key.key, KNOWN_KEY_STATUS_UNKNOWN);
+        rdev.dev_state_flag |= KNOWN_KEY_STATUS_UNKNOWN;
+    }
+
+    ret = dev_tree->insert(dev_tree, &rdev);
+    if (ret < 0) {
+        log_fatal("[init_packet_routine] device_tree insert() failed| return %d", ret);
+        return -1;
+    }
+    log_debug("[init_packet_routine] device inserted to tree");
+
+    // send signing request
+    randombytes_buf(signing_request_data.nonce, INDIGO_NONCE_SIZE);
+    signing_request_data.timestamp = time(NULL);
+    strcpy(signing_request_data.username, username);
+
+    build_packet(packet, MSG_SIGNING_REQUEST, signing_keys->public, NULL, &signing_request_data,
+                 sizeof(signing_request_data_t));
+
+    ret = crypto_sign_detached(signing_request_data.signature, NULL, (unsigned char *)packet,
+                               offsetof(packet_t, data) + offsetof(signing_request_data_t, signature),
+                               signing_keys->secret);
+    if (ret) {
+        log_fatal("[init_packet_routine] crypto_sign_detached failed | return %d", -1);
+        return -1;
+    }
+
+    memcpy(((signing_request_data_t *)packet->data)->signature, signing_request_data.signature, crypto_sign_BYTES);
+
+    ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, sockets, packet, flag);
+
+    if (ret) {
+        switch (ret) {
+            case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
+            case INDIGO_ERROR_INVALID_PARAM:
+            case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
+                log_fatal("[init_packet_routine] send_packet() failed to send signing request "
+                          "| return %d",
+                          ret);
+                return ret;
+            case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should terminate for that
+                break;
+            case INDIGO_ERROR_NETWORK_RESET:
+                set_event_flag(flag, EF_RESET_SOCKETS);
+                break;
+            default:
+                break; // winlib errors go here
+        }
+        return 1;
+    }
+    log_debug("[init_packet_routine] sent signing request");
+    // add signing response to expected packets
+    xsr.expiration_time = time(NULL);
+    memcpy(xsr.nonce, signing_request_data.nonce, INDIGO_NONCE_SIZE);
+    memcpy(xsr.id, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
+    ret = xsr_tree->insert(xsr_tree, &xsr);
+    if (ret < 0) {
+        log_fatal("[init_packet_routine] xsr_tree insert failed | return %d", -1);
+        return -1;
+    }
+    return 0;
+}
+
+int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *xsr_tree,
+                            tree_t *known_keys_tree, signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag)
+{
+    int ret;
+    uint64_t curr_time;
+    signing_response_data_t signing_response_data;
+    // signing_request_data_t signing_request_data;
+    unsigned char *session_pk = NULL;
+    unsigned char *session_sk = NULL;
+    xsr_t xsr;
+    remote_device_t rdev;
+    remote_device_t *found_rdev;
+    char tmp_username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1];
+    known_key_t known_key;
+
+    // validate the public key
+    ret =
+        crypto_sign_verify_detached(((signing_request_data_t *)packet->data)->signature, (unsigned char *)packet,
+                                    offsetof(packet_t, data) + offsetof(signing_request_data_t, signature), packet->id);
+    // todo: time errors probable (same as above)
+    if (!ret) {
+        // validate the timestamp
+        curr_time = time(NULL);
+        if ((((signing_request_data_t *)packet->data)->timestamp < curr_time - 60) ||
+            (((signing_request_data_t *)packet->data)->timestamp > curr_time + 60)) {
+
+            log_info("[packet_handler_thread] signing request rejected due to "
+                     "expired header time stamp");
+            return 1;
+        }
+    }
+    else {
+        log_debug("[packet_handler_thread] signing request rejected, invalid signature");
+        return 1;
+    }
+
+    // sign the nonce and send the signature with the public key and a new nonce
+    ret = sign_buffer(signing_keys, ((signing_request_data_t *)packet->data)->nonce, INDIGO_NONCE_SIZE,
+                      signing_response_data.signed_nonce, NULL);
+    // can fail only dew to wrong usage
+    if (ret) {
+        log_fatal("[packet_handler_thread] sign_buffer failed signing a peer signing request nonce "
+                  "| return %d", -1);
+        return -1;
+    }
+
+
+    // if the peer is verified we don't need to send a signing request
+    ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev);
+    if (ret == 1 && found_rdev->dev_state_flag & RDSF_VERIFIED) {
+        // the device is found
+        found_rdev->expiration_time = time(NULL);
+        found_rdev->ip = packet_info->address.sin_addr.s_addr;
+
+        memset(signing_response_data.nonce, 0, INDIGO_NONCE_SIZE);
+        signing_response_data.sig_request = 0;
+
+        tree_unlock(dev_tree);
+    }
+    else {
+        tree_unlock(dev_tree);
+        // in this case they found us before we received their discovery packet (if they sent any)
+        // add the device to the device table
+        // we detected the device (though it is unverified)
+        if (ret == 0) {
+            rdev.expiration_time = time(NULL);
+            rdev.ip = packet_info->address.sin_addr.s_addr;
+            rdev.session_keys = NULL;
+            rdev.fsr_list = NULL;
+            rdev.fsr_count = 0;
+            memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
+            rdev.dev_state_flag = RDSF_UNVERIFIED; // the device is not verified
+
+            memcpy(tmp_username, ((init_packet_data_t *)packet->data)->username, MAX_USERNAME_LEN * sizeof(wchar_t));
+            sanitize_username(tmp_username);
+            memcpy(rdev.username, tmp_username, MAX_USERNAME_LEN * sizeof(uint32_t));
+
+            memcpy(known_key.key, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
+            if (known_keys_tree->search(known_keys_tree, &known_key)) {
+                log_debug("[packet_handler_thread] key was found");
+                rdev.dev_state_flag |= known_key.status;
+            }
+            else {
+                log_debug("[packet_handler_thread] key not found thus inserted");
+                ins_known_key(known_keys_tree, known_key.key, KNOWN_KEY_STATUS_UNKNOWN);
+                rdev.dev_state_flag |= KNOWN_KEY_STATUS_UNKNOWN;
+            }
+
+            ret = dev_tree->insert(dev_tree, &rdev);
+            if (ret < 0) {
+                log_fatal("[packet_handler_thread] device_tree insert failed inserting device"
+                          " from signing request | return %d", -1);
+                return -1;
+            }
+        }
+
+        // create session keys
+        session_pk = malloc(crypto_kx_PUBLICKEYBYTES);
+        session_sk = malloc(crypto_kx_SECRETKEYBYTES);
+        if (!session_pk || !session_sk) {
+            free(session_pk);
+            free(session_sk);
+            session_pk = NULL;
+            session_sk = NULL;
+            log_fatal("[packet_handler_thread] malloc failed allocating %d+%d bytes"
+                      " for session public and private key | return %d",
+                      crypto_kx_PUBLICKEYBYTES, crypto_kx_SECRETKEYBYTES, -1);
+            return -1;
+        }
+        sodium_mlock(session_sk, crypto_kx_SECRETKEYBYTES);
+
+        ret = crypto_kx_keypair(session_pk, session_sk);
+        if (ret) {
+            sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
+            free(session_pk);
+            free(session_sk);
+            session_pk = NULL;
+            session_sk = NULL;
+            log_fatal("[packet_handler_thread] crypto_kx_keypair() failed creating session keys"
+                      " | return %d", -1);
+            return -1;
+        }
+
+        randombytes_buf(signing_response_data.nonce, INDIGO_NONCE_SIZE);
+        signing_response_data.sig_request = 1;
+
+        memcpy(xsr.nonce, signing_response_data.nonce, INDIGO_NONCE_SIZE);
+
+        memcpy(xsr.id, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
+
+        xsr.expiration_time = time(NULL);
+        xsr.pkx = session_pk;
+        xsr.skx = session_sk;
+
+        memcpy(signing_response_data.pkx, session_pk, crypto_kx_PUBLICKEYBYTES);
+        signing_response_data.zero = 0;
+
+
+        ret = xsr_tree->insert(xsr_tree, &xsr);
+        if (ret < 0) {
+            sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
+            free(session_pk);
+            free(session_sk);
+            session_pk = NULL;
+            session_sk = NULL;
+
+            log_fatal("[packet_handler_thread] xsr_tree insert failed | return %d", -1);
+            return -1;
+        }
+    }
+
+    build_packet(packet, MSG_SIGNING_RESPONSE, signing_keys->public, NULL, &signing_response_data,
+                 sizeof(signing_response_data_t));
+
+    ret = crypto_sign_detached(signing_response_data.signature, NULL, (unsigned char *)packet,
+                               offsetof(packet_t, data) + offsetof(signing_response_data_t, signature),
+                               signing_keys->secret);
+    if (ret) {
+        log_fatal("[packet_handler_thread] crypto_sign_detached() failed signing nonce for"
+                  " signing request | return %d", -1);
+        return -1;
+    }
+
+    memcpy(((signing_response_data_t *)packet->data)->signature, signing_response_data.signature, crypto_sign_BYTES);
+
+    ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, sockets, packet, flag);
+    if (ret) {
+        switch (ret) {
+            case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
+            case INDIGO_ERROR_INVALID_PARAM:
+            case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
+                log_fatal("[packet_handler_thread] send_packet() failed sending "
+                          "signing response| return %d",
+                          -1);
+                return -1;
+            case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should terminate for that
+                break;
+            case INDIGO_ERROR_NETWORK_RESET:
+                set_event_flag(flag, EF_RESET_SOCKETS);
+                break;
+            default:
+                break; // winlib errors go here
+        }
+        log_debug("[packet_handler_thread] send_packet() failed");
+        return 1;
+    }
+    log_debug("[packet_handler_thread] sent signing response");
+
+    return 0;
+}
+
+int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *xsr_tree,
+                             signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag)
+{
+    int ret;
+    xsr_t xsr;
+    remote_device_t rdev;
+    remote_device_t *found_rdev;
+    signing_response_data_t signing_response_data;
+    unsigned char nonce[INDIGO_NONCE_SIZE];
+    unsigned char *session_pk = NULL;
+    unsigned char *session_sk = NULL;
+
+    ret = crypto_sign_verify_detached(((signing_response_data_t *)packet->data)->signature, (unsigned char *)packet,
+                                      offsetof(packet_t, data) + offsetof(signing_response_data_t, signature),
+                                      packet->id);
+    if (ret) {
+        log_debug("[packet_handler_thread] invalid signing response");
+        return 1;
+    }
+    // we don't validate signed time, since there is already a signed nonce to verify
+    memcpy(xsr.id, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
+    ret = xsr_tree->search(xsr_tree, &xsr);
+    if (ret == 0) {
+        log_debug("[packet_handler_thread] signing response not expected");
+        return 1; // if there is no expected signing response, there is nothing to process
+    }
+
+    // verify the signed nonce
+    ret = crypto_sign_open(nonce, NULL, ((signing_response_data_t *)packet->data)->signed_nonce,
+                           INDIGO_NONCE_SIZE + crypto_sign_BYTES, packet->id);
+    if (ret == 1) {
+        log_debug("[packet_handler_thread] failed to verify response, bad signature");
+        return 1;
+    }
+
+    // if the nonce signed is the same as the one we sent to be signed
+    if (memcmp(xsr.nonce, nonce, INDIGO_NONCE_SIZE) != 0) {
+        log_debug("[packet_handler_thread] failed to verify response, bad nonce");
+        return 1;
+    }
+
+    // the device got verified
+    // todo: so we need to create the client and server keys, if we need to sing nonce, we
+    // create keys no xsr, otherwise use xsr
+    ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev);
+    /* I am not sure how we could get an expected packet for a device
+     * that isn't in the device tree
+     */
+    if (ret == 0) {
+        tree_unlock(dev_tree);
+        return 1;
+    }
+
+    found_rdev->expiration_time = time(NULL);
+    found_rdev->ip = packet_info->address.sin_addr.s_addr; // ip may have changed
+
+    found_rdev->dev_state_flag |= RDSF_VERIFIED;
+    found_rdev->dev_state_flag &= (~RDSF_UNVERIFIED);
+
+    found_rdev->session_keys = malloc(sizeof(session_keys_t));
+    if (found_rdev->session_keys == NULL) {
+        tree_unlock(dev_tree);
+        log_fatal("[packet_handler_thread] malloc failed to allocate session_keys]");
+        return -1;
+    }
+    sodium_mlock(found_rdev->session_keys, sizeof(session_keys_t));
+
+    // check if we need to verify ourselves
+    if (((signing_response_data_t *)(packet->data))->sig_request) {
+        // create session keys
+        /*there is no possible way to have a situation where,
+         * we have created session keys but the other party hasn't verified us
+         * it could happen if the other party runs slightly modified code, me not happy
+         */
+
+        session_pk = malloc(crypto_kx_PUBLICKEYBYTES);
+        session_sk = malloc(crypto_kx_SECRETKEYBYTES);
+        if (!session_pk || !session_sk) {
+            free(session_pk);
+            free(session_sk);
+            sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
+            free(found_rdev->session_keys);
+            found_rdev->session_keys = NULL;
+            tree_unlock(dev_tree);
+            log_fatal("[packet_handler_thread] malloc failed allocating %d+%d bytes "
+                      "for session keys | return %d",
+                      crypto_kx_SECRETKEYBYTES, crypto_kx_SECRETKEYBYTES, -1);
+            return -1;
+        }
+        sodium_mlock(session_sk, crypto_kx_SECRETKEYBYTES);
+
+        ret = crypto_kx_keypair(session_pk, session_sk);
+        if (ret) {
+            sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
+            free(found_rdev->session_keys);
+            found_rdev->session_keys = NULL;
+            tree_unlock(dev_tree);
+            sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
+            free(session_pk);
+            free(session_sk);
+            log_fatal("[packet_handler_thread] kx_keypair failed | return %d", -1);
+            return -1;
+        }
+
+        ret = crypto_kx_client_session_keys(found_rdev->session_keys->client_rk, found_rdev->session_keys->client_tk,
+                                            session_pk, session_sk, ((signing_response_data_t *)packet->data)->pkx);
+        if (ret) {
+            // the peer's public key is not acceptable
+            sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
+            free(found_rdev->session_keys);
+            found_rdev->session_keys = NULL;
+            tree_unlock(dev_tree);
+            sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
+            free(session_pk);
+            free(session_sk);
+            return 1;
+        }
+
+        ret = crypto_kx_server_session_keys(found_rdev->session_keys->server_rk, found_rdev->session_keys->server_tk,
+                                            session_pk, session_sk, ((signing_response_data_t *)packet->data)->pkx);
+        if (ret) {
+            // the peer's public key is not acceptable
+            sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
+            free(found_rdev->session_keys);
+            found_rdev->session_keys = NULL;
+            tree_unlock(dev_tree);
+            sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
+            free(session_pk);
+            free(session_sk);
+            return 1;
+        }
+
+        signing_response_data.zero = 0;
+        signing_response_data.sig_request = 0;
+        memset(signing_response_data.nonce, 0, INDIGO_NONCE_SIZE);
+
+        ret = sign_buffer(signing_keys, ((signing_response_data_t *)packet->data)->nonce, INDIGO_NONCE_SIZE,
+                          signing_response_data.signed_nonce, NULL);
+
+        // ret = crypto_sign(signing_response_data->signed_nonce, NULL,
+        //                   ((signing_response_data_t *)packet->data)->nonce, INDIGO_NONCE_SIZE,
+        //                   args->signing_keys->secret);
+        if (ret) {
+            sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
+            free(found_rdev->session_keys);
+            found_rdev->session_keys = NULL;
+            tree_unlock(dev_tree);
+            log_fatal("[packet_handler_thread] crypto_sign failed to sign nonce "
+                      "for signing request | return %d",
+                      -1);
+            return -1;
+        }
+        memcpy(signing_response_data.pkx, session_pk, crypto_kx_PUBLICKEYBYTES);
+
+        // we no longer need the keys
+        sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
+        free(session_pk);
+        free(session_sk);
+        session_pk = NULL;
+        session_sk = NULL;
+
+        build_packet(packet, MSG_SIGNING_RESPONSE, signing_keys->public, NULL, &signing_response_data,
+                     sizeof(signing_response_data_t));
+
+        ret = crypto_sign_detached(signing_response_data.signature, NULL, (unsigned char *)packet,
+                                   offsetof(packet_t, data) + offsetof(signing_response_data_t, signature),
+                                   signing_keys->secret);
+
+        if (ret) {
+            tree_unlock(dev_tree);
+            log_fatal("[packet_handler_thread] crypto_sing_detached failed signing"
+                      " signing response packet | return %d",
+                      -1);
+            return -1;
+        }
+        memcpy(((signing_response_data_t *)packet->data)->signature, signing_response_data.signature,
+               crypto_sign_BYTES);
+
+        ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, sockets, packet, flag);
+        if (ret) {
+            switch (ret) {
+                case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
+                case INDIGO_ERROR_INVALID_PARAM:
+                case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
+                    log_fatal("[packet_handler_thread] send_packet failed sending"
+                              " signing response | return &d",
+                              -1);
+                    return -1;
+                case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should
+                    // terminate for that
+                    break;
+                case INDIGO_ERROR_NETWORK_RESET:
+                    set_event_flag(flag, EF_RESET_SOCKETS);
+                    break;
+                default:
+                    break; // winlib errors go here
+            }
+            tree_unlock(dev_tree);
+        }
+        log_debug("[packet_handler_thread] sent signing response");
+    }
+    else {
+        // create the client and server keys
+        // TODO: parameters may be null, causes segfault
+        ret = crypto_kx_client_session_keys(found_rdev->session_keys->client_rk, found_rdev->session_keys->client_tk,
+                                            xsr.pkx, xsr.skx, ((signing_response_data_t *)packet->data)->pkx);
+        if (ret) {
+            // the peer's public key is not acceptable
+            sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
+            free(found_rdev->session_keys);
+            found_rdev->session_keys = NULL;
+            tree_unlock(dev_tree);
+            return 1;
+        }
+
+        ret = crypto_kx_server_session_keys(found_rdev->session_keys->server_rk, found_rdev->session_keys->server_tk,
+                                            xsr.pkx, xsr.skx, ((signing_response_data_t *)packet->data)->pkx);
+        if (ret) {
+            // the peer's public key is not acceptable
+            sodium_munlock(found_rdev->session_keys, sizeof(session_keys_t));
+            free(found_rdev->session_keys);
+            found_rdev->session_keys = NULL;
+
+            tree_unlock(dev_tree);
+            return 1;
+        }
+    }
+
+    dev_tree->search_release(dev_tree);
+
+    // remove the expected packet
+    xsr_tree->remove(xsr_tree, &xsr);
+    log_debug("it's me, hi! Im the problem it's me (verified)");
+
+    return 0;
+}
+
+int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *xfp_tree,
+                                 tree_t *session_tree, signing_key_pair_t *signing_keys, socket_ll *sockets,
+                                 EFLAG *flag)
+{
+    // we need permission to proceed, so we push it to the manager to handle
+    // tell the interface (ui via queue), the interface will ask the user
+    // if the user agrees, we send back a response containing the preferred session serial
+    // number if it gets accepted we receive a session_t struct via queue, and store an expected
+    // file packet
+    int ret;
+    remote_device_t rdev;
+    remote_device_t *found_rdev;
+    Q_FILE_SENDING_REQUEST *fsr;
+    Q_FILE_SENDING_REQUEST *temp_fsr = NULL;
+    file_sending_request_data_t *data;
+
+    if (packet->magic_number != MAGIC_NUMBER_2)
+        return 1;
+    fsr = malloc(sizeof(Q_FILE_SENDING_REQUEST));
+    if (!fsr) {
+        log_fatal("[packet_handler_thread] malloc failed allocating %d bytes for queue"
+                  " file sending request | return %d",
+                  -1);
+        return -1;
+    }
+
+    data = (file_sending_request_data_t *)packet->data;
+    memcpy(fsr->id, packet->id, crypto_sign_PUBLICKEYBYTES);
+    fsr->file_size = data->file_size;
+    memcpy(fsr->file_name, data->file_name, NAME_MAX);
+    fsr->file_name[NAME_MAX - 1] = '\0';
+    fsr->addr = packet_info->address.sin_addr.s_addr;
+
+    if (dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev)) {
+        if (found_rdev->dev_state_flag & KNOWN_KEY_STATUS_TOO_GOOD) {
+            // in this case and this case only the user has specified
+            // that this peer does not need approval
+            ret = create_server_session(fsr, dev_tree, session_tree, xfp_tree, signing_keys->public, sockets, flag);
+            if (ret) {
+                // todo: create_server_session() uses send_packet() and returns its errors
+                // todo: do more complex error handling
+                log_fatal("[packet_handler_thread] failed to create server session "
+                          "| return %d",
+                          -1);
+                return -1;
+            }
+            return 1;
+        }
+        if (found_rdev->fsr_count == MAX_SEND_REQUEST_COUNT) {
+            // remove the last request
+            for (Q_FILE_SENDING_REQUEST *i = found_rdev->fsr_list; i->next != NULL; i = i->next) {
+                temp_fsr = i;
+            }
+            if (temp_fsr) {
+                free(temp_fsr->next);
+                temp_fsr->next = NULL;
+            }
+            (found_rdev->fsr_count)--;
+        }
+        (found_rdev->fsr_count)++;
+        temp_fsr = found_rdev->fsr_list;
+        found_rdev->fsr_list = fsr;
+        fsr->next = temp_fsr;
+    }
+    dev_tree->search_release(dev_tree);
+
+    return 0;
+}
+
+int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *xfp_tree, tree_t *session_tree,
+                       signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag)
+{
+    /*TODO: the thing is that the file descriptor is in xfp, (and we need to check xfp anyway
+     *      but we need to update the session too, it contains stats mainly
+     *      we will do only one tree search, idc, and xfp needs to be found
+     *      we may have to merge xfp and session
+     *      session is not used as for now, i think its for the ui primarily
+     *      FOR NOW JUST DO 2 SEARCHES AND UPDATE BOTH
+     */
+    int ret;
+    void *tmp_ptr;
+    xfp_t xfp;
+    xfp_t *found_xfp;
+    session_t session;
+    session_t *found_session;
+
+    range_node_t *range_node;
+    range_node_t *prev_node;
+
+    size_t ret_val;
+    uint64_t chunk_number;
+    alignas(8) packet_t temp_packet;
+
+    // ensure that the packet was encrypted
+    if (packet->magic_number != MAGIC_NUMBER_2)
+        return 1;
+
+    // find the expected file packet node
+    memcpy(xfp.session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
+    xfp.session_id.serial = ((file_chunk_data_t *)packet->data)->serial;
+
+    ret = xfp_tree->search_pin(xfp_tree, &xfp, (void **)&found_xfp);
+    if (ret == 0) {
+        xfp_tree->search_release(xfp_tree);
+        return 1;
+    }
+    // if it is a client file (we expect an accept response) we don't receive it
+    if (found_xfp->packet_count == XFP_CLIENT_FILE) {
+        xfp_tree->search_release(xfp_tree);
+        return 1;
+    }
+
+    // find the session node
+    memcpy(&(session.session_id), &(xfp.session_id), sizeof(session_id_t));
+    ret = session_tree->search_pin(session_tree, &session, (void **)&found_session);
+    if (ret == 0) {
+        xfp_tree->search_release(xfp_tree);
+        session_tree->search_release(session_tree);
+        return 1;
+    }
+
+    found_xfp->expiration_time = time(NULL);
+
+    chunk_number = ((file_chunk_data_t *)packet->data)->chunk_number;
+
+    if (chunk_number < found_xfp->last_chunk) {
+        // we either received a duplicate packet or a resend
+        // in this case we don't update the packet number
+
+        prev_node = NULL;
+        for (range_node = found_xfp->missing_range_ll; range_node != NULL; range_node = range_node->next) {
+            if (in_range(&(range_node->r), chunk_number))
+                break;
+            prev_node = range_node;
+        }
+        if (range_node == NULL)
+            return 1;
+
+        // remove the file chunk from the range
+        if (range_node->r.start == range_node->r.end) {
+            if (prev_node)
+                prev_node->next = range_node->next;
+            else {
+                found_xfp->missing_range_ll = range_node->next;
+            }
+            prev_node = NULL;
+            free(range_node);
+            range_node = NULL;
+        }
+        else {
+            if (chunk_number == range_node->r.start) {
+                --(range_node->r.start);
+            }
+            else if (chunk_number == range_node->r.end) {
+                --(range_node->r.end);
+            }
+            else {
+                // in this case we have to split the range
+
+                // here prev node is used a temporary node and not an actual previous node
+                prev_node = malloc(sizeof(range_node_t));
+                if (!prev_node) {
+                    // IDK do something
+                    xfp_tree->search_release(xfp_tree);
+                    session_tree->search_release(session_tree);
+                    return -1;
+                }
+                prev_node->r.start = chunk_number + 1;
+                prev_node->r.end = range_node->r.end;
+                range_node->r.end = chunk_number - 1;
+
+                tmp_ptr = found_xfp->missing_range_ll;
+                found_xfp->missing_range_ll = prev_node;
+                prev_node->next = tmp_ptr;
+                tmp_ptr = NULL;
+            }
+        }
+
+        // write the file chunk
+        if (chunk_number * PAC_DATA_PAYLOAD_BYTES < LLONG_MAX) {
+            fseeko64(found_xfp->file, (long long)(chunk_number * PAC_DATA_PAYLOAD_BYTES), SEEK_SET);
+        }
+        else {
+            // not very sure who owns a file bigger than 2 exbi-bytes, but why not
+            fseeko64(found_xfp->file, LLONG_MAX, SEEK_SET);
+            fseeko64(found_xfp->file, (long long)((chunk_number * PAC_DATA_PAYLOAD_BYTES) - LLONG_MAX), SEEK_CUR);
+        }
+
+        ret_val = fwrite(((file_chunk_data_t *)packet->data)->data, 1, PAC_DATA_PAYLOAD_BYTES, found_xfp->file);
+        if (ret_val != PAC_DATA_PAYLOAD_BYTES) {
+            ret = ferror(found_xfp->file);
+            // TODO: here are all the errors of fwrite, handle them. these are bad errors,
+            //       most of them
+            switch (ret) {
+                case EAGAIN:
+                case EBADF:
+                case EFBIG:
+                case EINTR:
+                case EIO:
+                case ENOSPC:
+                case EPIPE:
+                case ENOMEM:
+                case ENXIO:
+                default:
+                    xfp_tree->search_release(xfp_tree);
+                    session_tree->search_release(session_tree);
+                    break;
+            }
+            return 1;
+        }
+        found_session->bytes_moved += PAC_DATA_PAYLOAD_BYTES;
+        ++(found_xfp->packets_writen);
+
+        // check if we have received the whole file
+        if (found_xfp->packets_writen == found_xfp->packet_count) {
+            // the missing packets should be NULL but well it does not hurt to check
+            for (range_node_t *r = found_xfp->missing_range_ll; r != NULL; r = prev_node) {
+                prev_node = r->next;
+                free(prev_node);
+            }
+            // TODO: rename the file
+            fclose(found_xfp->file);
+            xfp_tree->search_release(xfp_tree);
+            session_tree->search_release(session_tree);
+
+            xfp_tree->remove(xfp_tree, &xfp);
+            session_tree->remove(session_tree, &session);
+            return 1;
+        }
+
+        build_packet(&temp_packet, MSG_RESEND, signing_keys->public, NULL, NULL, 0);
+        ((transmission_control_data_t *)(temp_packet.data))->serial = ((file_chunk_data_t *)packet->data)->serial;
+
+        for (range_node = found_xfp->missing_range_ll; range_node != NULL; range_node = range_node->next) {
+            // send a resend packet for each range we have
+            ((transmission_control_data_t *)(temp_packet.data))->range = range_node->r;
+            // send the packet
+            ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, sockets, &temp_packet, flag);
+            if (ret) {
+                xfp_tree->search_release(xfp_tree);
+                session_tree->search_release(session_tree);
+                switch (ret) {
+                    case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
+                    case INDIGO_ERROR_INVALID_PARAM:
+                    case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
+                        log_fatal("[packet_handler_thread] send_packet failed "
+                                  "sending resend packets | return %d",
+                                  -1);
+                        return -1;
+                    case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should
+                        // terminate for that
+                        break;
+                    case INDIGO_ERROR_NETWORK_RESET:
+                        set_event_flag(flag, EF_RESET_SOCKETS);
+                        break;
+                    default:
+                        break; // winlib errors go here
+                }
+            }
+        }
+        range_node = NULL;
+
+        xfp_tree->search_release(xfp_tree);
+        session_tree->search_release(session_tree);
+        return 1;
+    }
+    if (chunk_number > found_xfp->last_chunk) {
+        // we lost a packet, send a re-send packet
+
+        range_node = malloc(sizeof(range_node_t));
+        if (!range_node) {
+            xfp_tree->search_release(xfp_tree);
+            session_tree->search_release(session_tree);
+            log_fatal("[packet_handler_thread] malloc failed allocating %d bytes for "
+                      "missing packet range node | return %d",
+                      -1);
+            return -1;
+        }
+        range_node->r.start = found_xfp->last_chunk;
+        range_node->r.end = chunk_number - 1;
+        tmp_ptr = found_xfp->missing_range_ll;
+        range_node->next = tmp_ptr;
+        found_xfp->missing_range_ll = range_node;
+        range_node = NULL;
+
+        // create the packet
+        build_packet(&temp_packet, MSG_RESEND, signing_keys->public, NULL, NULL, 0);
+        ((transmission_control_data_t *)(temp_packet.data))->serial = ((file_chunk_data_t *)packet->data)->serial;
+        ((transmission_control_data_t *)(temp_packet.data))->range.start = found_xfp->last_chunk;
+        ((transmission_control_data_t *)(temp_packet.data))->range.end = chunk_number - 1;
+        // send the packet
+        ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, sockets, &temp_packet, flag);
+        if (ret) {
+            xfp_tree->search_release(xfp_tree);
+            session_tree->search_release(session_tree);
+            switch (ret) {
+                case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
+                case INDIGO_ERROR_INVALID_PARAM:
+                case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
+                    log_fatal("[packet_handler_thread] send_packet failed "
+                              "sending resend packets | return %d",
+                              -1);
+                    return -1;
+                case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should terminate
+                    break;
+                case INDIGO_ERROR_NETWORK_RESET:
+                    set_event_flag(flag, EF_RESET_SOCKETS);
+                    break;
+                default:
+                    break; // winlib errors go here
+            }
+        }
+    }
+
+    // set the position in the file (we are not writing necessarily at the end of the last
+    // write)
+    if (chunk_number * PAC_DATA_PAYLOAD_BYTES < LLONG_MAX) {
+        fseeko64(found_xfp->file, (long long)(chunk_number * PAC_DATA_PAYLOAD_BYTES), SEEK_SET);
+    }
+    else {
+        // not very sure who owns a file bigger than 2 exbi-bytes, but why not
+        fseeko64(found_xfp->file, LLONG_MAX, SEEK_SET);
+        fseeko64(found_xfp->file, (long long)((chunk_number * PAC_DATA_PAYLOAD_BYTES) - LLONG_MAX), SEEK_CUR);
+    }
+
+    ret_val = fwrite(((file_chunk_data_t *)packet->data)->data, 1, PAC_DATA_PAYLOAD_BYTES, found_xfp->file);
+    if (ret_val != PAC_DATA_PAYLOAD_BYTES) {
+        xfp_tree->search_release(xfp_tree);
+        session_tree->search_release(session_tree);
+        log_fatal("[packet_handler_thread] send_packet fwrite failed writing file chunk "
+                  "to file | return %d | errno %d",
+                  -1, errno);
+        ret = ferror(found_xfp->file);
+        // todo: here are all the errors of fwrite, handle them. these are bad errors, most of
+        // them
+        switch (ret) {
+            case EAGAIN:
+            case EBADF:
+            case EFBIG:
+            case EINTR:
+            case EIO:
+            case ENOSPC:
+            case EPIPE:
+            case ENOMEM:
+            case ENXIO:
+            default:
+                break;
+        }
+    }
+    if (chunk_number >= found_xfp->last_chunk)
+        found_xfp->last_chunk = chunk_number + 1;
+    found_session->bytes_moved += PAC_DATA_PAYLOAD_BYTES;
+    ++(found_xfp->packets_writen);
+
+    if (found_xfp->packets_writen == found_xfp->packet_count) {
+        // the missing packets should be NULL but well it does not hurt to check
+        for (range_node_t *r = found_xfp->missing_range_ll; r != NULL; r = prev_node) {
+            prev_node = r->next;
+            free(prev_node);
+        }
+        // TODO: rename the file
+        fclose(found_xfp->file);
+        xfp_tree->search_release(xfp_tree);
+        session_tree->search_release(session_tree);
+
+        xfp_tree->remove(xfp_tree, &xfp);
+        session_tree->remove(session_tree, &session);
+        return 1;
+    }
+
+    xfp_tree->search_release(xfp_tree);
+    session_tree->search_release(session_tree);
+
+    return 0;
+}
+
+int resend_routine(packet_t *packet, QUEUE *send_queue, EFLAG *send_flag)
+{
+    int ret;
+    Q_RESEND_FILE_CHUNK *qdata;
+
+    if (packet->magic_number != MAGIC_NUMBER_2)
+        return 1;
+    fprintf(stderr, "DEBUG: Resend attempted\n");
+    qdata = malloc(sizeof(Q_RESEND_FILE_CHUNK));
+    if (qdata == NULL) {
+        log_fatal("[packet_handler_thread] malloc failed allocating %d for queue resend file "
+                  "chunk data | return %d",
+                  sizeof(Q_RESEND_FILE_CHUNK), -1);
+        return -1;
+    }
+    memcpy(&(qdata->control), packet->data, sizeof(transmission_control_data_t));
+    memcpy(qdata->session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
+    qdata->session_id.serial = qdata->control.serial;
+
+    set_event_flag(send_flag, EF_RESEND_FILE_CHUNK);
+    ret = queue_push(send_queue, qdata, QET_RESEND_FILE_CHUNK);
+    if (ret) {
+        free(qdata);
+        log_fatal("[packet_handler_thread] queue_push failed pushing resend file chunk node to "
+                  "send thread | return %d", -1);
+        return -1;
+    }
+    return 0;
+}
+
+int stop_file_transmission_routine(packet_t *packet, QUEUE *send_queue, EFLAG *send_flag)
+{
+    int ret;
+    Q_CONTROL_FILE_TRANSMISSION *qdata;
+    if (packet->magic_number != MAGIC_NUMBER_2)
+        return 1;
+    qdata = malloc(sizeof(Q_CONTROL_FILE_TRANSMISSION));
+    if (qdata == NULL) {
+        log_fatal("[packet_handler_thread] malloc failed allocating %d bytes for queue stop "
+                  "file transmission data  | return %d",
+                  sizeof(Q_CONTROL_FILE_TRANSMISSION), -1);
+        return -1;
+    }
+    memcpy(&(qdata->control), packet->data, sizeof(transmission_control_data_t));
+    memcpy(qdata->session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
+    qdata->session_id.serial = qdata->control.serial;
+
+    set_event_flag(send_flag, EF_STOP_FILE_TRANSMISSION);
+    ret = queue_push(send_queue, qdata, QET_STOP_FILE_TRANSMISSION);
+    if (ret) {
+        free(qdata);
+        log_fatal("[packet_handler_thread] queue_push failed pushing stop file transmission "
+                  "node to send thread | return %d",-1);
+        return -1;
+    }
+    return 0;
+}
+
+int pause_file_transmission_routine(packet_t *packet, QUEUE *send_queue, EFLAG *send_flag)
+{
+    int ret;
+    Q_CONTROL_FILE_TRANSMISSION *qdata;
+    if (packet->magic_number != MAGIC_NUMBER_2)
+        return 1;
+    qdata = malloc(sizeof(Q_CONTROL_FILE_TRANSMISSION));
+    if (qdata == NULL) {
+        log_fatal("[packet_handler_thread] malloc failed allocating %d bytes for queue pause "
+                  "file transmission data  | return %d",
+                  sizeof(Q_CONTROL_FILE_TRANSMISSION), -1);
+        return -1;
+    }
+    memcpy(&(qdata->control), packet->data, sizeof(transmission_control_data_t));
+    memcpy(qdata->session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
+    qdata->session_id.serial = qdata->control.serial;
+
+    set_event_flag(send_flag, EF_PAUSE_FILE_TRANSMISSION);
+    ret = queue_push(send_queue, qdata, QET_PAUSE_FILE_TRANSMISSION);
+    if (ret) {
+        free(qdata);
+        log_fatal("[packet_handler_thread] queue_push failed pushing pause file transmission "
+                  "node to send thread | return %d",-1);
+        return -1;
+    }
+    return 0;
+}
+
+int continue_file_transmission_routine(packet_t *packet, QUEUE *send_queue, EFLAG *send_flag)
+{
+    int ret;
+    Q_CONTROL_FILE_TRANSMISSION *qdata;
+    if (packet->magic_number != MAGIC_NUMBER_2)
+        return 1;
+    qdata = malloc(sizeof(Q_CONTROL_FILE_TRANSMISSION));
+    if (qdata == NULL) {
+        log_fatal("[packet_handler_thread] malloc failed allocating %d bytes for queue "
+                  "continue file transmission data  | return %d",
+                  sizeof(Q_CONTROL_FILE_TRANSMISSION), -1);
+        return -1;
+    }
+    memcpy(&(qdata->control), packet->data, sizeof(transmission_control_data_t));
+    memcpy(qdata->session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
+    qdata->session_id.serial = qdata->control.serial;
+
+    set_event_flag(send_flag, EF_CONTINUE_FILE_TRANSMISSION);
+    ret = queue_push(send_queue, qdata, QET_CONTINUE_FILE_TRANSMISSION);
+    if (ret) {
+        free(qdata);
+        log_fatal("[packet_handler_thread] queue_push failed pushing continue file "
+                  "transmission node to send thread | return %d",-1);
+        return -1;
+    }
+    return 0;
 }

@@ -92,4 +92,28 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
 int create_client_session(const packet_t *packet, const packet_info_t *packet_info, tree_t *dev_tree,
                           tree_t *session_tree, tree_t *xfp_tree, QUEUE *send_queue);
 
+int init_packet_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *xsr_tree,
+                        tree_t *known_keys_tree, char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1],
+                        signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag);
+
+int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *xsr_tree,
+                            tree_t *known_keys_tree, signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag);
+
+int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *xsr_tree,
+                             signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag);
+
+int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *xfp_tree,
+                                 tree_t *session_tree, signing_key_pair_t *signing_keys, socket_ll *sockets,
+                                 EFLAG *flag);
+
+int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *xfp_tree, tree_t *session_tree,
+                       signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag);
+
+int resend_routine(packet_t *packet, QUEUE *send_queue, EFLAG *send_flag);
+
+int stop_file_transmission_routine(packet_t *packet, QUEUE *send_queue, EFLAG *send_flag);
+int pause_file_transmission_routine(packet_t *packet, QUEUE *send_queue, EFLAG *send_flag);
+int continue_file_transmission_routine(packet_t *packet, QUEUE *send_queue, EFLAG *send_flag);
+
+
 #endif // PACKET_HANDLER_H
