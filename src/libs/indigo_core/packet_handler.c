@@ -1127,7 +1127,7 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
         return 1;
     }
     // we don't validate signed time, since there is already a signed nonce to verify
-    memcpy(xsr.id, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
+    memcpy(xsr.id, packet->id, crypto_sign_PUBLICKEYBYTES);
     ret = xsr_tree->search(xsr_tree, &xsr);
     if (ret == 0) {
         log_debug("[signing_response_routine] signing response not expected");
@@ -1314,7 +1314,6 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
         // TODO: parameters may be null, causes segfault
         if (xsr.pkx == NULL || xsr.skx == NULL) {
             log_debug("[signing_response_routine] xsr keys are null");
-            abort();
         }
         ret = crypto_kx_client_session_keys(found_rdev->session_keys->client_rk, found_rdev->session_keys->client_tk,
                                             xsr.pkx, xsr.skx, ((signing_response_data_t *)packet->data)->pkx);
