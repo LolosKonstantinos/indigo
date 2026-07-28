@@ -813,6 +813,7 @@ int init_packet_routine(packet_t *packet, packet_info_t *packet_info, tree_t *de
     }
 
     // search in the tree
+    memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
     ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev);
 
     if (ret == 1) {
@@ -937,13 +938,13 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
         if ((((signing_request_data_t *)packet->data)->timestamp < curr_time - 60) ||
             (((signing_request_data_t *)packet->data)->timestamp > curr_time + 60)) {
 
-            log_info("[packet_handler_thread] signing request rejected due to "
+            log_info("[signing_request_routine] signing request rejected due to "
                      "expired header time stamp");
             return 1;
         }
     }
     else {
-        log_debug("[packet_handler_thread] signing request rejected, invalid signature");
+        log_debug("[signing_request_routine] signing request rejected, invalid signature");
         return 1;
     }
 
@@ -952,13 +953,14 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
                       signing_response_data.signed_nonce, NULL);
     // can fail only dew to wrong usage
     if (ret) {
-        log_fatal("[packet_handler_thread] sign_buffer failed signing a peer signing request nonce "
+        log_fatal("[signing_request_routine] sign_buffer failed signing a peer signing request nonce "
                   "| return %d", -1);
         return -1;
     }
 
 
     // if the peer is verified we don't need to send a signing request
+    memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
     ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev);
     if (ret == 1 && found_rdev->dev_state_flag & RDSF_VERIFIED) {
         // the device is found
@@ -1015,7 +1017,7 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
             free(session_sk);
             session_pk = NULL;
             session_sk = NULL;
-            log_fatal("[packet_handler_thread] malloc failed allocating %d+%d bytes"
+            log_fatal("[signing_request_routine] malloc failed allocating %d+%d bytes"
                       " for session public and private key | return %d",
                       crypto_kx_PUBLICKEYBYTES, crypto_kx_SECRETKEYBYTES, -1);
             return -1;
@@ -1029,7 +1031,7 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
             free(session_sk);
             session_pk = NULL;
             session_sk = NULL;
-            log_fatal("[packet_handler_thread] crypto_kx_keypair() failed creating session keys"
+            log_fatal("[signing_request_routine] crypto_kx_keypair() failed creating session keys"
                       " | return %d", -1);
             return -1;
         }
@@ -1045,6 +1047,7 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
         xsr.pkx = session_pk;
         xsr.skx = session_sk;
 
+
         memcpy(signing_response_data.pkx, session_pk, crypto_kx_PUBLICKEYBYTES);
         signing_response_data.zero = 0;
 
@@ -1057,9 +1060,11 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
             session_pk = NULL;
             session_sk = NULL;
 
-            log_fatal("[packet_handler_thread] xsr_tree insert failed | return %d", -1);
+            log_fatal("[signing_request_routine] xsr_tree insert failed | return %d", -1);
             return -1;
         }
+        if (ret == 0)log_debug("[signing_request_routine] xsr inserted");
+        if (!session_pk || !session_sk) log_debug("[signing_request_routine] keys are null");
     }
 
     build_packet(packet, MSG_SIGNING_RESPONSE, signing_keys->public, NULL, &signing_response_data,
@@ -1069,7 +1074,7 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
                                offsetof(packet_t, data) + offsetof(signing_response_data_t, signature),
                                signing_keys->secret);
     if (ret) {
-        log_fatal("[packet_handler_thread] crypto_sign_detached() failed signing nonce for"
+        log_fatal("[signing_request_routine] crypto_sign_detached() failed signing nonce for"
                   " signing request | return %d", -1);
         return -1;
     }
@@ -1082,7 +1087,7 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
             case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
             case INDIGO_ERROR_INVALID_PARAM:
             case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
-                log_fatal("[packet_handler_thread] send_packet() failed sending "
+                log_fatal("[signing_request_routine] send_packet() failed sending "
                           "signing response| return %d",
                           -1);
                 return -1;
@@ -1094,10 +1099,10 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
             default:
                 break; // winlib errors go here
         }
-        log_debug("[packet_handler_thread] send_packet() failed");
+        log_debug("[signing_request_routine] send_packet() failed");
         return 1;
     }
-    log_debug("[packet_handler_thread] sent signing response");
+    log_debug("[signing_request_routine] sent signing response");
 
     return 0;
 }
@@ -1118,14 +1123,14 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
                                       offsetof(packet_t, data) + offsetof(signing_response_data_t, signature),
                                       packet->id);
     if (ret) {
-        log_debug("[packet_handler_thread] invalid signing response");
+        log_debug("[signing_response_routine] invalid signing response");
         return 1;
     }
     // we don't validate signed time, since there is already a signed nonce to verify
     memcpy(xsr.id, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
     ret = xsr_tree->search(xsr_tree, &xsr);
     if (ret == 0) {
-        log_debug("[packet_handler_thread] signing response not expected");
+        log_debug("[signing_response_routine] signing response not expected");
         return 1; // if there is no expected signing response, there is nothing to process
     }
 
@@ -1133,19 +1138,20 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
     ret = crypto_sign_open(nonce, NULL, ((signing_response_data_t *)packet->data)->signed_nonce,
                            INDIGO_NONCE_SIZE + crypto_sign_BYTES, packet->id);
     if (ret == 1) {
-        log_debug("[packet_handler_thread] failed to verify response, bad signature");
+        log_debug("[signing_response_routine] failed to verify response, bad signature");
         return 1;
     }
 
     // if the nonce signed is the same as the one we sent to be signed
     if (memcmp(xsr.nonce, nonce, INDIGO_NONCE_SIZE) != 0) {
-        log_debug("[packet_handler_thread] failed to verify response, bad nonce");
+        log_debug("[signing_response_routine] failed to verify response, bad nonce");
         return 1;
     }
 
     // the device got verified
     // todo: so we need to create the client and server keys, if we need to sing nonce, we
     // create keys no xsr, otherwise use xsr
+    memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
     ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev);
     /* I am not sure how we could get an expected packet for a device
      * that isn't in the device tree
@@ -1164,7 +1170,7 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
     found_rdev->session_keys = malloc(sizeof(session_keys_t));
     if (found_rdev->session_keys == NULL) {
         tree_unlock(dev_tree);
-        log_fatal("[packet_handler_thread] malloc failed to allocate session_keys]");
+        log_fatal("[signing_response_routine] malloc failed to allocate session_keys]");
         return -1;
     }
     sodium_mlock(found_rdev->session_keys, sizeof(session_keys_t));
@@ -1186,7 +1192,7 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
             free(found_rdev->session_keys);
             found_rdev->session_keys = NULL;
             tree_unlock(dev_tree);
-            log_fatal("[packet_handler_thread] malloc failed allocating %d+%d bytes "
+            log_fatal("[signing_response_routine] malloc failed allocating %d+%d bytes "
                       "for session keys | return %d",
                       crypto_kx_SECRETKEYBYTES, crypto_kx_SECRETKEYBYTES, -1);
             return -1;
@@ -1202,7 +1208,7 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
             sodium_munlock(session_sk, crypto_kx_SECRETKEYBYTES);
             free(session_pk);
             free(session_sk);
-            log_fatal("[packet_handler_thread] kx_keypair failed | return %d", -1);
+            log_fatal("[signing_response_routine] kx_keypair failed | return %d", -1);
             return -1;
         }
 
@@ -1249,7 +1255,7 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
             free(found_rdev->session_keys);
             found_rdev->session_keys = NULL;
             tree_unlock(dev_tree);
-            log_fatal("[packet_handler_thread] crypto_sign failed to sign nonce "
+            log_fatal("[signing_response_routine] crypto_sign failed to sign nonce "
                       "for signing request | return %d",
                       -1);
             return -1;
@@ -1272,7 +1278,7 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
 
         if (ret) {
             tree_unlock(dev_tree);
-            log_fatal("[packet_handler_thread] crypto_sing_detached failed signing"
+            log_fatal("[signing_response_routine] crypto_sing_detached failed signing"
                       " signing response packet | return %d",
                       -1);
             return -1;
@@ -1286,7 +1292,7 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
                 case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
                 case INDIGO_ERROR_INVALID_PARAM:
                 case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
-                    log_fatal("[packet_handler_thread] send_packet failed sending"
+                    log_fatal("[signing_response_routine] send_packet failed sending"
                               " signing response | return &d",
                               -1);
                     return -1;
@@ -1301,11 +1307,15 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
             }
             tree_unlock(dev_tree);
         }
-        log_debug("[packet_handler_thread] sent signing response");
+        log_debug("[signing_response_routine] sent signing response");
     }
     else {
         // create the client and server keys
         // TODO: parameters may be null, causes segfault
+        if (xsr.pkx == NULL || xsr.skx == NULL) {
+            log_debug("[signing_response_routine] xsr keys are null");
+            abort();
+        }
         ret = crypto_kx_client_session_keys(found_rdev->session_keys->client_rk, found_rdev->session_keys->client_tk,
                                             xsr.pkx, xsr.skx, ((signing_response_data_t *)packet->data)->pkx);
         if (ret) {
@@ -1334,7 +1344,7 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
 
     // remove the expected packet
     xsr_tree->remove(xsr_tree, &xsr);
-    log_debug("it's me, hi! Im the problem it's me (verified)");
+    log_debug("[signing_response_routine] device got verified");
 
     return 0;
 }
@@ -1359,7 +1369,7 @@ int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, t
         return 1;
     fsr = malloc(sizeof(Q_FILE_SENDING_REQUEST));
     if (!fsr) {
-        log_fatal("[packet_handler_thread] malloc failed allocating %d bytes for queue"
+        log_fatal("[file_sending_request_routine] malloc failed allocating %d bytes for queue"
                   " file sending request | return %d",
                   -1);
         return -1;
@@ -1372,6 +1382,7 @@ int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, t
     fsr->file_name[NAME_MAX - 1] = '\0';
     fsr->addr = packet_info->address.sin_addr.s_addr;
 
+    memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
     if (dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev)) {
         if (found_rdev->dev_state_flag & KNOWN_KEY_STATUS_TOO_GOOD) {
             // in this case and this case only the user has specified
@@ -1380,7 +1391,7 @@ int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, t
             if (ret) {
                 // todo: create_server_session() uses send_packet() and returns its errors
                 // todo: do more complex error handling
-                log_fatal("[packet_handler_thread] failed to create server session "
+                log_fatal("[file_sending_request_routine] failed to create server session "
                           "| return %d",
                           -1);
                 return -1;
@@ -1584,7 +1595,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *xfp
                     case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
                     case INDIGO_ERROR_INVALID_PARAM:
                     case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
-                        log_fatal("[packet_handler_thread] send_packet failed "
+                        log_fatal("[file_chunk_routine] send_packet failed "
                                   "sending resend packets | return %d",
                                   -1);
                         return -1;
@@ -1612,7 +1623,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *xfp
         if (!range_node) {
             xfp_tree->search_release(xfp_tree);
             session_tree->search_release(session_tree);
-            log_fatal("[packet_handler_thread] malloc failed allocating %d bytes for "
+            log_fatal("[file_chunk_routine] malloc failed allocating %d bytes for "
                       "missing packet range node | return %d",
                       -1);
             return -1;
@@ -1638,7 +1649,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *xfp
                 case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
                 case INDIGO_ERROR_INVALID_PARAM:
                 case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
-                    log_fatal("[packet_handler_thread] send_packet failed "
+                    log_fatal("[file_chunk_routine] send_packet failed "
                               "sending resend packets | return %d",
                               -1);
                     return -1;
@@ -1668,7 +1679,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *xfp
     if (ret_val != PAC_DATA_PAYLOAD_BYTES) {
         xfp_tree->search_release(xfp_tree);
         session_tree->search_release(session_tree);
-        log_fatal("[packet_handler_thread] send_packet fwrite failed writing file chunk "
+        log_fatal("[file_chunk_routine] send_packet fwrite failed writing file chunk "
                   "to file | return %d | errno %d",
                   -1, errno);
         ret = ferror(found_xfp->file);
@@ -1722,10 +1733,9 @@ int resend_routine(packet_t *packet, QUEUE *send_queue, EFLAG *send_flag)
 
     if (packet->magic_number != MAGIC_NUMBER_2)
         return 1;
-    fprintf(stderr, "DEBUG: Resend attempted\n");
     qdata = malloc(sizeof(Q_RESEND_FILE_CHUNK));
     if (qdata == NULL) {
-        log_fatal("[packet_handler_thread] malloc failed allocating %d for queue resend file "
+        log_fatal("[resend_routine] malloc failed allocating %d for queue resend file "
                   "chunk data | return %d",
                   sizeof(Q_RESEND_FILE_CHUNK), -1);
         return -1;
@@ -1738,7 +1748,7 @@ int resend_routine(packet_t *packet, QUEUE *send_queue, EFLAG *send_flag)
     ret = queue_push(send_queue, qdata, QET_RESEND_FILE_CHUNK);
     if (ret) {
         free(qdata);
-        log_fatal("[packet_handler_thread] queue_push failed pushing resend file chunk node to "
+        log_fatal("[resend_routine] queue_push failed pushing resend file chunk node to "
                   "send thread | return %d", -1);
         return -1;
     }
@@ -1753,7 +1763,7 @@ int stop_file_transmission_routine(packet_t *packet, QUEUE *send_queue, EFLAG *s
         return 1;
     qdata = malloc(sizeof(Q_CONTROL_FILE_TRANSMISSION));
     if (qdata == NULL) {
-        log_fatal("[packet_handler_thread] malloc failed allocating %d bytes for queue stop "
+        log_fatal("[stop_file_transmission_routine] malloc failed allocating %d bytes for queue stop "
                   "file transmission data  | return %d",
                   sizeof(Q_CONTROL_FILE_TRANSMISSION), -1);
         return -1;
@@ -1766,7 +1776,7 @@ int stop_file_transmission_routine(packet_t *packet, QUEUE *send_queue, EFLAG *s
     ret = queue_push(send_queue, qdata, QET_STOP_FILE_TRANSMISSION);
     if (ret) {
         free(qdata);
-        log_fatal("[packet_handler_thread] queue_push failed pushing stop file transmission "
+        log_fatal("[stop_file_transmission_routine] queue_push failed pushing stop file transmission "
                   "node to send thread | return %d",-1);
         return -1;
     }
@@ -1781,7 +1791,7 @@ int pause_file_transmission_routine(packet_t *packet, QUEUE *send_queue, EFLAG *
         return 1;
     qdata = malloc(sizeof(Q_CONTROL_FILE_TRANSMISSION));
     if (qdata == NULL) {
-        log_fatal("[packet_handler_thread] malloc failed allocating %d bytes for queue pause "
+        log_fatal("[pause_file_transmission_routine] malloc failed allocating %d bytes for queue pause "
                   "file transmission data  | return %d",
                   sizeof(Q_CONTROL_FILE_TRANSMISSION), -1);
         return -1;
@@ -1794,7 +1804,7 @@ int pause_file_transmission_routine(packet_t *packet, QUEUE *send_queue, EFLAG *
     ret = queue_push(send_queue, qdata, QET_PAUSE_FILE_TRANSMISSION);
     if (ret) {
         free(qdata);
-        log_fatal("[packet_handler_thread] queue_push failed pushing pause file transmission "
+        log_fatal("[pause_file_transmission_routine] queue_push failed pushing pause file transmission "
                   "node to send thread | return %d",-1);
         return -1;
     }
@@ -1809,7 +1819,7 @@ int continue_file_transmission_routine(packet_t *packet, QUEUE *send_queue, EFLA
         return 1;
     qdata = malloc(sizeof(Q_CONTROL_FILE_TRANSMISSION));
     if (qdata == NULL) {
-        log_fatal("[packet_handler_thread] malloc failed allocating %d bytes for queue "
+        log_fatal("[continue_file_transmission_routine] malloc failed allocating %d bytes for queue "
                   "continue file transmission data  | return %d",
                   sizeof(Q_CONTROL_FILE_TRANSMISSION), -1);
         return -1;
@@ -1822,7 +1832,7 @@ int continue_file_transmission_routine(packet_t *packet, QUEUE *send_queue, EFLA
     ret = queue_push(send_queue, qdata, QET_CONTINUE_FILE_TRANSMISSION);
     if (ret) {
         free(qdata);
-        log_fatal("[packet_handler_thread] queue_push failed pushing continue file "
+        log_fatal("[continue_file_transmission_routine] queue_push failed pushing continue file "
                   "transmission node to send thread | return %d",-1);
         return -1;
     }
