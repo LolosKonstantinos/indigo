@@ -1795,12 +1795,18 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
         file_name = g_utf8_make_valid(fsr->file_name, NAME_MAX);
         if (!file_name) {
             tree_unlock(dev_tree);
+            for (int k = 0; k < count; ++k) {
+                free((*requests_list)[k]);
+            }
+            free(*requests_list);
+            *requests_list = NULL;
+            *request_count = 0;
             return -1;
         }
         mvwprintw(win, ++y, 0, "%s ", file_name);
 
         file_size = fsr->file_size;
-        for (i = 0; i < 7; ++i) {
+        for (i = 0; i < 6; ++i) {
             if (file_size >> 10 != 0)
                 file_size >>= 10;
             else
@@ -1812,13 +1818,13 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
 
         // add the device to the id array
         ++count;
-        temp = realloc(requests_list, count * sizeof(unsigned char *));
+        temp = realloc(*requests_list, count * sizeof(unsigned char *));
         if (!temp) {
             tree_unlock(dev_tree);
             for (i = 0; i < count - 1; ++i) {
-                free(requests_list[i]);
+                free((*requests_list)[i]);
             }
-            free(requests_list);
+            free(*requests_list);
             *requests_list = NULL;
             *file_list = NULL;
             *request_count = 0;
@@ -1827,14 +1833,14 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
                       count * sizeof(unsigned char));
             return -1;
         }
-        requests_list = temp;
+        *requests_list = temp;
         temp = malloc(crypto_sign_PUBLICKEYBYTES);
         if (!temp) {
             tree_unlock(dev_tree);
             for (int j = 0; j < count - 1; ++j) {
-                free(requests_list[j]);
+                free((*requests_list)[j]);
             }
-            free(requests_list);
+            free(*requests_list);
             *requests_list = NULL;
             *file_list = NULL;
             *request_count = 0;
@@ -1842,7 +1848,7 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
             log_error("malloc failed allocating %d bytes for device id | return -1", crypto_sign_PUBLICKEYBYTES);
             return -1;
         }
-        requests_list[count] = temp;
+        (*requests_list)[count - 1] = temp;
         memcpy(temp, fsr->id, crypto_sign_PUBLICKEYBYTES);
     }
     tree_unlock(dev_tree);
@@ -1874,35 +1880,35 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
             mvwprintw(win, ++y, 0, "%s [%s]", file->name, directions[file->direction]);
             // add the device to the id array
             ++count;
-            temp = realloc(file_list, count * sizeof(unsigned char *));
+            temp = realloc(*file_list, count * sizeof(unsigned char *));
             if (!temp) {
                 free_tree_iterator(&iter);
                 tree_unlock(active_files);
                 for (int j = 0; j < count - 1; ++j) {
-                    free(file_list[j]);
+                    free((*file_list)[j]);
                 }
-                free(file_list);
+                free(*file_list);
                 *file_list = NULL;
                 *file_count = 0;
                 log_error("realloc() failed allocating %lld bytes for request list | return -1",
                           count * sizeof(unsigned char));
                 return -1;
             }
-            file_list = temp;
+            *file_list = temp;
             temp = malloc(crypto_sign_PUBLICKEYBYTES);
             if (!temp) {
                 free_tree_iterator(&iter);
                 tree_unlock(active_files);
                 for (int j = 0; j < count - 1; ++j) {
-                    free(file_list[j]);
+                    free((*file_list)[j]);
                 }
-                free(file_list);
+                free(*file_list);
                 *file_list = NULL;
                 *file_count = 0;
                 log_error("malloc failed allocating %d bytes for device id | return -1", crypto_sign_PUBLICKEYBYTES);
                 return -1;
             }
-            file_list[count - 1] = temp;
+            (*file_list)[count - 1] = temp;
             memcpy(temp, file->id.pk, crypto_sign_PUBLICKEYBYTES);
         }
     }
