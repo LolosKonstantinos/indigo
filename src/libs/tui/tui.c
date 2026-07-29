@@ -948,12 +948,15 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
                 else if (file_last_level == 1) {
                     log_debug("[create_main_interface] selected serial %llu", request_list[file_last_row]);
                     fwd_packet = malloc(sizeof(fwd_packet_t));
-                    if (fwd_packet == NULL) {
+                    if (fwd_packet == NULL || file_sending_request_data == NULL) {
                         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                         log_error("malloc() failed allocating %d bytes for queue node data"
                                   " fwd_packet_t | return %d", sizeof(fwd_packet_t), ret);
                         goto cleanup;
                     }
+                    build_packet(&(fwd_packet->packet), MSG_FILE_SENDING_RESPONSE, pk, NULL, NULL, 0);
+                    file_sending_request_data = (file_sending_request_data_t *)fwd_packet->packet.data;
+                    memcpy(rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);
                     ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&rdev_p);
                     if (ret == 1 && rdev_p->session_keys != NULL) {
                         fwd_packet->address = rdev_p->ip;
