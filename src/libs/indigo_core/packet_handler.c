@@ -325,6 +325,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 xfp.file = qe->file;
                 xfp.expiration_time = time(NULL);
                 xfp.packet_count = XFP_CLIENT_FILE;
+                log_debug("[packet_handler_thread] expecting response for %llu", qe->session_id.serial);
                 free(node->data);
                 destroy_qnode(node);
                 node = NULL;
@@ -338,7 +339,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                               *process_return);
                     goto cleanup;
                 }
-                log_debug("[packet_handler_thread] expecting response for %llu", qe->session_id.serial);
+
+                log_debug("[packet_handler_thread] expecting response success");
             }
             else {
                 // probably an error but good to check
