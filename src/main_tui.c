@@ -69,6 +69,8 @@ int main(int argc, char *argv[])
     QUEUE *manager_queue = NULL;
 
     EFLAG *send_flag = NULL;
+    EFLAG *ph_flag = NULL;
+    EFLAG *ui_flag = NULL;
 
     MANAGER_ARGS *manager_args;
     pthread_t manager_tid;
@@ -198,18 +200,34 @@ int main(int argc, char *argv[])
         goto cleanup;
     }
 
+    ui_flag = create_event_flag();
+    if (ui_flag == NULL) {
+        log_error("[main] create_event_flag() failed");
+        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        goto cleanup;
+    }
+
     send_flag = create_event_flag();
     if (send_flag == NULL) {
         log_error( "[main] create_event_flag() failed | return 1");
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
+    ph_flag = create_event_flag();
+    if (ph_flag == NULL) {
+        free_event_flag(send_flag);
+        log_error( "[main] create_event_flag() failed | return 1");
+        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        goto cleanup;
+    }
+
+
 
     inet_pton(AF_INET, MULTICAST_ADDR, &multicast_addr);
     port = PORT;
 
     ret = create_thread_manager_thread(&manager_args, master_key, port, multicast_addr, device_tree, known_key_tree,
-                                       ui_queue, ph_queue, send_queue, send_flag, manager_queue, &manager_tid);
+                                       ui_queue, ph_queue, send_queue, send_flag, ph_flag, manager_queue, &manager_tid);
     if (ret != INDIGO_SUCCESS) {
         free_event_flag(send_flag);
         destroy_queue(manager_queue);
@@ -241,7 +259,8 @@ int main(int argc, char *argv[])
     init_pair(12, COLOR_BLUE, COLOR_WHITE);
     init_pair(12, COLOR_BLACK, COLOR_WHITE);
 
-    create_main_interface(device_tree, file_tree, known_key_tree, ui_queue, ph_queue, send_queue, pk, send_flag);
+    create_main_interface(device_tree, file_tree, known_key_tree, ui_queue, ph_queue, send_queue, pk, send_flag,
+                          ph_flag);
 
     endwin();
     destroy_queue(ui_queue);
@@ -249,6 +268,7 @@ int main(int argc, char *argv[])
     free_tree(file_tree);
     free_tree(device_tree);
     free_tree(known_key_tree);
+    free_event_flag(ui_flag);
     return ret;
 
 cleanup:
@@ -261,5 +281,6 @@ cleanup:
     free_tree(file_tree);
     free_tree(device_tree);
     free_tree(known_key_tree);
+    free_event_flag(ui_flag);
     return ret;
 }

@@ -317,6 +317,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 node = NULL;
             }
             else if (node->type == QET_EXPECT_SEND_RESPONSE) {
+                log_debug("[packet_handler_thread] received expect send response via queue");
                 Q_EXPECT_SEND_RESPONSE *qe = (Q_EXPECT_SEND_RESPONSE *)node->data;
                 // we sent a request to send a file, and we expect a response to that request
                 memset(&xfp, 0, sizeof(xfp_t));
@@ -328,6 +329,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 destroy_qnode(node);
                 node = NULL;
 
+
                 ret = xfp_tree->insert(xfp_tree, &xfp);
                 if (ret) {
                     fclose(xfp.file);
@@ -336,6 +338,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                               *process_return);
                     goto cleanup;
                 }
+                log_debug("[packet_handler_thread] expecting response for %llu", qe->session_id.serial);
             }
             else {
                 // probably an error but good to check
@@ -1381,14 +1384,17 @@ int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, t
     memcpy(fsr->id, packet->id, crypto_sign_PUBLICKEYBYTES);
     fsr->file_size = data->file_size;
     memcpy(fsr->file_name, data->file_name, NAME_MAX);
-    fsr->file_name[NAME_MAX - 1] = '\0';
+    fsr->file_name[NAME_MAX] = '\0';
     fsr->addr = packet_info->address.sin_addr.s_addr;
+    fsr->serial = data->serial;
+    fsr->expiration_time = time(NULL);
 
     memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
     if (dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev)) {
         if (found_rdev->dev_state_flag & KNOWN_KEY_STATUS_TOO_GOOD) {
             // in this case and this case only the user has specified
             // that this peer does not need approval
+            tree_unlock(dev_tree);
             ret = create_server_session(fsr, dev_tree, session_tree, xfp_tree, signing_keys->public, sockets, flag);
             if (ret) {
                 // todo: create_server_session() uses send_packet() and returns its errors
@@ -1398,7 +1404,7 @@ int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, t
                           -1);
                 return -1;
             }
-            return 1;
+            return 0;
         }
         if (found_rdev->fsr_count == MAX_SEND_REQUEST_COUNT) {
             // remove the last request

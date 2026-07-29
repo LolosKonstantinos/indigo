@@ -29,7 +29,7 @@ SOFTWARE.
 #include <config.h>
 #include <glib-2.0/glib.h>
 #include <glib-2.0/glib/gstdio.h>
-//#include <ncursesw/curses.h>
+// #include <ncursesw/curses.h>
 #include <curses.h>
 #include <pthread.h>
 #include <sodium/crypto_sign.h>
@@ -586,7 +586,8 @@ int get_user_input(WINDOW *win, utf8_char_t *input)
 }
 
 int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key_tree, QUEUE *ui_queue, QUEUE *ph_queue,
-                          QUEUE *send_queue, unsigned char pk[crypto_sign_PUBLICKEYBYTES], EFLAG *send_flag)
+                          QUEUE *send_queue, unsigned char pk[crypto_sign_PUBLICKEYBYTES], EFLAG *send_flag,
+                          EFLAG *ph_flag)
 {
     tree_iterator_t *dev_iter;
     WINDOW *device_pad;
@@ -605,7 +606,9 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
     Q_FILE_SENDING_REQUEST *fsr = NULL;
     Q_EXPECT_SEND_RESPONSE *esr = NULL;
     fwd_packet_t *fwd_packet = NULL;
+    fwd_fsr_t *fwd = NULL;
     file_sending_request_data_t *file_sending_request_data = NULL;
+    file_sending_response_data_t *file_sending_response_data = NULL;
     unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
 
     remote_device_t rdev;
@@ -618,9 +621,9 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
 
     char selected_path[PATH_MAX];
 
-    unsigned char **request_list = NULL;
+    uint64_t *request_list = NULL;
     int request_count = 0;
-    unsigned char **file_list = NULL;
+    uint64_t *file_list = NULL;
     int file_count = 0;
 
     int file_last_row = 0;
@@ -644,7 +647,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
 
     keypad(device_pad, TRUE);
     curs_set(0);
-    halfdelay(10);
+    halfdelay(1);
 
     pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
 
@@ -818,12 +821,12 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
                             goto cleanup;
                         }
                         if (ret == 1) {
-                            halfdelay(10);
+                            halfdelay(1);
                             curs_set(0);
                             continue;
                         }
                         if (ret == 0) {
-                            halfdelay(10);
+                            halfdelay(1);
                             curs_set(0);
                             // send this to the queue
                             fwd_packet = malloc(sizeof(fwd_packet_t));
@@ -842,7 +845,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
                                           sizeof(Q_SEND_FILE), ret);
                                 goto cleanup;
                             }
-                            esr->file = fopen(selected_path,"r");
+                            esr->file = fopen(selected_path, "r");
                             if (esr->file == NULL) {
                                 free(fwd_packet);
                                 free(esr);
@@ -856,8 +859,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
                             memcpy(esr->session_id.pk, last_id, crypto_sign_PUBLICKEYBYTES);
 
                             randombytes(nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
-                            build_packet(&(fwd_packet->packet), MSG_FILE_SENDING_REQUEST,
-                                                            pk, nonce,NULL,0);
+                            build_packet(&(fwd_packet->packet), MSG_FILE_SENDING_REQUEST, pk, nonce, NULL, 0);
 
                             memcpy(rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);
 
@@ -877,7 +879,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
                                 esr->session_id.serial = ++(rdev_p->last_fid);
                                 file_sending_request_data->serial = esr->session_id.serial;
 
-                                encrypt_packet(&(fwd_packet->packet), rdev_p->session_keys->client_tk,nonce);
+                                encrypt_packet(&(fwd_packet->packet), rdev_p->session_keys->client_tk, nonce);
                             }
                             else {
                                 tree_unlock(dev_tree);
@@ -889,7 +891,6 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
                             }
                             dev_tree->search_release(dev_tree);
 
-
                             ret = queue_push(send_queue, fwd_packet, QET_SEND_PACKET);
                             if (ret) {
                                 free(fwd_packet);
@@ -900,7 +901,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
                                 goto cleanup;
                             }
                             set_event_flag(send_flag, EF_CHECK_QUEUE);
-                            ret = queue_push(ph_queue, esr,QET_EXPECT_SEND_RESPONSE);
+                            ret = queue_push(ph_queue, esr, QET_EXPECT_SEND_RESPONSE);
                             if (ret) {
                                 free(fwd_packet);
                                 free(esr);
@@ -909,6 +910,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
                                 log_error("queue_push() failed | return %d", ret);
                                 goto cleanup;
                             }
+                            set_event_flag(ph_flag, EF_CHECK_QUEUE);
                             fwd_packet = NULL;
                             log_debug("[create_main_interface] pushed to queue esr and send_packet");
                         }
@@ -930,30 +932,90 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
                                 break;
                         }
                         ret = edit_known_key(known_key_tree, last_id, status);
-                        if (ret == 0){
+                        if (ret == 0) {
                             memcpy(rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);
                             ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&rdev_p);
                             if (ret) {
-                                rdev_p->dev_state_flag &= ~(KNOWN_KEY_STATUS_GOOD |
-                                                            KNOWN_KEY_STATUS_TOO_GOOD |
-                                                            KNOWN_KEY_STATUS_BAD |
-                                                            KNOWN_KEY_STATUS_UNKNOWN |
-                                                            KNOWN_KEY_STATUS_EVIL_AND_SINISTER);
+                                rdev_p->dev_state_flag &=
+                                    ~(KNOWN_KEY_STATUS_GOOD | KNOWN_KEY_STATUS_TOO_GOOD | KNOWN_KEY_STATUS_BAD |
+                                      KNOWN_KEY_STATUS_UNKNOWN | KNOWN_KEY_STATUS_EVIL_AND_SINISTER);
                                 rdev_p->dev_state_flag |= status;
                             }
                             tree_unlock(dev_tree);
                         }
                     }
                 }
-                // TODO: HUGE TODO
                 else if (file_last_level == 1) {
+                    log_debug("[create_main_interface] selected serial %llu", request_list[file_last_level]);
+                    fwd_packet = malloc(sizeof(fwd_packet_t));
+                    if (fwd_packet == NULL) {
+                        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                        log_error("malloc() failed allocating %d bytes for queue node data"
+                                  " fwd_packet_t | return %d", sizeof(fwd_packet_t), ret);
+                        goto cleanup;
+                    }
+                    ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&rdev_p);
+                    if (ret == 1 && rdev_p->session_keys != NULL) {
+                        fwd_packet->address = rdev_p->ip;
+                        fwd_packet->port = PORT;
+                        file_sending_response_data->serial = request_list[file_last_level];
+
+                        encrypt_packet(&(fwd_packet->packet), rdev_p->session_keys->client_tk, nonce);
+
+                        fwd = NULL;
+                        for (fwd_fsr_t *f = rdev_p->fsr_list; f != NULL; f = f->next) {
+                            if (f->serial == request_list[file_last_level]) {
+                                if (fwd == NULL) {
+                                    rdev_p->fsr_list = f->next;
+                                }
+                                else {
+                                    fwd->next = f->next;
+                                }
+                                fwd = f;
+                                break;
+                            }
+                            fwd = f;
+                        }
+                        if (fwd == NULL) {
+                            free(fwd_packet);
+                            fwd_packet = NULL;
+                            log_warn("queue_push() failed | return %d", ret);
+                            continue;
+                        }
+                    }
+                    else {
+                        tree_unlock(dev_tree);
+                        free(fwd_packet);
+                        fwd_packet = NULL;
+                        continue;
+                    }
+                    dev_tree->search_release(dev_tree);
+
+                    ret = queue_push(send_queue, fwd_packet, QET_SEND_PACKET);
+                    if (ret) {
+                        free(fwd_packet);
+                        fwd_packet = NULL;
+                        log_error("queue_push() failed | return %d", ret);
+                        goto cleanup;
+                    }
+                    set_event_flag(send_flag, EF_CHECK_QUEUE);
+                    ret = queue_push(ph_queue, fwd, QET_SESSION_START);
+                    if (ret) {
+                        free(fwd_packet);
+                        fwd_packet = NULL;
+                        log_error("queue_push() failed | return %d", ret);
+                        goto cleanup;
+                    }
+                    set_event_flag(ph_flag, EF_CHECK_QUEUE);
+                    fwd_packet = NULL;
+                    log_debug("[create_main_interface] pushed to queue fsr and send_packet");
                 }
             }
             else if (ch == ' ' && context == 1 && file_last_level == 2) {
                 // pause files
             }
             else if (ch == 's') {
-                //switch context
+                // switch context
                 context = context == 1 ? 0 : 1;
             }
         }
@@ -977,17 +1039,11 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
         }
         else {
             if (request_list != NULL) {
-                for (int i = 0; i < request_count; ++i) {
-                    free(request_list[i]);
-                }
                 free(request_list);
                 request_list = NULL;
             }
 
             if (file_list != NULL) {
-                for (int i = 0; i < file_count; ++i) {
-                    free(file_list[i]);
-                }
                 free(file_list);
                 file_list = NULL;
             }
@@ -1006,15 +1062,9 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
         free(dev_IDs);
     }
     if (file_list != NULL) {
-        for (int i = 0; i < file_count; ++i) {
-            free(file_list[i]);
-        }
         free(file_list);
     }
     if (request_list != NULL) {
-        for (int i = 0; i < request_count; ++i) {
-            free(request_list[i]);
-        }
         free(request_list);
     }
     delwin(device_pad);
@@ -1028,15 +1078,9 @@ cleanup:
         free(dev_IDs);
     }
     if (file_list != NULL) {
-        for (int i = 0; i < file_count; ++i) {
-            free(file_list[i]);
-        }
         free(file_list);
     }
     if (request_list != NULL) {
-        for (int i = 0; i < request_count; ++i) {
-            free(request_list[i]);
-        }
         free(request_list);
     }
     delwin(device_pad);
@@ -1584,7 +1628,7 @@ int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_
         ++count;
 
         if (highlight) {
-            //this is in case last device got removed
+            // this is in case last device got removed
             memcpy(last_id, rdev->peer_pk, crypto_sign_PUBLICKEYBYTES);
         }
 
@@ -1730,7 +1774,7 @@ int print_device(WINDOW *win, remote_device_t *rdev, int row, char highlight)
 }
 
 int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree_t *active_files,
-                       unsigned char ***requests_list, int *request_count, unsigned char ***file_list, int *file_count,
+                       uint64_t **requests_list, int *request_count, uint64_t **file_list, int *file_count,
                        int *last_row, char *level)
 {
     int ret;
@@ -1748,11 +1792,16 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
     remote_device_t *found_rdev;
     tree_iterator_t *iter;
     ui_file_t *file;
+    uint64_t *tmp_requests_list = NULL;
+    uint64_t *tmp_file_list = NULL;
 
     if (!win || !dev_tree || !active_files || !requests_list || !file_list || !request_count || !file_count ||
         !last_row || !level) {
         return -1;
     }
+
+    tmp_requests_list = *requests_list;
+    tmp_file_list = *file_list;
 
     memcpy(rdev.peer_pk, id, crypto_sign_PUBLICKEYBYTES);
     ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev);
@@ -1792,13 +1841,10 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
     mvwprintw(win, ++y, 0, "[requests]");
     temp_row = y;
     for (fwd_fsr_t *fsr = found_rdev->fsr_list; fsr != NULL; fsr = fsr->next) {
-        file_name = g_utf8_make_valid(fsr->file_name, NAME_MAX);
+        file_name = g_utf8_make_valid(fsr->file_name, -1);
         if (!file_name) {
             tree_unlock(dev_tree);
-            for (int k = 0; k < count; ++k) {
-                free((*requests_list)[k]);
-            }
-            free(*requests_list);
+            free(tmp_requests_list);
             *requests_list = NULL;
             *request_count = 0;
             return -1;
@@ -1818,40 +1864,23 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
 
         // add the device to the id array
         ++count;
-        temp = realloc(*requests_list, count * sizeof(unsigned char *));
+        temp = realloc(tmp_requests_list, count * sizeof(uint64_t));
         if (!temp) {
             tree_unlock(dev_tree);
-            for (i = 0; i < count - 1; ++i) {
-                free((*requests_list)[i]);
-            }
-            free(*requests_list);
+            free(tmp_requests_list);
             *requests_list = NULL;
             *file_list = NULL;
             *request_count = 0;
             *file_count = 0;
             log_error("realloc() failed allocating %lld bytes for request list | return -1",
-                      count * sizeof(unsigned char));
+                      count * sizeof(uint64_t));
             return -1;
         }
-        *requests_list = temp;
-        temp = malloc(crypto_sign_PUBLICKEYBYTES);
-        if (!temp) {
-            tree_unlock(dev_tree);
-            for (int j = 0; j < count - 1; ++j) {
-                free((*requests_list)[j]);
-            }
-            free(*requests_list);
-            *requests_list = NULL;
-            *file_list = NULL;
-            *request_count = 0;
-            *file_count = 0;
-            log_error("malloc failed allocating %d bytes for device id | return -1", crypto_sign_PUBLICKEYBYTES);
-            return -1;
-        }
-        (*requests_list)[count - 1] = temp;
-        memcpy(temp, fsr->id, crypto_sign_PUBLICKEYBYTES);
+        tmp_requests_list = temp;
+        tmp_requests_list[count - 1] = fsr->serial;
     }
     tree_unlock(dev_tree);
+    *requests_list = tmp_requests_list;
     *request_count = count;
 
     if (*level == 1) {
@@ -1880,40 +1909,25 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
             mvwprintw(win, ++y, 0, "%s [%s]", file->name, directions[file->direction]);
             // add the device to the id array
             ++count;
-            temp = realloc(*file_list, count * sizeof(unsigned char *));
+            temp = realloc(tmp_file_list, count * sizeof(uint64_t));
             if (!temp) {
                 free_tree_iterator(&iter);
                 tree_unlock(active_files);
-                for (int j = 0; j < count - 1; ++j) {
-                    free((*file_list)[j]);
-                }
-                free(*file_list);
+                free(tmp_file_list);
                 *file_list = NULL;
                 *file_count = 0;
                 log_error("realloc() failed allocating %lld bytes for request list | return -1",
-                          count * sizeof(unsigned char));
+                          count * sizeof(unsigned char *));
                 return -1;
             }
-            *file_list = temp;
-            temp = malloc(crypto_sign_PUBLICKEYBYTES);
-            if (!temp) {
-                free_tree_iterator(&iter);
-                tree_unlock(active_files);
-                for (int j = 0; j < count - 1; ++j) {
-                    free((*file_list)[j]);
-                }
-                free(*file_list);
-                *file_list = NULL;
-                *file_count = 0;
-                log_error("malloc failed allocating %d bytes for device id | return -1", crypto_sign_PUBLICKEYBYTES);
-                return -1;
-            }
-            (*file_list)[count - 1] = temp;
-            memcpy(temp, file->id.pk, crypto_sign_PUBLICKEYBYTES);
+            tmp_file_list = temp;
+
+            tmp_file_list[count - 1] = file->id.serial;
         }
     }
     free_tree_iterator(&iter);
     tree_unlock(active_files);
+    *file_list = tmp_file_list;
     *file_count = count;
     if (*level == 2) {
         if (count > 0 && *last_row > count - 1) {

@@ -49,23 +49,23 @@ int load_username(char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1])
     char filename[PATH_MAX];
 
     get_source_dir(filename);
-    strcat(filename, "/"INDIGO_USER_DIR);
+    strcat(filename, "/" INDIGO_USER_DIR);
     g_mkdir_with_parents(filename, 0755);
-    strcat(filename, "/"INDIGO_USERNAME_FILE_NAME);
+    strcat(filename, "/" INDIGO_USERNAME_FILE_NAME);
 
     if (access(filename, F_OK)) {
-        //if the file does not exist we create it
+        // if the file does not exist we create it
         log_warn("[load_username] username file does not exist and thus it is created");
         file_descriptor = open(filename, O_RDWR | O_CREAT, S_IRUSR + S_IWUSR + S_IRGRP + S_IWGRP + S_IROTH);
         if (file_descriptor == -1) {
-            log_error("[load_username] failed to open file %s as username file | return %d | errno %d",
-                filename , INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
+            log_error("[load_username] failed to open file %s as username file | return %d | errno %d", filename,
+                      INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
             return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
         }
-        fp = fdopen(file_descriptor,"r+");
+        fp = fdopen(file_descriptor, "r+");
         if (!fp) {
-            log_error("[load_username] failed to open file %s as username file | return %d | errno %d",
-                filename , INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
+            log_error("[load_username] failed to open file %s as username file | return %d | errno %d", filename,
+                      INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
             close(file_descriptor);
             return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
         }
@@ -73,8 +73,8 @@ int load_username(char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1])
     else {
         fp = fopen(filename, "r+");
         if (!fp) {
-            log_error("[load_username] failed to open file %s as username file | return %d | errno %d",
-                filename , INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
+            log_error("[load_username] failed to open file %s as username file | return %d | errno %d", filename,
+                      INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
             return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
         }
     }
@@ -84,7 +84,7 @@ int load_username(char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1])
 
     if (size == 0) {
         strcpy(username, "FAT_AND_UGLY");
-        fprintf(fp, "%s",username);
+        fprintf(fp, "%s", username);
         log_info("[load_username] user probably tried to delete username, "
                  "they shouldn't mess with config dir if they can't do it right");
         fclose(fp);
@@ -98,7 +98,8 @@ int load_username(char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1])
     ret = fread(username, 1, MAX_USERNAME_LEN * sizeof(uint32_t), fp);
     if (ret != size) {
         fclose(fp);
-        log_error("[load_username] fread read less bytes than username file | return %d | errno %d", INDIGO_ERROR, errno);
+        log_error("[load_username] fread read less bytes than username file | return %d | errno %d", INDIGO_ERROR,
+                  errno);
         return INDIGO_ERROR;
         // todo: handle error better
     }
@@ -106,7 +107,7 @@ int load_username(char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1])
     fclose(fp);
     return 0;
 }
-int validate_username(char username[MAX_USERNAME_LEN  * sizeof(uint32_t) +1 ])
+int validate_username(char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1])
 {
     return g_utf8_validate(username, MAX_USERNAME_LEN * sizeof(uint32_t), NULL);
 }
@@ -114,7 +115,7 @@ int sanitize_username(char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1])
 {
     char *valid_username;
     username[MAX_USERNAME_LEN * sizeof(uint32_t)] = '\0';
-    valid_username = g_utf8_make_valid(username,  -1);
+    valid_username = g_utf8_make_valid(username, -1);
     if (!valid_username) {
         log_error("[sanitize_username] g_utf8_make_valid() failed. probably not enough memory");
         return -1;
@@ -130,7 +131,7 @@ int sanitize_username(char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1])
     return 0;
 }
 
-int set_username(char username[MAX_USERNAME_LEN  * sizeof(uint32_t) + 1])
+int set_username(char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1])
 {
     FILE *fp = NULL;
     size_t ret;
@@ -140,15 +141,16 @@ int set_username(char username[MAX_USERNAME_LEN  * sizeof(uint32_t) + 1])
 
     fp = fopen(strcat(filename, INDIGO_USERNAME_FILE_NAME), "wb");
     if (!fp) {
-        log_error("[set_username] failed to open file %s as username file | return %d | errno %d",
-            filename, INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
+        log_error("[set_username] failed to open file %s as username file | return %d | errno %d", filename,
+                  INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
         return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
     }
     username[MAX_USERNAME_LEN * sizeof(uint32_t)] = '\0';
 
     ret = fwrite(username, 1, strlen(username) + 1, fp);
     if (ret != strlen(username) + 1) {
-        log_error("[set_username] failed to write username (%s) to file | return %d | errno %d", username, INDIGO_ERROR, errno);
+        log_error("[set_username] failed to write username (%s) to file | return %d | errno %d", username, INDIGO_ERROR,
+                  errno);
         fclose(fp);
         return INDIGO_ERROR;
         // todo: handle error better
@@ -171,25 +173,27 @@ int load_known_keys(tree_t *known_keys)
     }
 
     get_source_dir(file_name);
-    file_name[PATH_MAX -1] = '\0';
-    strncat(file_name, "/"INDIGO_CONFIG_DIR, PATH_MAX - strlen(file_name));
+    file_name[PATH_MAX - 1] = '\0';
+    strncat(file_name, "/" INDIGO_CONFIG_DIR, PATH_MAX - strlen(file_name));
     g_mkdir_with_parents(file_name, 0755);
-    strncat(file_name, "/"INDIGO_KNOWN_KEYS_FILE_NAME, PATH_MAX - strlen(file_name));
+    strncat(file_name, "/" INDIGO_KNOWN_KEYS_FILE_NAME, PATH_MAX - strlen(file_name));
     if (access(file_name, F_OK)) {
-        log_warn("[load_known_keys] known key file was not found | return %d | errno %d",
-            INDIGO_ERROR_FILE_NOT_FOUND, errno);
+        log_warn("[load_known_keys] known key file was not found | return %d | errno %d", INDIGO_ERROR_FILE_NOT_FOUND,
+                 errno);
         return INDIGO_ERROR_FILE_NOT_FOUND;
     }
 
     fp_kkeys = fopen(file_name, "r");
     if (!fp_kkeys) {
-        log_error("[load_known_keys] failed to open file %s | return %d | errno %d", file_name, INDIGO_ERROR_FILE_NOT_FOUND, errno);
+        log_error("[load_known_keys] failed to open file %s | return %d | errno %d", file_name,
+                  INDIGO_ERROR_FILE_NOT_FOUND, errno);
         return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
     }
 
     while (ret = fread(&known_key, sizeof(known_key_t), 1, fp_kkeys), ret == 1) {
         ret = known_keys->insert(known_keys, &known_key);
-        if (ret == 0) debug_count++;
+        if (ret == 0)
+            debug_count++;
     }
     fclose(fp_kkeys);
     log_debug("[load_known_keys] loaded %llu keys", debug_count);
@@ -210,12 +214,13 @@ int save_known_key(unsigned char key[crypto_sign_PUBLICKEYBYTES], const uint64_t
     known_key_t kk = {0};
 
     get_source_dir(file_name);
-    file_name[PATH_MAX -1] = '\0';
-    strncat(file_name, "/"INDIGO_CONFIG_DIR"/"INDIGO_KNOWN_KEYS_FILE_NAME, PATH_MAX - strlen(file_name));
+    file_name[PATH_MAX - 1] = '\0';
+    strncat(file_name, "/" INDIGO_CONFIG_DIR "/" INDIGO_KNOWN_KEYS_FILE_NAME, PATH_MAX - strlen(file_name));
 
     fp = fopen(file_name, "a");
     if (!fp) {
-        log_error("[save_known_key] failed to open file %s | return %d | errno %d", file_name, INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
+        log_error("[save_known_key] failed to open file %s | return %d | errno %d", file_name,
+                  INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
         return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
     }
     memcpy(kk.key, key, crypto_sign_PUBLICKEYBYTES);
@@ -270,24 +275,23 @@ int edit_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBY
     found_key->status = status;
     known_keys->search_release(known_keys);
 
-
     // edit the file
     file_name[0] = '\0';
     get_source_dir(file_name);
-    strcat(file_name, "/"INDIGO_CONFIG_DIR"/"INDIGO_KNOWN_KEYS_FILE_NAME);
+    strcat(file_name, "/" INDIGO_CONFIG_DIR "/" INDIGO_KNOWN_KEYS_FILE_NAME);
 
     if (access(file_name, F_OK)) {
-        //if the file does not exist we create it
+        // if the file does not exist we create it
         file_descriptor = open(file_name, O_RDWR | O_CREAT, S_IRUSR + S_IWUSR + S_IRGRP + S_IWGRP + S_IROTH);
         if (file_descriptor == -1) {
-            log_error("[edit_known_key] failed to open file %s as known keys file | return %d | errno %d",
-                file_name , INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
+            log_error("[edit_known_key] failed to open file %s as known keys file | return %d | errno %d", file_name,
+                      INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
             return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
         }
-        fp = fdopen(file_descriptor,"r+");
+        fp = fdopen(file_descriptor, "r+");
         if (!fp) {
-            log_error("[edit_known_key] failed to open file %s as known keys file | return %d | errno %d",
-                file_name , INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
+            log_error("[edit_known_key] failed to open file %s as known keys file | return %d | errno %d", file_name,
+                      INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
             close(file_descriptor);
             return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
         }
@@ -295,8 +299,8 @@ int edit_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBY
     else {
         fp = fopen(file_name, "r+");
         if (!fp) {
-            log_error("[edit_known_key] failed to open file %s as known keys file | return %d | errno %d",
-                file_name , INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
+            log_error("[edit_known_key] failed to open file %s as known keys file | return %d | errno %d", file_name,
+                      INDIGO_ERROR_CAN_NOT_OPEN_FILE, errno);
             return INDIGO_ERROR_CAN_NOT_OPEN_FILE;
         }
     }
@@ -315,7 +319,8 @@ int edit_known_key(tree_t *known_keys, unsigned char key[crypto_sign_PUBLICKEYBY
             ret = fwrite(&status, sizeof(uint64_t), 1, fp);
             if (ret != 1) {
                 fclose(fp);
-                log_error("[edit_known_key] failed to write known key status to file | return %d | errno %d", INDIGO_ERROR, errno);
+                log_error("[edit_known_key] failed to write known key status to file | return %d | errno %d",
+                          INDIGO_ERROR, errno);
                 return INDIGO_ERROR;
             }
             break;
@@ -354,7 +359,8 @@ int get_source_dir(char path[PATH_MAX])
     }
     xpath[ret] = '\0';
     dir = g_path_get_dirname(xpath);
-    if (!dir) return -1;
+    if (!dir)
+        return -1;
     strncpy(path, dir, PATH_MAX - 1);
     g_free(dir);
     path[PATH_MAX - 1] = '\0';
@@ -419,4 +425,20 @@ FILE *load_log_file()
         return NULL;
     }
     return log_file;
+}
+
+void remove_path_sep(char *path, ssize_t max_len)
+{
+    ssize_t idx = 0;
+    if (max_len < 0) {
+        while (path[idx] != '\0') {
+            path[idx] = path[idx] == '/' ? '-' : path[idx];
+            ++idx;
+        }
+    }
+    else {
+        for (idx = 0; idx < max_len; ++idx) {
+            path[idx] = path[idx] == '/' ? '-' : path[idx];
+        }
+    }
 }

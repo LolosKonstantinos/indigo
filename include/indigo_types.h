@@ -206,7 +206,7 @@ typedef struct PACKED transmission_control_data_t {
 typedef struct fwd_fsr_t {
     uint64_t serial;
     size_t file_size; // the size of the file in bytes
-    char file_name[NAME_MAX];
+    char file_name[NAME_MAX + 1];
     uint32_t addr;
     unsigned char id[crypto_sign_PUBLICKEYBYTES];
     char zero[4];
@@ -276,7 +276,7 @@ typedef struct known_key_t {
 } known_key_t;
 
 typedef struct ui_file_t {
-    char name[NAME_MAX];
+    char name[NAME_MAX + 1];
     session_id_t id;
     char direction;
 } ui_file_t;
