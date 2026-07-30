@@ -947,24 +947,10 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
                 }
                 else if (file_last_level == 1) {
                     log_debug("[create_main_interface] selected serial %llu", request_list[file_last_row]);
-                    fwd_packet = malloc(sizeof(fwd_packet_t));
-                    if (fwd_packet == NULL || file_sending_request_data == NULL) {
-                        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                        log_error("malloc() failed allocating %d bytes for queue node data"
-                                  " fwd_packet_t | return %d", sizeof(fwd_packet_t), ret);
-                        goto cleanup;
-                    }
-                    build_packet(&(fwd_packet->packet), MSG_FILE_SENDING_RESPONSE, pk, NULL, NULL, 0);
-                    file_sending_request_data = (file_sending_request_data_t *)fwd_packet->packet.data;
+
                     memcpy(rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);
                     ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&rdev_p);
                     if (ret == 1 && rdev_p->session_keys != NULL) {
-                        fwd_packet->address = rdev_p->ip;
-                        fwd_packet->port = PORT;
-                        file_sending_response_data->serial = request_list[file_last_row];
-
-                        encrypt_packet(&(fwd_packet->packet), rdev_p->session_keys->client_tk, nonce);
-
                         fwd = NULL;
                         for (fwd_fsr_t *f = rdev_p->fsr_list; f != NULL; f = f->next) {
                             if (f->serial == request_list[file_last_row]) {
@@ -980,28 +966,16 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
                             fwd = f;
                         }
                         if (fwd == NULL) {
-                            free(fwd_packet);
-                            fwd_packet = NULL;
-                            log_warn("queue_push() failed | return %d", ret);
+                            tree_unlock(dev_tree);
                             continue;
                         }
                     }
                     else {
                         tree_unlock(dev_tree);
-                        free(fwd_packet);
-                        fwd_packet = NULL;
                         continue;
                     }
                     dev_tree->search_release(dev_tree);
 
-                    ret = queue_push(send_queue, fwd_packet, QET_SEND_PACKET);
-                    if (ret) {
-                        free(fwd_packet);
-                        fwd_packet = NULL;
-                        log_error("queue_push() failed | return %d", ret);
-                        goto cleanup;
-                    }
-                    set_event_flag(send_flag, EF_CHECK_QUEUE);
                     ret = queue_push(ph_queue, fwd, QET_SESSION_START);
                     if (ret) {
                         free(fwd_packet);
@@ -1011,7 +985,7 @@ int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key
                     }
                     set_event_flag(ph_flag, EF_CHECK_QUEUE);
                     fwd_packet = NULL;
-                    log_debug("[create_main_interface] pushed to queue fsr and send_packet");
+                    log_debug("[create_main_interface] pushed to queue fsr");
                 }
             }
             else if (ch == ' ' && context == 1 && file_last_level == 2) {

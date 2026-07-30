@@ -644,7 +644,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     // todo: i think this nonce is for the encryption, but i cant remember
     randombytes_buf(nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
     build_packet(packet, MSG_FILE_SENDING_RESPONSE, pk, nonce, &file_sending_response_data,
-                 sizeof(file_sending_request_data_t));
+                 sizeof(file_sending_response_data_t));
     ret = encrypt_packet(packet, rdev.session_keys->server_tk, nonce);
     if (ret) {
         log_error("[create_server_session] encrypt packet failed | return %d", ret);

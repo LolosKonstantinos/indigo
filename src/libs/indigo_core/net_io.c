@@ -894,7 +894,8 @@ int send_file_packet(active_file_t *file, uint64_t counter, const unsigned char 
 
 void build_packet(packet_t *restrict packet, const unsigned pac_type,
                   const unsigned char id[crypto_sign_PUBLICKEYBYTES],
-                  const unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES], const void *restrict data,
+                  const unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES],
+                  const void *restrict data,
                   uint16_t data_size)
 {
 
