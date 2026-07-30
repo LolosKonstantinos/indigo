@@ -5,6 +5,7 @@ add_library(indigo_core SHARED  manager.c
 
 target_link_libraries(indigo_core PUBLIC indigo_core_includes)
 target_link_libraries(indigo_core PRIVATE
+        tui
         event_flags
         queue
         PkgConfig::SODIUM

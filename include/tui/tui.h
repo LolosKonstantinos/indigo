@@ -34,6 +34,25 @@ SOFTWARE.
 #include <curses.h>
 #include <stdint.h>
 
+typedef struct UI_ARGS {
+    union {
+        tree_t *dev_tree;
+        void *master_key;
+    };
+    tree_t *file_tree;
+    tree_t *known_key_tree;
+    QUEUE *ui_queue;
+    QUEUE *ph_queue;
+    QUEUE *send_queue;
+    EFLAG *ui_flag;
+    EFLAG *ph_flag;
+    EFLAG *send_flag;
+    unsigned char pk[crypto_sign_PUBLICKEYBYTES];
+    pthread_mutex_t ui_mutex;
+    pthread_cond_t ui_cond;
+    uint64_t ready;
+}UI_ARGS;
+
 int verify_user(void **master_key);
 
 // todo: make it return via pointer the master key
@@ -45,8 +64,6 @@ int create_new_password();
 int iswspecialchar(wint_t ch);
 int get_user_input(WINDOW *win, utf8_char_t *input);
 
-int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key_tree, QUEUE *ui_queue, QUEUE *ph_queue,
-                          QUEUE *send_queue, unsigned char pk[], EFLAG *send_flag, EFLAG *ph_flag);
 int pathfinder(char path[PATH_MAX]);
 int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_t *id_count,
                   unsigned char last_id[crypto_sign_PUBLICKEYBYTES], int *last_row);
@@ -54,4 +71,6 @@ int print_device(WINDOW *win, remote_device_t *rdev, int row, char highlight);
 int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree_t *active_files,
                        uint64_t **requests_list, int *request_count, uint64_t **file_list, int *file_count,
                        int *last_row, char *level);
+
+void *ui_thread(UI_ARGS *args);
 #endif // TUI_H

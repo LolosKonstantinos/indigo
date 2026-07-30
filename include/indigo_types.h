@@ -251,13 +251,19 @@ typedef struct session_id_t {
 
 typedef struct session_t {
     session_id_t session_id;
-    int port;
-    uint32_t ip;
+    uint64_t timestamp;
+    uint64_t total_packet_count;
+    uint64_t packets_writen;
+    uint64_t last_chunk;
+    FILE *file;
+    range_node_t *missing_range_ll;
     uint64_t start_time;
     uint64_t end_time;
     size_t bytes_moved;
-    uint16_t status_flags;
+    uint32_t ip;
+    uint32_t status_flags;
 } session_t;
+
 
 typedef struct active_file_t {
     struct active_file_t *next;
@@ -308,5 +314,28 @@ static FORCE_INLINE void free_rdev(void *rdev)
 static FORCE_INLINE int cmp_ui_file(void *s1, void *s2)
 {
     return memcmp(&(((ui_file_t *)s1)->id), &(((ui_file_t *)s2)->id), sizeof(session_id_t));
+}
+
+static FORCE_INLINE int cmp_session(void *s1, void *s2)
+{
+    return memcmp(&((session_t *)s1)->session_id, &((session_t *)s2)->session_id,
+                  (sizeof(uint64_t) + crypto_sign_PUBLICKEYBYTES));
+}
+static FORCE_INLINE void free_session(void *session)
+{
+    range_node_t *curr;
+    range_node_t *next;
+    if (!session)
+        return;
+    if (((session_t *)session)->file) {
+        fclose(((session_t *)session)->file);
+    }
+    curr = ((session_t *)session)->missing_range_ll;
+    while (curr != NULL) {
+        next = curr->next;
+        free(curr);
+        curr = next;
+    }
+    free(session);
 }
 #endif // INDIGO_TYPES_H

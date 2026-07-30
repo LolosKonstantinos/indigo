@@ -43,16 +43,6 @@ typedef struct xsr_t {
     unsigned char *skx;
 } xsr_t;
 
-// eXpected File Packet
-typedef struct xfp_t {
-    session_id_t session_id;
-    time_t expiration_time;
-    uint64_t packet_count; // the expected amount of packets
-    uint64_t packets_writen;
-    uint64_t last_chunk;
-    FILE *file;
-    range_node_t *missing_range_ll;
-} xfp_t;
 // packet_number takes this value when the xfp is used to store the file of a file we want to send
 #define XFP_CLIENT_FILE 0
 
@@ -67,7 +57,7 @@ typedef struct PACKET_HANDLER_ARGS {
     tree_t *known_keys_tree;
     tree_t *session_tree;
     mempool_t *mempool;
-    signing_key_pair_t *signing_keys;
+    signing_key_pair_t *sign_keys;
     socket_ll *sockets;
 } PACKET_HANDLER_ARGS;
 
@@ -83,14 +73,12 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args);
 
 int cmp_xsr(void *s1, void *s2);
 void free_xsr(void *xsr);
-int cmp_xfp(void *s1, void *s2);
-void free_xfp(void *xfp);
 
-int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t *session_tree, tree_t *xfp_tree,
+int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t *session_tree,
                           unsigned char pk[crypto_sign_PUBLICKEYBYTES], socket_ll *sockets, EFLAG *flag);
 
 int create_client_session(const packet_t *packet, const packet_info_t *packet_info, tree_t *dev_tree,
-                          tree_t *session_tree, tree_t *xfp_tree, QUEUE *send_queue);
+                          tree_t *session_tree, QUEUE *send_queue);
 
 int init_packet_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *xsr_tree,
                         tree_t *known_keys_tree, char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1],
@@ -102,11 +90,10 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
 int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *xsr_tree,
                              signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag);
 
-int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *xfp_tree,
-                                 tree_t *session_tree, signing_key_pair_t *signing_keys, socket_ll *sockets,
-                                 EFLAG *flag);
+int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *session_tree,
+                                 signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag);
 
-int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *xfp_tree, tree_t *session_tree,
+int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *session_tree,
                        signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag);
 
 int resend_routine(packet_t *packet, QUEUE *send_queue, EFLAG *send_flag);

@@ -585,485 +585,6 @@ int get_user_input(WINDOW *win, utf8_char_t *input)
 #endif
 }
 
-int create_main_interface(tree_t *dev_tree, tree_t *file_tree, tree_t *known_key_tree, QUEUE *ui_queue, QUEUE *ph_queue,
-                          QUEUE *send_queue, unsigned char pk[crypto_sign_PUBLICKEYBYTES], EFLAG *send_flag,
-                          EFLAG *ph_flag)
-{
-    tree_iterator_t *dev_iter;
-    WINDOW *device_pad;
-
-    int maxx;
-    int maxy;
-    int win_r;
-    int win_c;
-
-    int device_top_row = 0;
-    int file_top_row = 0;
-
-    utf8_char_t ch;
-    char context = 0; // 0 is for devises and 1 is for devide info
-
-    Q_FILE_SENDING_REQUEST *fsr = NULL;
-    Q_EXPECT_SEND_RESPONSE *esr = NULL;
-    fwd_packet_t *fwd_packet = NULL;
-    fwd_fsr_t *fwd = NULL;
-    file_sending_request_data_t *file_sending_request_data = NULL;
-    file_sending_response_data_t *file_sending_response_data = NULL;
-    unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
-
-    remote_device_t rdev;
-    remote_device_t *rdev_p = NULL;
-
-    unsigned char **dev_IDs = NULL;
-    size_t id_count = 0;
-    unsigned char last_id[crypto_sign_PUBLICKEYBYTES] = {0};
-    int last_id_row = 0;
-
-    char selected_path[PATH_MAX];
-
-    uint64_t *request_list = NULL;
-    int request_count = 0;
-    uint64_t *file_list = NULL;
-    int file_count = 0;
-
-    int file_last_row = 0;
-    char file_last_level = 0;
-
-    uint64_t status = 0;
-    void *temp = NULL;
-    int ret;
-
-    if (!dev_tree || !file_tree || !ui_queue || !ph_queue || !send_queue) {
-        log_error("[create_main_interface] null parameter(s) | return %d", INDIGO_ERROR_INVALID_PARAM);
-        return INDIGO_ERROR_INVALID_PARAM;
-    }
-
-    memset(last_id, 0, crypto_sign_PUBLICKEYBYTES);
-
-    getmaxyx(stdscr, maxy, maxx);
-    win_r = (100 > maxy) ? 100 : maxy;
-    win_c = (100 > maxx) ? 100 : maxx;
-    device_pad = newpad(win_r, win_c);
-
-    keypad(device_pad, TRUE);
-    curs_set(0);
-    halfdelay(1);
-
-    pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
-
-    // the main loop
-    while (1) {
-        ret = get_user_input(device_pad, &ch);
-        if (ret == KEY_CODE_YES) {
-            // function keys
-            switch (ch) {
-                case KEY_DOWN:
-                    if (context == 0) {
-                        if (last_id_row < id_count - 1) {
-                            wchgat(device_pad, 3, A_NORMAL, 0, NULL);
-                            wmove(device_pad, ++last_id_row, 0);
-                            wchgat(device_pad, 3, A_REVERSE, 0, NULL);
-                            memcpy(last_id, dev_IDs[last_id_row], crypto_sign_PUBLICKEYBYTES);
-                            if (device_top_row + win_c <= id_count) {
-                                ++device_top_row;
-                            }
-                            pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
-                        }
-                    }
-                    else {
-                        if (file_last_level == 0) {
-                            if (file_last_row < 3) {
-                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
-                                ++file_last_row;
-                                wmove(device_pad, 4 + file_last_row, 0);
-                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
-                            }
-                            else {
-                                if (request_count > 0) {
-                                    wchgat(device_pad, -1, A_NORMAL, 0, NULL);
-                                    file_last_level = 1;
-                                    file_last_row = 0;
-                                    wmove(device_pad, 10, 0);
-                                    wchgat(device_pad, -1, A_REVERSE, 0, NULL);
-                                }
-                                else if (file_count > 0) {
-                                    wchgat(device_pad, -1, A_NORMAL, 0, NULL);
-                                    file_last_level = 2;
-                                    file_last_row = 0;
-                                    wmove(device_pad, 9 + request_count + 3, 0);
-                                    wchgat(device_pad, -1, A_REVERSE, 0, NULL);
-                                }
-                            }
-                        }
-                        else if (file_last_level == 1) {
-                            if (file_last_row < request_count - 1) {
-                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
-                                ++file_last_row;
-                                wmove(device_pad, 9 + file_last_row, 0);
-                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
-                            }
-                            else if (file_count > 0) {
-                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
-                                file_last_level = 2;
-                                file_last_row = 0;
-                                wmove(device_pad, 9 + request_count + 3, 0);
-                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
-                            }
-                        }
-                        else {
-                            if (file_last_row < file_count - 1) {
-                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
-                                ++file_last_row;
-                                wmove(device_pad, 9 + request_count + 3 + file_last_row, 0);
-                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
-                            }
-                        }
-                        if (file_top_row + win_c <= 8 + 1 + request_count + 1 + file_count) {
-                            ++file_top_row;
-                        }
-                        pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
-                    }
-                    break;
-                case KEY_UP:
-                    if (context == 0) {
-                        if (last_id_row > 0) {
-                            wchgat(device_pad, 3, A_NORMAL, 0, NULL);
-                            wmove(device_pad, --last_id_row, 0);
-                            wchgat(device_pad, 3, A_REVERSE, 0, NULL);
-                            if (device_top_row > 0) {
-                                --device_top_row;
-                            }
-                            pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
-                        }
-                    }
-                    else if (context == 1) {
-                        if (file_last_level == 0) {
-                            if (file_last_row > 0) {
-                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
-                                --file_last_row;
-                                wmove(device_pad, 4 + file_last_row, 0);
-                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
-                            }
-                        }
-                        else if (file_last_level == 1) {
-                            if (file_last_row > 0) {
-                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
-                                --file_last_row;
-                                wmove(device_pad, 9 + file_last_row, 0);
-                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
-                            }
-                            else if (file_count == 0) {
-                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
-                                file_last_level = 0;
-                                file_last_row = 3;
-                                wmove(device_pad, 4 + file_last_row, 0);
-                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
-                            }
-                        }
-                        else {
-                            if (file_last_row > 0) {
-                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
-                                --file_last_row;
-                                wmove(device_pad, 9 + request_count + 3 + file_last_row, 0);
-                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
-                            }
-                            else if (file_count == 0) {
-                                if (request_count > 0) {
-                                    wchgat(device_pad, -1, A_NORMAL, 0, NULL);
-                                    file_last_level = 1;
-                                    file_last_row = request_count - 1;
-                                    wmove(device_pad, 9 + file_last_row, 0);
-                                    wchgat(device_pad, -1, A_REVERSE, 0, NULL);
-                                }
-                                else {
-                                    wchgat(device_pad, -1, A_NORMAL, 0, NULL);
-                                    file_last_level = 0;
-                                    file_last_row = 3;
-                                    wmove(device_pad, 4 + file_last_row, 0);
-                                    wchgat(device_pad, -1, A_REVERSE, 0, NULL);
-                                }
-                            }
-                        }
-                    }
-                    break;
-                case KEY_LEFT:
-                case KEY_RIGHT:
-                case KEY_DC: // delete
-                case KEY_RESIZE:
-                default:
-                    break;
-            }
-        }
-        else if (ret == OK) {
-            // characters
-            if (ch == '\x1b')
-                break;
-            if (ch == '\n' || ch == '\r') {
-                // select the action
-                if (context == 0) {
-                    if (id_count > 0)
-                        context = 1;
-                    werase(device_pad);
-                    print_device_files(device_pad, last_id, dev_tree, file_tree, &request_list, &request_count,
-                                       &file_list, &file_count, &file_last_row, &file_last_level);
-                    pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
-                    doupdate();
-                    continue;
-                }
-                if (file_last_level == 0) {
-                    if (file_last_row == 0) {
-                        // send a file
-                        ret = pathfinder(selected_path);
-                        if (ret == -1) {
-                            // it is probably a memory error
-                            //  TODO: handle all errors
-                            log_error("pathfinder() failed | return -1");
-                            goto cleanup;
-                        }
-                        if (ret == 1) {
-                            halfdelay(1);
-                            curs_set(0);
-                            continue;
-                        }
-                        if (ret == 0) {
-                            halfdelay(1);
-                            curs_set(0);
-                            // send this to the queue
-                            fwd_packet = malloc(sizeof(fwd_packet_t));
-                            esr = malloc(sizeof(Q_EXPECT_SEND_RESPONSE));
-                            temp = g_path_get_basename(selected_path);
-                            if (!fwd_packet || !esr || !temp) {
-                                free(fwd_packet);
-                                free(esr);
-                                g_free(temp);
-                                temp = NULL;
-                                esr = NULL;
-                                fwd_packet = NULL;
-                                ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                                log_error("malloc() failed allocating %d+%d bytes for queue node data"
-                                          " Q_SEND_FILE+Q_EXPECT_SEND_RESPONSE | return %d",
-                                          sizeof(Q_SEND_FILE), ret);
-                                goto cleanup;
-                            }
-                            esr->file = fopen(selected_path, "r");
-                            if (esr->file == NULL) {
-                                free(fwd_packet);
-                                free(esr);
-                                g_free(temp);
-                                temp = NULL;
-                                esr = NULL;
-                                fwd_packet = NULL;
-                                continue;
-                            }
-
-                            memcpy(esr->session_id.pk, last_id, crypto_sign_PUBLICKEYBYTES);
-
-                            randombytes(nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
-                            build_packet(&(fwd_packet->packet), MSG_FILE_SENDING_REQUEST, pk, nonce, NULL, 0);
-
-                            memcpy(rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);
-
-                            file_sending_request_data = (file_sending_request_data_t *)fwd_packet->packet.data;
-                            strncpy(file_sending_request_data->file_name, temp, NAME_MAX);
-                            g_free(temp);
-                            temp = NULL;
-
-                            fseek(esr->file, 0, SEEK_END);
-                            file_sending_request_data->file_size = ftell(esr->file);
-                            fseek(esr->file, 0, SEEK_SET);
-
-                            ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&rdev_p);
-                            if (ret == 1 && rdev_p->session_keys != NULL) {
-                                fwd_packet->address = rdev_p->ip;
-                                fwd_packet->port = PORT;
-                                esr->session_id.serial = ++(rdev_p->last_fid);
-                                file_sending_request_data->serial = esr->session_id.serial;
-
-                                encrypt_packet(&(fwd_packet->packet), rdev_p->session_keys->client_tk, nonce);
-                            }
-                            else {
-                                tree_unlock(dev_tree);
-                                free(fwd_packet);
-                                free(esr);
-                                esr = NULL;
-                                fwd_packet = NULL;
-                                continue;
-                            }
-                            dev_tree->search_release(dev_tree);
-
-                            ret = queue_push(send_queue, fwd_packet, QET_SEND_PACKET);
-                            if (ret) {
-                                free(fwd_packet);
-                                free(esr);
-                                fwd_packet = NULL;
-                                esr = NULL;
-                                log_error("queue_push() failed | return %d", ret);
-                                goto cleanup;
-                            }
-                            set_event_flag(send_flag, EF_CHECK_QUEUE);
-                            ret = queue_push(ph_queue, esr, QET_EXPECT_SEND_RESPONSE);
-                            if (ret) {
-                                free(fwd_packet);
-                                free(esr);
-                                fwd_packet = NULL;
-                                esr = NULL;
-                                log_error("queue_push() failed | return %d", ret);
-                                goto cleanup;
-                            }
-                            set_event_flag(ph_flag, EF_CHECK_QUEUE);
-                            fwd_packet = NULL;
-                            log_debug("[create_main_interface] pushed to queue esr and send_packet");
-                        }
-                    }
-                    else {
-                        // set the trust status
-                        switch (file_last_row) {
-                            case 1:
-                                status = KNOWN_KEY_STATUS_GOOD;
-                                break;
-                            case 2:
-                                status = KNOWN_KEY_STATUS_TOO_GOOD;
-                                break;
-                            case 3:
-                                status = KNOWN_KEY_STATUS_BAD;
-                                break;
-                            default:
-                                status = KNOWN_KEY_STATUS_UNKNOWN;
-                                break;
-                        }
-                        ret = edit_known_key(known_key_tree, last_id, status);
-                        if (ret == 0) {
-                            memcpy(rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);
-                            ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&rdev_p);
-                            if (ret) {
-                                rdev_p->dev_state_flag &=
-                                    ~(KNOWN_KEY_STATUS_GOOD | KNOWN_KEY_STATUS_TOO_GOOD | KNOWN_KEY_STATUS_BAD |
-                                      KNOWN_KEY_STATUS_UNKNOWN | KNOWN_KEY_STATUS_EVIL_AND_SINISTER);
-                                rdev_p->dev_state_flag |= status;
-                            }
-                            tree_unlock(dev_tree);
-                        }
-                    }
-                }
-                else if (file_last_level == 1) {
-                    log_debug("[create_main_interface] selected serial %llu", request_list[file_last_row]);
-
-                    memcpy(rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);
-                    ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&rdev_p);
-                    if (ret == 1 && rdev_p->session_keys != NULL) {
-                        fwd = NULL;
-                        for (fwd_fsr_t *f = rdev_p->fsr_list; f != NULL; f = f->next) {
-                            if (f->serial == request_list[file_last_row]) {
-                                if (fwd == NULL) {
-                                    rdev_p->fsr_list = f->next;
-                                }
-                                else {
-                                    fwd->next = f->next;
-                                }
-                                fwd = f;
-                                break;
-                            }
-                            fwd = f;
-                        }
-                        if (fwd == NULL) {
-                            tree_unlock(dev_tree);
-                            continue;
-                        }
-                    }
-                    else {
-                        tree_unlock(dev_tree);
-                        continue;
-                    }
-                    dev_tree->search_release(dev_tree);
-
-                    ret = queue_push(ph_queue, fwd, QET_SESSION_START);
-                    if (ret) {
-                        free(fwd_packet);
-                        fwd_packet = NULL;
-                        log_error("queue_push() failed | return %d", ret);
-                        goto cleanup;
-                    }
-                    set_event_flag(ph_flag, EF_CHECK_QUEUE);
-                    fwd_packet = NULL;
-                    log_debug("[create_main_interface] pushed to queue fsr");
-                }
-            }
-            else if (ch == ' ' && context == 1 && file_last_level == 2) {
-                // pause files
-            }
-            else if (ch == 's') {
-                // switch context
-                context = context == 1 ? 0 : 1;
-            }
-        }
-
-        // update the ui
-        if (context == 0) {
-            if (dev_IDs != NULL) {
-                for (int i = 0; i < id_count; ++i) {
-                    free(dev_IDs[i]);
-                }
-                free(dev_IDs);
-                dev_IDs = NULL;
-            }
-            werase(device_pad);
-            print_devices(device_pad, dev_tree, &dev_IDs, &id_count, last_id, &last_id_row);
-
-            if (id_count == 0) {
-                mvwprintw(device_pad, 0, 0, "There are currently no devices in the local network.");
-            }
-            pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
-        }
-        else {
-            if (request_list != NULL) {
-                free(request_list);
-                request_list = NULL;
-            }
-
-            if (file_list != NULL) {
-                free(file_list);
-                file_list = NULL;
-            }
-
-            werase(device_pad);
-            print_device_files(device_pad, last_id, dev_tree, file_tree, &request_list, &request_count, &file_list,
-                               &file_count, &file_last_row, &file_last_level);
-            pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
-        }
-        doupdate();
-    }
-    if (dev_IDs != NULL) {
-        for (int i = 0; i < id_count; ++i) {
-            free(dev_IDs[i]);
-        }
-        free(dev_IDs);
-    }
-    if (file_list != NULL) {
-        free(file_list);
-    }
-    if (request_list != NULL) {
-        free(request_list);
-    }
-    delwin(device_pad);
-    return 0;
-
-cleanup:
-    if (dev_IDs != NULL) {
-        for (int i = 0; i < id_count; ++i) {
-            free(dev_IDs[i]);
-        }
-        free(dev_IDs);
-    }
-    if (file_list != NULL) {
-        free(file_list);
-    }
-    if (request_list != NULL) {
-        free(request_list);
-    }
-    delwin(device_pad);
-    return ret;
-}
-
 int pathfinder(char path[PATH_MAX])
 {
     utf8_char_t in_char;
@@ -1920,4 +1441,562 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
     }
 
     return 0;
+}
+
+void *ui_thread(UI_ARGS *args)
+{
+    //copied arguments
+    tree_t *dev_tree;
+    tree_t *file_tree;
+    tree_t *known_key_tree;
+    QUEUE *ui_queue;
+    QUEUE *ph_queue;
+    QUEUE *send_queue;
+    EFLAG *ui_flag;
+    EFLAG *ph_flag;
+    EFLAG *send_flag;
+    unsigned char pk[crypto_sign_PUBLICKEYBYTES];
+
+
+    sigset_t sigset;
+    tree_iterator_t *dev_iter;
+    WINDOW *device_pad;
+
+    int maxx;
+    int maxy;
+    int win_r;
+    int win_c;
+
+    int device_top_row = 0;
+    int file_top_row = 0;
+
+    utf8_char_t ch;
+    char context = 0; // 0 is for devises and 1 is for devide info
+
+    Q_FILE_SENDING_REQUEST *fsr = NULL;
+    Q_EXPECT_SEND_RESPONSE *esr = NULL;
+    fwd_packet_t *fwd_packet = NULL;
+    fwd_fsr_t *fwd = NULL;
+    file_sending_request_data_t *file_sending_request_data = NULL;
+    file_sending_response_data_t *file_sending_response_data = NULL;
+    unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
+
+    remote_device_t rdev;
+    remote_device_t *rdev_p = NULL;
+
+    unsigned char **dev_IDs = NULL;
+    size_t id_count = 0;
+    unsigned char last_id[crypto_sign_PUBLICKEYBYTES] = {0};
+    int last_id_row = 0;
+
+    char selected_path[PATH_MAX];
+
+    uint64_t *request_list = NULL;
+    int request_count = 0;
+    uint64_t *file_list = NULL;
+    int file_count = 0;
+
+    int file_last_row = 0;
+    char file_last_level = 0;
+
+    uint64_t status = 0;
+    void *temp = NULL;
+    int ret;
+    int *process_return = NULL;
+
+
+
+    process_return = malloc(sizeof(int));
+    if (!process_return) {
+        return NULL;
+    }
+    *process_return = INDIGO_SUCCESS;
+
+    sigemptyset(&sigset);
+    sigaddset(&sigset, SIGWINCH);
+
+    pthread_sigmask(SIG_UNBLOCK, &sigset, NULL);
+
+    initscr();
+    noecho();
+    cbreak();
+    curs_set(1);
+
+    // create the main tui interface
+    start_color();
+    use_default_colors();
+
+    init_pair(1, COLOR_RED, -1);
+    init_pair(2, COLOR_MAGENTA, -1);
+    init_pair(3, COLOR_YELLOW, -1);
+    init_pair(4, COLOR_GREEN, -1);
+    init_pair(5, COLOR_CYAN, -1);
+    init_pair(6, COLOR_BLUE, -1);
+
+    init_pair(7, COLOR_RED, COLOR_WHITE);
+    init_pair(8, COLOR_MAGENTA, COLOR_WHITE);
+    init_pair(9, COLOR_YELLOW, COLOR_WHITE);
+    init_pair(10, COLOR_GREEN, COLOR_WHITE);
+    init_pair(11, COLOR_CYAN, COLOR_WHITE);
+    init_pair(12, COLOR_BLUE, COLOR_WHITE);
+    init_pair(12, COLOR_BLACK, COLOR_WHITE);
+
+    //first verify the user and then wait for the manager to pass the rest of the arguments
+    ret = verify_user(&(args->master_key));
+    if (ret != 0) {
+        endwin();
+        *process_return = ret;
+        return process_return;
+    }
+    pthread_cond_broadcast(&(args->ui_cond));
+
+    pthread_mutex_lock(&(args->ui_mutex));
+    while (args->ready == 0) pthread_cond_wait(&(args->ui_cond), &(args->ui_mutex));
+    pthread_mutex_unlock(&(args->ui_mutex));
+
+    //copy and free the arguments
+    dev_tree = args->dev_tree;
+    file_tree = args->file_tree;
+    known_key_tree = args->known_key_tree;
+    ui_queue = args->ui_queue;
+    ph_queue = args->ph_queue;
+    send_queue = args->send_queue;
+    ui_flag = args->ui_flag;
+    ph_flag = args->ph_flag;
+    send_flag = args->send_flag;
+    memcpy(pk, args->pk, crypto_sign_PUBLICKEYBYTES);
+
+    pthread_mutex_destroy(&(args->ui_mutex));
+    pthread_cond_destroy(&(args->ui_cond));
+    free(args);
+    args = NULL;
+
+    //start the main ui
+    halfdelay(10);
+    curs_set(0);
+
+    getmaxyx(stdscr, maxy, maxx);
+    win_r = (100 > maxy) ? 100 : maxy;
+    win_c = (100 > maxx) ? 100 : maxx;
+    device_pad = newpad(win_r, win_c);
+
+    keypad(device_pad, TRUE);
+
+    memset(last_id, 0, crypto_sign_PUBLICKEYBYTES);
+
+    pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
+
+    // the main loop
+    while (1) {
+        ret = get_user_input(device_pad, &ch);
+        if (ret == KEY_CODE_YES) {
+            // function keys
+            switch (ch) {
+                case KEY_DOWN:
+                    if (context == 0) {
+                        if (last_id_row < id_count - 1) {
+                            wchgat(device_pad, 3, A_NORMAL, 0, NULL);
+                            wmove(device_pad, ++last_id_row, 0);
+                            wchgat(device_pad, 3, A_REVERSE, 0, NULL);
+                            memcpy(last_id, dev_IDs[last_id_row], crypto_sign_PUBLICKEYBYTES);
+                            if (device_top_row + win_c <= id_count) {
+                                ++device_top_row;
+                            }
+                            pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
+                        }
+                    }
+                    else {
+                        if (file_last_level == 0) {
+                            if (file_last_row < 3) {
+                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                ++file_last_row;
+                                wmove(device_pad, 4 + file_last_row, 0);
+                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                            }
+                            else {
+                                if (request_count > 0) {
+                                    wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                    file_last_level = 1;
+                                    file_last_row = 0;
+                                    wmove(device_pad, 10, 0);
+                                    wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                                }
+                                else if (file_count > 0) {
+                                    wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                    file_last_level = 2;
+                                    file_last_row = 0;
+                                    wmove(device_pad, 9 + request_count + 3, 0);
+                                    wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                                }
+                            }
+                        }
+                        else if (file_last_level == 1) {
+                            if (file_last_row < request_count - 1) {
+                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                ++file_last_row;
+                                wmove(device_pad, 9 + file_last_row, 0);
+                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                            }
+                            else if (file_count > 0) {
+                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                file_last_level = 2;
+                                file_last_row = 0;
+                                wmove(device_pad, 9 + request_count + 3, 0);
+                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                            }
+                        }
+                        else {
+                            if (file_last_row < file_count - 1) {
+                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                ++file_last_row;
+                                wmove(device_pad, 9 + request_count + 3 + file_last_row, 0);
+                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                            }
+                        }
+                        if (file_top_row + win_c <= 8 + 1 + request_count + 1 + file_count) {
+                            ++file_top_row;
+                        }
+                        pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
+                    }
+                    break;
+                case KEY_UP:
+                    if (context == 0) {
+                        if (last_id_row > 0) {
+                            wchgat(device_pad, 3, A_NORMAL, 0, NULL);
+                            wmove(device_pad, --last_id_row, 0);
+                            wchgat(device_pad, 3, A_REVERSE, 0, NULL);
+                            if (device_top_row > 0) {
+                                --device_top_row;
+                            }
+                            pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
+                        }
+                    }
+                    else if (context == 1) {
+                        if (file_last_level == 0) {
+                            if (file_last_row > 0) {
+                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                --file_last_row;
+                                wmove(device_pad, 4 + file_last_row, 0);
+                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                            }
+                        }
+                        else if (file_last_level == 1) {
+                            if (file_last_row > 0) {
+                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                --file_last_row;
+                                wmove(device_pad, 9 + file_last_row, 0);
+                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                            }
+                            else if (file_count == 0) {
+                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                file_last_level = 0;
+                                file_last_row = 3;
+                                wmove(device_pad, 4 + file_last_row, 0);
+                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                            }
+                        }
+                        else {
+                            if (file_last_row > 0) {
+                                wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                --file_last_row;
+                                wmove(device_pad, 9 + request_count + 3 + file_last_row, 0);
+                                wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                            }
+                            else if (file_count == 0) {
+                                if (request_count > 0) {
+                                    wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                    file_last_level = 1;
+                                    file_last_row = request_count - 1;
+                                    wmove(device_pad, 9 + file_last_row, 0);
+                                    wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                                }
+                                else {
+                                    wchgat(device_pad, -1, A_NORMAL, 0, NULL);
+                                    file_last_level = 0;
+                                    file_last_row = 3;
+                                    wmove(device_pad, 4 + file_last_row, 0);
+                                    wchgat(device_pad, -1, A_REVERSE, 0, NULL);
+                                }
+                            }
+                        }
+                    }
+                    break;
+                case KEY_LEFT:
+                case KEY_RIGHT:
+                case KEY_DC: // delete
+                case KEY_RESIZE:
+                default:
+                    break;
+            }
+        }
+        else if (ret == OK) {
+            // characters
+            if (ch == '\x1b')
+                break;
+            if (ch == '\n' || ch == '\r') {
+                // select the action
+                if (context == 0) {
+                    if (id_count > 0)
+                        context = 1;
+                    werase(device_pad);
+                    print_device_files(device_pad, last_id, dev_tree, file_tree, &request_list, &request_count,
+                                       &file_list, &file_count, &file_last_row, &file_last_level);
+                    pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
+                    doupdate();
+                    continue;
+                }
+                if (file_last_level == 0) {
+                    if (file_last_row == 0) {
+                        // send a file
+                        ret = pathfinder(selected_path);
+                        if (ret == -1) {
+                            // it is probably a memory error
+                            //  TODO: handle all errors
+                            log_error("pathfinder() failed | return -1");
+                            goto cleanup;
+                        }
+                        if (ret == 1) {
+                            halfdelay(1);
+                            curs_set(0);
+                            continue;
+                        }
+                        if (ret == 0) {
+                            halfdelay(1);
+                            curs_set(0);
+                            // send this to the queue
+                            fwd_packet = malloc(sizeof(fwd_packet_t));
+                            esr = malloc(sizeof(Q_EXPECT_SEND_RESPONSE));
+                            temp = g_path_get_basename(selected_path);
+                            if (!fwd_packet || !esr || !temp) {
+                                free(fwd_packet);
+                                free(esr);
+                                g_free(temp);
+                                temp = NULL;
+                                esr = NULL;
+                                fwd_packet = NULL;
+                                ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+                                log_error("malloc() failed allocating %d+%d bytes for queue node data"
+                                          " Q_SEND_FILE+Q_EXPECT_SEND_RESPONSE | return %d",
+                                          sizeof(Q_SEND_FILE), ret);
+                                goto cleanup;
+                            }
+                            esr->file = fopen(selected_path, "r");
+                            if (esr->file == NULL) {
+                                free(fwd_packet);
+                                free(esr);
+                                g_free(temp);
+                                temp = NULL;
+                                esr = NULL;
+                                fwd_packet = NULL;
+                                continue;
+                            }
+
+                            memcpy(esr->session_id.pk, last_id, crypto_sign_PUBLICKEYBYTES);
+
+                            randombytes(nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
+                            build_packet(&(fwd_packet->packet), MSG_FILE_SENDING_REQUEST, pk, nonce, NULL, 0);
+
+                            memcpy(rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);
+
+                            file_sending_request_data = (file_sending_request_data_t *)fwd_packet->packet.data;
+                            strncpy(file_sending_request_data->file_name, temp, NAME_MAX);
+                            g_free(temp);
+                            temp = NULL;
+
+                            fseek(esr->file, 0, SEEK_END);
+                            file_sending_request_data->file_size = ftell(esr->file);
+                            fseek(esr->file, 0, SEEK_SET);
+
+                            ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&rdev_p);
+                            if (ret == 1 && rdev_p->session_keys != NULL) {
+                                fwd_packet->address = rdev_p->ip;
+                                fwd_packet->port = PORT;
+                                esr->session_id.serial = ++(rdev_p->last_fid);
+                                file_sending_request_data->serial = esr->session_id.serial;
+
+                                encrypt_packet(&(fwd_packet->packet), rdev_p->session_keys->client_tk, nonce);
+                            }
+                            else {
+                                tree_unlock(dev_tree);
+                                free(fwd_packet);
+                                free(esr);
+                                esr = NULL;
+                                fwd_packet = NULL;
+                                continue;
+                            }
+                            dev_tree->search_release(dev_tree);
+
+                            ret = queue_push(send_queue, fwd_packet, QET_SEND_PACKET);
+                            if (ret) {
+                                free(fwd_packet);
+                                free(esr);
+                                fwd_packet = NULL;
+                                esr = NULL;
+                                log_error("queue_push() failed | return %d", ret);
+                                goto cleanup;
+                            }
+                            set_event_flag(send_flag, EF_CHECK_QUEUE);
+                            ret = queue_push(ph_queue, esr, QET_EXPECT_SEND_RESPONSE);
+                            if (ret) {
+                                free(fwd_packet);
+                                free(esr);
+                                fwd_packet = NULL;
+                                esr = NULL;
+                                log_error("queue_push() failed | return %d", ret);
+                                goto cleanup;
+                            }
+                            set_event_flag(ph_flag, EF_CHECK_QUEUE);
+                            fwd_packet = NULL;
+                            log_debug("[create_main_interface] pushed to queue esr and send_packet");
+                        }
+                    }
+                    else {
+                        // set the trust status
+                        switch (file_last_row) {
+                            case 1:
+                                status = KNOWN_KEY_STATUS_GOOD;
+                                break;
+                            case 2:
+                                status = KNOWN_KEY_STATUS_TOO_GOOD;
+                                break;
+                            case 3:
+                                status = KNOWN_KEY_STATUS_BAD;
+                                break;
+                            default:
+                                status = KNOWN_KEY_STATUS_UNKNOWN;
+                                break;
+                        }
+                        ret = edit_known_key(known_key_tree, last_id, status);
+                        if (ret == 0) {
+                            memcpy(rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);
+                            ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&rdev_p);
+                            if (ret) {
+                                rdev_p->dev_state_flag &=
+                                    ~(KNOWN_KEY_STATUS_GOOD | KNOWN_KEY_STATUS_TOO_GOOD | KNOWN_KEY_STATUS_BAD |
+                                      KNOWN_KEY_STATUS_UNKNOWN | KNOWN_KEY_STATUS_EVIL_AND_SINISTER);
+                                rdev_p->dev_state_flag |= status;
+                            }
+                            tree_unlock(dev_tree);
+                        }
+                    }
+                }
+                else if (file_last_level == 1) {
+                    log_debug("[create_main_interface] selected serial %llu", request_list[file_last_row]);
+
+                    memcpy(rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);
+                    ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&rdev_p);
+                    if (ret == 1 && rdev_p->session_keys != NULL) {
+                        fwd = NULL;
+                        for (fwd_fsr_t *f = rdev_p->fsr_list; f != NULL; f = f->next) {
+                            if (f->serial == request_list[file_last_row]) {
+                                if (fwd == NULL) {
+                                    rdev_p->fsr_list = f->next;
+                                }
+                                else {
+                                    fwd->next = f->next;
+                                }
+                                fwd = f;
+                                break;
+                            }
+                            fwd = f;
+                        }
+                        if (fwd == NULL) {
+                            tree_unlock(dev_tree);
+                            continue;
+                        }
+                    }
+                    else {
+                        tree_unlock(dev_tree);
+                        continue;
+                    }
+                    dev_tree->search_release(dev_tree);
+
+                    ret = queue_push(ph_queue, fwd, QET_SESSION_START);
+                    if (ret) {
+                        free(fwd_packet);
+                        fwd_packet = NULL;
+                        log_error("queue_push() failed | return %d", ret);
+                        goto cleanup;
+                    }
+                    set_event_flag(ph_flag, EF_CHECK_QUEUE);
+                    fwd_packet = NULL;
+                    log_debug("[create_main_interface] pushed to queue fsr");
+                }
+            }
+            else if (ch == ' ' && context == 1 && file_last_level == 2) {
+                // pause files
+            }
+            else if (ch == 's') {
+                // switch context
+                context = context == 1 ? 0 : 1;
+            }
+        }
+
+        // update the ui
+        if (context == 0) {
+            if (dev_IDs != NULL) {
+                for (int i = 0; i < id_count; ++i) {
+                    free(dev_IDs[i]);
+                }
+                free(dev_IDs);
+                dev_IDs = NULL;
+            }
+            werase(device_pad);
+            print_devices(device_pad, dev_tree, &dev_IDs, &id_count, last_id, &last_id_row);
+
+            if (id_count == 0) {
+                mvwprintw(device_pad, 0, 0, "There are currently no devices in the local network.");
+            }
+            pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
+        }
+        else {
+            if (request_list != NULL) {
+                free(request_list);
+                request_list = NULL;
+            }
+
+            if (file_list != NULL) {
+                free(file_list);
+                file_list = NULL;
+            }
+
+            werase(device_pad);
+            print_device_files(device_pad, last_id, dev_tree, file_tree, &request_list, &request_count, &file_list,
+                               &file_count, &file_last_row, &file_last_level);
+            pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
+        }
+        doupdate();
+    }
+    if (dev_IDs != NULL) {
+        for (int i = 0; i < id_count; ++i) {
+            free(dev_IDs[i]);
+        }
+        free(dev_IDs);
+    }
+    if (file_list != NULL) {
+        free(file_list);
+    }
+    if (request_list != NULL) {
+        free(request_list);
+    }
+    delwin(device_pad);
+    endwin();
+    return process_return;
+
+cleanup:
+    if (dev_IDs != NULL) {
+        for (int i = 0; i < id_count; ++i) {
+            free(dev_IDs[i]);
+        }
+        free(dev_IDs);
+    }
+    if (file_list != NULL) {
+        free(file_list);
+    }
+    if (request_list != NULL) {
+        free(request_list);
+    }
+    delwin(device_pad);
+    endwin();
+    return process_return;
 }

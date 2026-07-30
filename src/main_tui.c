@@ -20,19 +20,16 @@ SOFTWARE.
 */
 
 #include "tui/tui.h"
-#include "binary_tree.h"
 #include "indigo_errors.h"
-#include "Queue.h"
 #include "config.h"
-#include "indigo_core/net_io.h"
 #include "indigo_types.h"
 #include "logger.h"
 #include "manager.h"
 #include <log.h>
 
 #include <locale.h>
+#include <signal.h>
 #include <stdio.h>
-#include <unistd.h>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -45,38 +42,11 @@ int main(int argc, char *argv[])
     WSADATA wsaData;
 #endif
     int ret = 0;
+    sigset_t sigset;
 
     // network
-    int port;
+    uint16_t port;
     uint32_t multicast_addr;
-    struct in_addr maddr;
-
-    // device table
-    tree_t *device_tree = NULL;
-    // the file tree
-    tree_t *file_tree = NULL;
-    //the known kwy tree
-    tree_t *known_key_tree = NULL;
-
-    // ui queue
-    QUEUE *ui_queue = NULL;
-
-    // the packet handler queue
-    QUEUE *ph_queue = NULL;
-    // the send queue
-    QUEUE *send_queue = NULL;
-    // the manager queue
-    QUEUE *manager_queue = NULL;
-
-    EFLAG *send_flag = NULL;
-    EFLAG *ph_flag = NULL;
-    EFLAG *ui_flag = NULL;
-
-    MANAGER_ARGS *manager_args;
-    pthread_t manager_tid;
-    unsigned char pk[crypto_sign_PUBLICKEYBYTES] = {0};
-    signing_key_pair_t *key_pair;
-    void *master_key;
 
     FILE *log_file = NULL;
 
@@ -99,188 +69,23 @@ int main(int argc, char *argv[])
 #endif
 
     setlocale(LC_ALL, "");
-    initscr();
-    // todo learn how to use color
-    cbreak();
-    noecho();
 
-    // verify the user, check if crypto files are ready to go, and check password
-    ret = verify_user(&master_key);
-    if (ret != 0) {
-        goto cleanup;
-    }
+    //block window change signal for all thread (we allow only ui thread to have it unblocked)
+    sigemptyset(&sigset);
+    sigaddset(&sigset, SIGWINCH);
 
-    key_pair = sodium_malloc(sizeof(signing_key_pair_t));
-    if (key_pair == NULL) {
-        goto cleanup;
-    }
-    ret = load_signing_key_pair(key_pair, master_key);
-    if (ret) {
-        sodium_memzero(key_pair, sizeof(signing_key_pair_t));
-        sodium_free(key_pair);
-        goto cleanup;
-    }
-    memcpy(pk, key_pair->public, crypto_sign_PUBLICKEYBYTES);
-    sodium_memzero(key_pair, sizeof(signing_key_pair_t));
-    sodium_free(key_pair);
-    // bypass_password(&master_key);
-    // create the device tree
-
-    ret = new_tree(&device_tree, cmp_rdev, free_rdev, sizeof(remote_device_t), BINARY_TREE_FLAG_AVL);
-    if (ret) {
-        log_error("[main] new_tree failed");
-        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-    ret = new_tree(&file_tree, cmp_ui_file, NULL, sizeof(ui_file_t), BINARY_TREE_FLAG_AVL);
-    if (ret) {
-        log_error("[main] new_tree failed");
-        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-    ret = new_tree(&known_key_tree, key_cmp, NULL, sizeof(known_key_t), BINARY_TREE_FLAG_AVL);
-    if (ret) {
-        log_error("[main] new_tree failed");
-        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-
-    ret = load_known_keys(known_key_tree);
-    if (ret == -1) {
-        log_error("[main] load_known_keys() failed due to invalid parameter");
-        ret = INDIGO_ERROR_INVALID_PARAM;
-        goto cleanup;
-    }
-
-    ui_queue = malloc(sizeof(QUEUE));
-    if (ui_queue == NULL) {
-        log_error("[main] malloc failed");
-        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-    ret = init_queue(ui_queue);
-    if (ret) {
-        log_error("[main] init_queue failed");
-        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-    send_queue = malloc(sizeof(QUEUE));
-    if (send_queue == NULL) {
-        log_error("[main] malloc failed");
-        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-    ret = init_queue(send_queue);
-    if (ret) {
-        log_error("[main] init_queue failed");
-        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-    ph_queue = (QUEUE *)malloc(sizeof(QUEUE));
-    if (ph_queue == NULL) {
-        log_error("[main] malloc failed");
-        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-    if (init_queue(ph_queue)) {
-        log_error("[main] init_queue failed");
-        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-    manager_queue = malloc(sizeof(QUEUE));
-    if (manager_queue == NULL) {
-        log_error("[main] malloc failed");
-        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-    ret = init_queue(manager_queue);
-    if (ret) {
-        log_error("[main] init_queue failed");
-        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-
-    ui_flag = create_event_flag();
-    if (ui_flag == NULL) {
-        log_error("[main] create_event_flag() failed");
-        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-
-    send_flag = create_event_flag();
-    if (send_flag == NULL) {
-        log_error( "[main] create_event_flag() failed | return 1");
-        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-    ph_flag = create_event_flag();
-    if (ph_flag == NULL) {
-        free_event_flag(send_flag);
-        log_error( "[main] create_event_flag() failed | return 1");
-        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
-
-
+    pthread_sigmask(SIG_BLOCK, &sigset, NULL);
 
     inet_pton(AF_INET, MULTICAST_ADDR, &multicast_addr);
     port = PORT;
 
-    ret = create_thread_manager_thread(&manager_args, master_key, port, multicast_addr, device_tree, known_key_tree,
-                                       ui_queue, ph_queue, send_queue, send_flag, ph_flag, manager_queue, &manager_tid);
+    ret = thread_manager(multicast_addr, port);
     if (ret != INDIGO_SUCCESS) {
-        free_event_flag(send_flag);
-        destroy_queue(manager_queue);
-        destroy_queue(send_queue);
-        destroy_queue(ph_queue);
-        free(manager_queue);
-        free(send_queue);
-        free(ph_queue);
         log_error("[main] create_thread_manager_thread failed\n");
-        goto cleanup;
     }
 
-    // create the main tui interface
-    start_color();
-    use_default_colors();
-
-    init_pair(1, COLOR_RED, -1);
-    init_pair(2, COLOR_MAGENTA, -1);
-    init_pair(3, COLOR_YELLOW, -1);
-    init_pair(4, COLOR_GREEN, -1);
-    init_pair(5, COLOR_CYAN, -1);
-    init_pair(6, COLOR_BLUE, -1);
-
-    init_pair(7, COLOR_RED, COLOR_WHITE);
-    init_pair(8, COLOR_MAGENTA, COLOR_WHITE);
-    init_pair(9, COLOR_YELLOW, COLOR_WHITE);
-    init_pair(10, COLOR_GREEN, COLOR_WHITE);
-    init_pair(11, COLOR_CYAN, COLOR_WHITE);
-    init_pair(12, COLOR_BLUE, COLOR_WHITE);
-    init_pair(12, COLOR_BLACK, COLOR_WHITE);
-
-    create_main_interface(device_tree, file_tree, known_key_tree, ui_queue, ph_queue, send_queue, pk, send_flag,
-                          ph_flag);
-
-    endwin();
-    destroy_queue(ui_queue);
-    free(ui_queue);
-    free_tree(file_tree);
-    free_tree(device_tree);
-    free_tree(known_key_tree);
-    free_event_flag(ui_flag);
-    return ret;
-
-cleanup:
 #ifdef _WIN32
     WSACleanup();
 #endif
-    endwin();
-    destroy_queue(ui_queue);
-    free(ui_queue);
-    free_tree(file_tree);
-    free_tree(device_tree);
-    free_tree(known_key_tree);
-    free_event_flag(ui_flag);
     return ret;
 }

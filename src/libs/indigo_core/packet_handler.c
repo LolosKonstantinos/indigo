@@ -83,11 +83,10 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     xsr_t *found_xsr;
     tree_iterator_t *xsr_iterator = NULL;
 
-    // the expected file packet table
-    tree_t *xfp_tree = NULL;
-    xfp_t xfp = {0};
-    xfp_t *found_xfp = NULL;
-    tree_iterator_t *xfp_iterator = NULL;
+    tree_t *session_tree = NULL;
+    session_t session;
+    session_t *found_session = NULL;
+
 
     void *remove_array = NULL;
     size_t remove_array_size = 0;
@@ -124,9 +123,10 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
     known_keys_tree = args->known_keys_tree;
     dev_tree = args->device_tree;
+    session_tree = args->session_tree;
 
     // the less the private key is exposed the better, we copy the public key since it is frequently used
-    memcpy(public_key, args->signing_keys->public, crypto_sign_PUBLICKEYBYTES);
+    memcpy(public_key, args->sign_keys->public, crypto_sign_PUBLICKEYBYTES);
 
     // create the expected packet table
     ret = new_tree(&xsr_tree, cmp_xsr, free_xsr, sizeof(xsr_t), BINARY_TREE_FLAG_AVL);
@@ -134,13 +134,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
         *process_return = ret;
         log_fatal("[packet_handler_thread] new_tree failed to create expected signing response tree | return %d",
                   *process_return, process_return);
-        goto cleanup;
-    }
-    ret = new_tree(&xfp_tree, cmp_xfp, free_xfp, sizeof(xfp_t), BINARY_TREE_FLAG_AVL);
-    if (ret != INDIGO_SUCCESS) {
-        *process_return = ret;
-        log_fatal("[packet_handler_thread] new_tree failed to create expected file packet tree | return %d",
-                  process_return);
         goto cleanup;
     }
 
@@ -227,30 +220,30 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                     case MSG_INIT_PACKET:
                         log_info("[packet_handler_thread] received init packet");
                         ret = init_packet_routine(packet, packet_info, dev_tree, xsr_tree, known_keys_tree, username,
-                                                  args->signing_keys, args->sockets, args->flag);
+                                                  args->sign_keys, args->sockets, args->flag);
                         break;
                     case MSG_SIGNING_REQUEST:
                         log_debug("[packet_handler_thread] received signing request");
                         ret = signing_request_routine(packet, packet_info, dev_tree, xsr_tree, known_keys_tree,
-                                                      args->signing_keys, args->sockets, args->flag);
+                                                      args->sign_keys, args->sockets, args->flag);
                         break;
 
                     case MSG_SIGNING_RESPONSE:
                         log_debug("[packet_handler_thread] received signing response");
-                        ret = signing_response_routine(packet, packet_info, dev_tree, xsr_tree, args->signing_keys,
+                        ret = signing_response_routine(packet, packet_info, dev_tree, xsr_tree, args->sign_keys,
                                                        args->sockets, args->flag);
                         break;
                     case MSG_FILE_SENDING_REQUEST:
                         log_debug("[packet_handler_thread] received file sending request");
-                        ret = file_sending_request_routine(packet, packet_info, dev_tree, xfp_tree, args->session_tree,
-                                                           args->signing_keys, args->sockets, args->flag);
+                        ret = file_sending_request_routine(packet, packet_info, dev_tree, args->session_tree,
+                                                           args->sign_keys, args->sockets, args->flag);
                         break;
                     case MSG_FILE_SENDING_RESPONSE:
                         log_debug("[packet_handler_thread] received file sending response");
                         if (packet->magic_number != MAGIC_NUMBER_2)
                             break;
                         ret = create_client_session(packet, packet_info, args->device_tree, args->session_tree,
-                                                    xfp_tree, args->send_queue);
+                                                    args->send_queue);
                         if (ret) {
                             *process_return = ret;
                             log_fatal("[packet_handler_thread] failed to create client session | "
@@ -261,7 +254,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         break;
                     case MSG_FILE_CHUNK:
                         log_debug("[packet_handler_thread] received file chunk");
-                        ret = file_chunk_routine(packet, packet_info, xfp_tree, args->session_tree, args->signing_keys,
+                        ret = file_chunk_routine(packet, packet_info, args->session_tree, args->sign_keys,
                                                  args->sockets, args->flag);
                         break;
                     case MSG_RESEND:
@@ -302,8 +295,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
             else if (node->type == QET_SESSION_START) {
                 // they sent us a send request and the user said yes
                 fwd = node->data;
-                ret = create_server_session(fwd, args->device_tree, args->session_tree, xfp_tree, public_key,
-                                            args->sockets, args->flag);
+                ret = create_server_session(fwd, args->device_tree, session_tree, public_key, args->sockets, args->flag);
                 free(fwd);
                 if (ret) {
                     // todo: create_server_session() uses send_packet() and returns its errors
@@ -320,22 +312,22 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 log_debug("[packet_handler_thread] received expect send response via queue");
                 Q_EXPECT_SEND_RESPONSE *qe = (Q_EXPECT_SEND_RESPONSE *)node->data;
                 // we sent a request to send a file, and we expect a response to that request
-                memset(&xfp, 0, sizeof(xfp_t));
-                memcpy(&(xfp.session_id), &(qe->session_id), sizeof(session_id_t));
-                xfp.file = qe->file;
-                xfp.expiration_time = time(NULL);
-                xfp.packet_count = XFP_CLIENT_FILE;
+                memset(&session, 0, sizeof(session_t));
+                memcpy(&(session.session_id), &(qe->session_id), sizeof(session_id_t));
+                session.file = qe->file;
+                session.timestamp = time(NULL);
+                session.total_packet_count = XFP_CLIENT_FILE;
                 log_debug("[packet_handler_thread] expecting response for %llu", qe->session_id.serial);
                 free(node->data);
                 destroy_qnode(node);
                 node = NULL;
 
 
-                ret = xfp_tree->insert(xfp_tree, &xfp);
+                ret = session_tree->insert(session_tree, &session);
                 if (ret) {
-                    fclose(xfp.file);
+                    fclose(session.file);
                     *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                    log_fatal("[packet_handler_thread] xfp_tree insert failed inserting client file| return %d",
+                    log_fatal("[packet_handler_thread] session_tree insert failed inserting client file| return %d",
                               *process_return);
                     goto cleanup;
                 }
@@ -416,50 +408,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
         remove_array = NULL;
         remove_array_size = 0;
 
-        // update the xfp tree
-        /*TODO: there is a case where we delete the xfp but the session persists,
-         *      since xfp and session will merge, this is not that important for now
-         */
-        ret = new_tree_iterator(xfp_tree, &xfp_iterator);
-        if (ret) {
-            *process_return = ret;
-            log_fatal("[packet_handler_thread] failed to create xfp iterator | return %d", *process_return);
-            goto cleanup;
-        }
-        if (xfp_iterator) {
-            while (tree_has_next(xfp_iterator)) {
-                tree_next(xfp_iterator, (void **)&found_xfp);
-                time_diff = curr_time - found_xfp->expiration_time;
-                if (time_diff > EXPIRATION_TIME) {
-                    tmp_ptr = realloc(remove_array, (++remove_array_size) * sizeof(xfp_t *));
-                    if (tmp_ptr == NULL) {
-                        free(remove_array);
-                        remove_array = NULL;
-                        free_tree_iterator(&xfp_iterator);
-                        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                        goto cleanup;
-                    }
-                    remove_array = tmp_ptr;
-                    ((xfp_t **)remove_array)[remove_array_size - 1] = found_xfp;
-                }
-                else {
-                    // branchless minimum
-                    lowest_time = time_diff + ((lowest_time - time_diff) &
-                                               ((lowest_time - time_diff) >> (sizeof(time_t) * CHAR_BIT - 1)));
-                }
-            }
-            if (remove_array) {
-                for (size_t i = 0; i < remove_array_size; i++) {
-                    avl_delete_unlocked(xfp_tree, ((xfp_t **)remove_array)[i]);
-                }
-                free(remove_array);
-            }
-            free_tree_iterator(&xfp_iterator);
-        }
-
-        remove_array = NULL;
-        remove_array_size = 0;
-
         // update the device tree
         tree_lock(args->device_tree);
         ret = new_tree_iterator(args->device_tree, &rdev_iterator);
@@ -516,17 +464,19 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     }
 
     free_tree(xsr_tree);
-    free_tree(xfp_tree);
+    destroy_queue(args->queue);
+    free(args->queue);
     log_info("[packet_handler_thread] thread successful exit");
     return process_return;
 
 cleanup:
     destroy_qnode(node);
     free_tree(xsr_tree);
-    free_tree(xfp_tree);
 
     set_event_flag(args->flag, EF_TERMINATION);
     set_event_flag(args->wake, EF_WAKE_MANAGER);
+    destroy_queue(args->queue);
+    free(args->queue);
     log_info("[packet_handler_thread] thread exit with errors");
     return process_return;
 }
@@ -545,41 +495,16 @@ void free_xsr(void *xsr)
     free(xsr);
 }
 
-int cmp_xfp(void *s1, void *s2)
-{
-    return memcmp(&((xfp_t *)s1)->session_id, &((xfp_t *)s2)->session_id,
-                  (sizeof(uint64_t) + crypto_sign_PUBLICKEYBYTES));
-}
-void free_xfp(void *xfp)
-{
-    range_node_t *curr;
-    range_node_t *next;
-    if (!xfp)
-        return;
-    if (((xfp_t *)xfp)->file) {
-        fclose(((xfp_t *)xfp)->file);
-    }
-    curr = ((xfp_t *)xfp)->missing_range_ll;
-    while (curr != NULL) {
-        next = curr->next;
-        free(curr);
-        curr = next;
-    }
-    free(xfp);
-}
-
-int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t *session_tree, tree_t *xfp_tree,
+int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t *session_tree,
                           unsigned char pk[crypto_sign_PUBLICKEYBYTES], socket_ll *sockets, EFLAG *flag)
 {
     // they sent us a send request and the user said yes
-
     int ret;
     remote_device_t rdev;
     packet_t *packet = NULL;
-    session_t *session = NULL;
+    session_t session;
     unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
     file_sending_response_data_t file_sending_response_data = {0};
-    xfp_t xfp;
     char file_name[2 * sizeof(session_id_t) + 1 + 9] = INDIGO_TEMP_DIR;
     char xpath[PATH_MAX];
     char *initial_cwd;
@@ -599,29 +524,22 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
 
     // necessary allocations
     packet = malloc(sizeof(struct udp_packet_t));
-    session = malloc(sizeof(session_t));
-    if (!session || !packet) {
-        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        log_error("[create_server_session] malloc failed allocating packet %dB and session %dB | return %d",
-                  sizeof(struct udp_packet_t), sizeof(session_t), ret);
-        goto cleanup;
-    }
 
     // zero out the xfp. Not sure if this is necessary, probably will be optimized out by the compiler
-    memset(&xfp, 0, sizeof(xfp_t));
+    memset(&session, 0, sizeof(session_t));
     // create the file we will write to
     for (int i = 0; i < crypto_sign_PUBLICKEYBYTES; ++i) {
-        sprintf(file_name + (2 * i), "%02x", (xfp.session_id.pk)[i]);
+        sprintf(file_name + (2 * i), "%02x", (session.session_id.pk)[i]);
     }
-    sprintf(file_name, "%016lx", xfp.session_id.serial);
+    sprintf(file_name, "%016lx", session.session_id.serial);
     file_name[2 * sizeof(session_id_t)] = '\0';
 
     initial_cwd = g_get_current_dir();
     get_source_dir(xpath);
     chdir(xpath);
 
-    xfp.file = fopen(file_name, "wb");
-    if (!xfp.file) {
+    session.file = fopen(file_name, "wb");
+    if (!session.file) {
         chdir(initial_cwd);
         g_free(initial_cwd);
         ret = INDIGO_ERROR_CAN_NOT_OPEN_FILE;
@@ -639,9 +557,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
         goto cleanup;
     }
     file_sending_response_data.serial = fwd->serial;
-    // todo: increment the last_serial in rdev.
 
-    // todo: i think this nonce is for the encryption, but i cant remember
     randombytes_buf(nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
     build_packet(packet, MSG_FILE_SENDING_RESPONSE, pk, nonce, &file_sending_response_data,
                  sizeof(file_sending_response_data_t));
@@ -661,31 +577,22 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     packet = NULL;
 
     // create expected file packets
-    xfp.expiration_time = time(NULL);
-    xfp.packet_count = (uint64_t)ceil((double)(fwd->file_size) / (double)(1 << 10));
-    xfp.packets_writen = 0;
-    xfp.last_chunk = 0;
-    xfp.session_id.serial = file_sending_response_data.serial;
-    xfp.missing_range_ll = NULL;
-    xfp.file = NULL;
-    memcpy(xfp.session_id.pk, fwd->id, crypto_sign_PUBLICKEYBYTES);
+    session.timestamp = time(NULL);
+    session.total_packet_count = (uint64_t)ceil((double)(fwd->file_size) / (double)(1 << 10));
+    session.packets_writen = 0;
+    session.last_chunk = 0;
+    session.missing_range_ll = NULL;
+    session.file = NULL;
+    session.bytes_moved = 0;
+    session.start_time = time(NULL);
+    session.status_flags = 0;
+    session.ip = fwd->addr;
+    session.session_id.serial = file_sending_response_data.serial;
+    memcpy(session.session_id.pk, fwd->id, crypto_sign_PUBLICKEYBYTES);
 
-    ret = xfp_tree->insert(xfp_tree, &xfp);
+    ret = session_tree->insert(session_tree, &session);
     if (ret) {
         log_error("[create_server_session] xfp insert failed");
-        goto cleanup;
-    }
-
-    memcpy(&(session->session_id), &(xfp.session_id), sizeof(session_id_t));
-    session->bytes_moved = 0;
-    session->start_time = time(NULL);
-    session->status_flags = 0;
-    session->port = PORT;
-    session->ip = fwd->addr;
-
-    ret = session_tree->insert(session_tree, session);
-    if (ret) {
-        log_error("[create_server_session] session insert failed");
         goto cleanup;
     }
 
@@ -693,21 +600,20 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
 
 cleanup:
     free(packet);
-    free(session);
     return ret;
 }
 
 int create_client_session(const packet_t *const packet, const packet_info_t *const packet_info, tree_t *dev_tree,
-                          tree_t *session_tree, tree_t *xfp_tree, QUEUE *send_queue)
+                          tree_t *session_tree, QUEUE *send_queue)
 {
     // we got their one time public key, and confirmation to proceed
     // we calculate the send key
     // tell the sending thread to start sending the file
     int ret;
     remote_device_t rdev;
-    session_t *session = NULL;
+    session_t *found_session = NULL;
     active_file_t *tmp_active_file = NULL;
-    xfp_t xfp;
+    session_t session;
 
     // check if the peer is in the device tree (if they are not, we shouldn't create a session)
     ret = dev_tree->search(dev_tree, &rdev);
@@ -715,15 +621,15 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
         goto cleanup;
 
     // add an expected file packet (xfp) for this session
-    memcpy(&(xfp.session_id.pk), packet->id, crypto_sign_PUBLICKEYBYTES);
-    xfp.session_id.serial = ((file_sending_response_data_t *)(packet->data))->serial;
+    memcpy(&(session.session_id.pk), packet->id, crypto_sign_PUBLICKEYBYTES);
+    session.session_id.serial = ((file_sending_response_data_t *)(packet->data))->serial;
     /*We sent a packet with a seral to begin a session.
      * we created an xfp with that serial. (don't worry there is an expiration time, it will not stay forever).
      * we expect a response with the serial we sent (it is an identifier for that session that is being created).
      * If we don't receive a response, nothing should happen.
      */
     // if the session id is not found, then the returned serial is not valid, and the session is rejected
-    ret = xfp_tree->search(xfp_tree, &xfp);
+    ret = session_tree->search(session_tree, &session);
     if (ret == 0) {
         ret = INDIGO_ERROR_PEER_NOT_FOUND;
         log_warn("[create_client_session] peer not found in expected files tree. Can not create client session");
@@ -732,7 +638,7 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
 
     // if they sent us a serial of a file we are receiving then we reject.
     //(an attacker or a badly writen mod, either way me not happy).
-    if (xfp.packet_count != XFP_CLIENT_FILE) {
+    if (session.total_packet_count != XFP_CLIENT_FILE) {
         // we don't goto cleanup here. we don't want to remove an active file
         log_warn("[create_client_session] peer not found in expected files tree. Can not create client session");
         return INDIGO_ERROR_INVALID_PEER_PARAM;
@@ -740,28 +646,27 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
 
     // necessary allocations
     tmp_active_file = malloc(sizeof(active_file_t));
-    session = malloc(sizeof(session_t));
-    if (!session || !tmp_active_file) {
+    found_session = malloc(sizeof(session_t));
+    if (!found_session || !tmp_active_file) {
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_error("[create_client_session] malloc failed allocating %d+%dB for active file and session | return %d",
                   sizeof(active_file_t), sizeof(session_t), ret);
         goto cleanup;
     }
 
-    memcpy(&(session->session_id), &(xfp.session_id), sizeof(session_id_t));
-    session->bytes_moved = 0;
-    session->start_time = time(NULL);
-    session->status_flags = 0;
-    session->port = PORT;
-    session->ip = packet_info->address.sin_addr.s_addr;
+    memcpy(&(found_session->session_id), &(session.session_id), sizeof(session_id_t));
+    found_session->bytes_moved = 0;
+    found_session->start_time = time(NULL);
+    found_session->status_flags = 0;
+    found_session->ip = packet_info->address.sin_addr.s_addr;
 
-    ret = session_tree->insert(session_tree, session);
+    ret = session_tree->insert(session_tree, found_session);
     if (ret) {
         log_error("[create_client_session] session insert failed | return %d", ret);
         goto cleanup;
     }
 
-    tmp_active_file->fd = xfp.file; // todo xfp should contain a file descriptor, as for now it is not initialized
+    tmp_active_file->fd = session.file; // todo xfp should contain a file descriptor, as for now it is not initialized
     tmp_active_file->counter = 0;
     tmp_active_file->next = NULL;
     memcpy(tmp_active_file->session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
@@ -773,13 +678,13 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
         goto cleanup;
     }
 
-    xfp_tree->remove(xfp_tree, &xfp);
+    session_tree->remove(session_tree, &session);
     return 0;
 
 cleanup:
     free(tmp_active_file);
-    free(session);
-    xfp_tree->remove(xfp_tree, &xfp);
+    free(found_session);
+    session_tree->remove(session_tree, &session);
     return ret;
 }
 
@@ -1356,9 +1261,8 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
     return 0;
 }
 
-int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *xfp_tree,
-                                 tree_t *session_tree, signing_key_pair_t *signing_keys, socket_ll *sockets,
-                                 EFLAG *flag)
+int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *session_tree,
+                                 signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag)
 {
     // we need permission to proceed, so we push it to the manager to handle
     // tell the interface (ui via queue), the interface will ask the user
@@ -1397,7 +1301,7 @@ int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, t
             // in this case and this case only the user has specified
             // that this peer does not need approval
             tree_unlock(dev_tree);
-            ret = create_server_session(fsr, dev_tree, session_tree, xfp_tree, signing_keys->public, sockets, flag);
+            ret = create_server_session(fsr, dev_tree, session_tree, signing_keys->public, sockets, flag);
             if (ret) {
                 // todo: create_server_session() uses send_packet() and returns its errors
                 // todo: do more complex error handling
@@ -1429,7 +1333,7 @@ int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, t
     return 0;
 }
 
-int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *xfp_tree, tree_t *session_tree,
+int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *session_tree,
                        signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag)
 {
     /*TODO: the thing is that the file descriptor is in xfp, (and we need to check xfp anyway
@@ -1441,8 +1345,6 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *xfp
      */
     int ret;
     void *tmp_ptr;
-    xfp_t xfp;
-    xfp_t *found_xfp;
     session_t session;
     session_t *found_session;
 
@@ -1458,39 +1360,30 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *xfp
         return 1;
 
     // find the expected file packet node
-    memcpy(xfp.session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
-    xfp.session_id.serial = ((file_chunk_data_t *)packet->data)->serial;
+    memcpy(session.session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
+    session.session_id.serial = ((file_chunk_data_t *)packet->data)->serial;
 
-    ret = xfp_tree->search_pin(xfp_tree, &xfp, (void **)&found_xfp);
+    ret = session_tree->search_pin(session_tree, &session, (void **)&found_session);
     if (ret == 0) {
-        xfp_tree->search_release(xfp_tree);
+        session_tree->search_release(session_tree);
         return 1;
     }
     // if it is a client file (we expect an accept response) we don't receive it
-    if (found_xfp->packet_count == XFP_CLIENT_FILE) {
-        xfp_tree->search_release(xfp_tree);
-        return 1;
-    }
-
-    // find the session node
-    memcpy(&(session.session_id), &(xfp.session_id), sizeof(session_id_t));
-    ret = session_tree->search_pin(session_tree, &session, (void **)&found_session);
-    if (ret == 0) {
-        xfp_tree->search_release(xfp_tree);
+    if (found_session->total_packet_count == XFP_CLIENT_FILE) {
         session_tree->search_release(session_tree);
         return 1;
     }
 
-    found_xfp->expiration_time = time(NULL);
+    found_session->timestamp = time(NULL);
 
     chunk_number = ((file_chunk_data_t *)packet->data)->chunk_number;
 
-    if (chunk_number < found_xfp->last_chunk) {
+    if (chunk_number < found_session->last_chunk) {
         // we either received a duplicate packet or a resend
         // in this case we don't update the packet number
 
         prev_node = NULL;
-        for (range_node = found_xfp->missing_range_ll; range_node != NULL; range_node = range_node->next) {
+        for (range_node = found_session->missing_range_ll; range_node != NULL; range_node = range_node->next) {
             if (in_range(&(range_node->r), chunk_number))
                 break;
             prev_node = range_node;
@@ -1503,7 +1396,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *xfp
             if (prev_node)
                 prev_node->next = range_node->next;
             else {
-                found_xfp->missing_range_ll = range_node->next;
+                found_session->missing_range_ll = range_node->next;
             }
             prev_node = NULL;
             free(range_node);
@@ -1523,7 +1416,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *xfp
                 prev_node = malloc(sizeof(range_node_t));
                 if (!prev_node) {
                     // IDK do something
-                    xfp_tree->search_release(xfp_tree);
+                    session_tree->search_release(session_tree);
                     session_tree->search_release(session_tree);
                     return -1;
                 }
@@ -1531,8 +1424,8 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *xfp
                 prev_node->r.end = range_node->r.end;
                 range_node->r.end = chunk_number - 1;
 
-                tmp_ptr = found_xfp->missing_range_ll;
-                found_xfp->missing_range_ll = prev_node;
+                tmp_ptr = found_session->missing_range_ll;
+                found_session->missing_range_ll = prev_node;
                 prev_node->next = tmp_ptr;
                 tmp_ptr = NULL;
             }
@@ -1540,17 +1433,17 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *xfp
 
         // write the file chunk
         if (chunk_number * PAC_DATA_PAYLOAD_BYTES < LLONG_MAX) {
-            fseeko64(found_xfp->file, (long long)(chunk_number * PAC_DATA_PAYLOAD_BYTES), SEEK_SET);
+            fseeko64(found_session->file, (long long)(chunk_number * PAC_DATA_PAYLOAD_BYTES), SEEK_SET);
         }
         else {
             // not very sure who owns a file bigger than 2 exbi-bytes, but why not
-            fseeko64(found_xfp->file, LLONG_MAX, SEEK_SET);
-            fseeko64(found_xfp->file, (long long)((chunk_number * PAC_DATA_PAYLOAD_BYTES) - LLONG_MAX), SEEK_CUR);
+            fseeko64(found_session->file, LLONG_MAX, SEEK_SET);
+            fseeko64(found_session->file, (long long)((chunk_number * PAC_DATA_PAYLOAD_BYTES) - LLONG_MAX), SEEK_CUR);
         }
 
-        ret_val = fwrite(((file_chunk_data_t *)packet->data)->data, 1, PAC_DATA_PAYLOAD_BYTES, found_xfp->file);
+        ret_val = fwrite(((file_chunk_data_t *)packet->data)->data, 1, PAC_DATA_PAYLOAD_BYTES, found_session->file);
         if (ret_val != PAC_DATA_PAYLOAD_BYTES) {
-            ret = ferror(found_xfp->file);
+            ret = ferror(found_session->file);
             // TODO: here are all the errors of fwrite, handle them. these are bad errors,
             //       most of them
             switch (ret) {
@@ -1564,28 +1457,28 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *xfp
                 case ENOMEM:
                 case ENXIO:
                 default:
-                    xfp_tree->search_release(xfp_tree);
+                    session_tree->search_release(session_tree);
                     session_tree->search_release(session_tree);
                     break;
             }
             return 1;
         }
         found_session->bytes_moved += PAC_DATA_PAYLOAD_BYTES;
-        ++(found_xfp->packets_writen);
+        ++(found_session->packets_writen);
 
         // check if we have received the whole file
-        if (found_xfp->packets_writen == found_xfp->packet_count) {
+        if (found_session->packets_writen == found_session->total_packet_count) {
             // the missing packets should be NULL but well it does not hurt to check
-            for (range_node_t *r = found_xfp->missing_range_ll; r != NULL; r = prev_node) {
+            for (range_node_t *r = found_session->missing_range_ll; r != NULL; r = prev_node) {
                 prev_node = r->next;
                 free(prev_node);
             }
             // TODO: rename the file
-            fclose(found_xfp->file);
-            xfp_tree->search_release(xfp_tree);
+            fclose(found_session->file);
+            session_tree->search_release(session_tree);
             session_tree->search_release(session_tree);
 
-            xfp_tree->remove(xfp_tree, &xfp);
+            session_tree->remove(session_tree, &session);
             session_tree->remove(session_tree, &session);
             return 1;
         }
@@ -1593,13 +1486,13 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *xfp
         build_packet(&temp_packet, MSG_RESEND, signing_keys->public, NULL, NULL, 0);
         ((transmission_control_data_t *)(temp_packet.data))->serial = ((file_chunk_data_t *)packet->data)->serial;
 
-        for (range_node = found_xfp->missing_range_ll; range_node != NULL; range_node = range_node->next) {
+        for (range_node = found_session->missing_range_ll; range_node != NULL; range_node = range_node->next) {
             // send a resend packet for each range we have
             ((transmission_control_data_t *)(temp_packet.data))->range = range_node->r;
             // send the packet
             ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, sockets, &temp_packet, flag);
             if (ret) {
-                xfp_tree->search_release(xfp_tree);
+                session_tree->search_release(session_tree);
                 session_tree->search_release(session_tree);
                 switch (ret) {
                     case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
@@ -1622,38 +1515,38 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *xfp
         }
         range_node = NULL;
 
-        xfp_tree->search_release(xfp_tree);
+        session_tree->search_release(session_tree);
         session_tree->search_release(session_tree);
         return 1;
     }
-    if (chunk_number > found_xfp->last_chunk) {
+    if (chunk_number > found_session->last_chunk) {
         // we lost a packet, send a re-send packet
 
         range_node = malloc(sizeof(range_node_t));
         if (!range_node) {
-            xfp_tree->search_release(xfp_tree);
+            session_tree->search_release(session_tree);
             session_tree->search_release(session_tree);
             log_fatal("[file_chunk_routine] malloc failed allocating %d bytes for "
                       "missing packet range node | return %d",
                       -1);
             return -1;
         }
-        range_node->r.start = found_xfp->last_chunk;
+        range_node->r.start = found_session->last_chunk;
         range_node->r.end = chunk_number - 1;
-        tmp_ptr = found_xfp->missing_range_ll;
+        tmp_ptr = found_session->missing_range_ll;
         range_node->next = tmp_ptr;
-        found_xfp->missing_range_ll = range_node;
+        found_session->missing_range_ll = range_node;
         range_node = NULL;
 
         // create the packet
         build_packet(&temp_packet, MSG_RESEND, signing_keys->public, NULL, NULL, 0);
         ((transmission_control_data_t *)(temp_packet.data))->serial = ((file_chunk_data_t *)packet->data)->serial;
-        ((transmission_control_data_t *)(temp_packet.data))->range.start = found_xfp->last_chunk;
+        ((transmission_control_data_t *)(temp_packet.data))->range.start = found_session->last_chunk;
         ((transmission_control_data_t *)(temp_packet.data))->range.end = chunk_number - 1;
         // send the packet
         ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, sockets, &temp_packet, flag);
         if (ret) {
-            xfp_tree->search_release(xfp_tree);
+            session_tree->search_release(session_tree);
             session_tree->search_release(session_tree);
             switch (ret) {
                 case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
@@ -1677,22 +1570,22 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *xfp
     // set the position in the file (we are not writing necessarily at the end of the last
     // write)
     if (chunk_number * PAC_DATA_PAYLOAD_BYTES < LLONG_MAX) {
-        fseeko64(found_xfp->file, (long long)(chunk_number * PAC_DATA_PAYLOAD_BYTES), SEEK_SET);
+        fseeko64(found_session->file, (long long)(chunk_number * PAC_DATA_PAYLOAD_BYTES), SEEK_SET);
     }
     else {
         // not very sure who owns a file bigger than 2 exbi-bytes, but why not
-        fseeko64(found_xfp->file, LLONG_MAX, SEEK_SET);
-        fseeko64(found_xfp->file, (long long)((chunk_number * PAC_DATA_PAYLOAD_BYTES) - LLONG_MAX), SEEK_CUR);
+        fseeko64(found_session->file, LLONG_MAX, SEEK_SET);
+        fseeko64(found_session->file, (long long)((chunk_number * PAC_DATA_PAYLOAD_BYTES) - LLONG_MAX), SEEK_CUR);
     }
 
-    ret_val = fwrite(((file_chunk_data_t *)packet->data)->data, 1, PAC_DATA_PAYLOAD_BYTES, found_xfp->file);
+    ret_val = fwrite(((file_chunk_data_t *)packet->data)->data, 1, PAC_DATA_PAYLOAD_BYTES, found_session->file);
     if (ret_val != PAC_DATA_PAYLOAD_BYTES) {
-        xfp_tree->search_release(xfp_tree);
+        session_tree->search_release(session_tree);
         session_tree->search_release(session_tree);
         log_fatal("[file_chunk_routine] send_packet fwrite failed writing file chunk "
                   "to file | return %d | errno %d",
                   -1, errno);
-        ret = ferror(found_xfp->file);
+        ret = ferror(found_session->file);
         // todo: here are all the errors of fwrite, handle them. these are bad errors, most of
         // them
         switch (ret) {
@@ -1709,28 +1602,28 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *xfp
                 break;
         }
     }
-    if (chunk_number >= found_xfp->last_chunk)
-        found_xfp->last_chunk = chunk_number + 1;
+    if (chunk_number >= found_session->last_chunk)
+        found_session->last_chunk = chunk_number + 1;
     found_session->bytes_moved += PAC_DATA_PAYLOAD_BYTES;
-    ++(found_xfp->packets_writen);
+    ++(found_session->packets_writen);
 
-    if (found_xfp->packets_writen == found_xfp->packet_count) {
+    if (found_session->packets_writen == found_session->total_packet_count) {
         // the missing packets should be NULL but well it does not hurt to check
-        for (range_node_t *r = found_xfp->missing_range_ll; r != NULL; r = prev_node) {
+        for (range_node_t *r = found_session->missing_range_ll; r != NULL; r = prev_node) {
             prev_node = r->next;
             free(prev_node);
         }
         // TODO: rename the file
-        fclose(found_xfp->file);
-        xfp_tree->search_release(xfp_tree);
+        fclose(found_session->file);
+        session_tree->search_release(session_tree);
         session_tree->search_release(session_tree);
 
-        xfp_tree->remove(xfp_tree, &xfp);
+        session_tree->remove(session_tree, &session);
         session_tree->remove(session_tree, &session);
         return 1;
     }
 
-    xfp_tree->search_release(xfp_tree);
+    session_tree->search_release(session_tree);
     session_tree->search_release(session_tree);
 
     return 0;
