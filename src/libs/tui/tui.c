@@ -1455,6 +1455,7 @@ void *ui_thread(UI_ARGS *args)
     EFLAG *ui_flag;
     EFLAG *ph_flag;
     EFLAG *send_flag;
+    EFLAG *wake_flag;
     unsigned char pk[crypto_sign_PUBLICKEYBYTES];
 
 
@@ -1542,18 +1543,20 @@ void *ui_thread(UI_ARGS *args)
     init_pair(12, COLOR_BLACK, COLOR_WHITE);
 
     //first verify the user and then wait for the manager to pass the rest of the arguments
+    pthread_mutex_lock(&(args->ui_mutex));
     ret = verify_user(&(args->master_key));
     if (ret != 0) {
         endwin();
         *process_return = ret;
         return process_return;
     }
+    args->turn = 0;
+
     pthread_cond_broadcast(&(args->ui_cond));
 
-    pthread_mutex_lock(&(args->ui_mutex));
-    while (args->ready == 0) pthread_cond_wait(&(args->ui_cond), &(args->ui_mutex));
+    while (args->turn != 1) pthread_cond_wait(&(args->ui_cond), &(args->ui_mutex));
+    
     pthread_mutex_unlock(&(args->ui_mutex));
-
     //copy and free the arguments
     dev_tree = args->dev_tree;
     file_tree = args->file_tree;
@@ -1564,6 +1567,7 @@ void *ui_thread(UI_ARGS *args)
     ui_flag = args->ui_flag;
     ph_flag = args->ph_flag;
     send_flag = args->send_flag;
+    wake_flag = args->wake_flag;
     memcpy(pk, args->pk, crypto_sign_PUBLICKEYBYTES);
 
     pthread_mutex_destroy(&(args->ui_mutex));
@@ -1967,6 +1971,7 @@ void *ui_thread(UI_ARGS *args)
         }
         doupdate();
     }
+
     if (dev_IDs != NULL) {
         for (int i = 0; i < id_count; ++i) {
             free(dev_IDs[i]);
@@ -1981,6 +1986,8 @@ void *ui_thread(UI_ARGS *args)
     }
     delwin(device_pad);
     endwin();
+    set_event_flag(ui_flag, EF_TERMINATION);
+    set_event_flag(wake_flag, EF_WAKE_MANAGER);
     return process_return;
 
 cleanup:
@@ -1998,5 +2005,7 @@ cleanup:
     }
     delwin(device_pad);
     endwin();
+    set_event_flag(ui_flag, EF_TERMINATION);
+    set_event_flag(wake_flag, EF_WAKE_MANAGER);
     return process_return;
 }

@@ -107,13 +107,11 @@ int thread_manager(uint32_t address, uint16_t port)
         return process_return;
     }
     pthread_mutex_lock(&(ui_args->ui_mutex));
-    while (ui_args->ready == 0) {
+    while (ui_args->turn != 0) {
         pthread_cond_wait(&(ui_args->ui_cond), &(ui_args->ui_mutex));
     }
-    ui_args->ready = 0;
     master_key = ui_args->master_key;
     ui_args->master_key = NULL;
-    pthread_mutex_unlock(&(ui_args->ui_mutex));
 
     // allocate memory for the return value
     flag = create_event_flag();
@@ -265,9 +263,7 @@ int thread_manager(uint32_t address, uint16_t port)
         goto cleanup;
     }
 
-
     //fill the ui arguments and signal the condition
-    pthread_mutex_lock(&(ui_args->ui_mutex));
     ui_args->dev_tree = device_tree;
     ui_args->file_tree = file_tree;
     ui_args->known_key_tree = known_key_tree;
@@ -277,14 +273,14 @@ int thread_manager(uint32_t address, uint16_t port)
     ui_args->ui_flag = ui_flag;
     ui_args->send_flag = send_args->flag;
     ui_args->ph_flag = handler_args->flag;
+    ui_args->wake_flag = flag;
     memcpy(ui_args->pk, signing_pk, crypto_sign_PUBLICKEYBYTES);
-    ui_args->ready = 1;
+    ui_args->turn = 1;
     pthread_mutex_unlock(&(ui_args->ui_mutex));
 
     pthread_cond_broadcast(&(ui_args->ui_cond));
     //the ui thread frees its arguments so if we access them by accident we will create a use after free
     ui_args = NULL;
-
     // the main loop
     while (1) {
         pthread_mutex_lock(&(flag->mutex));
@@ -325,6 +321,11 @@ int thread_manager(uint32_t address, uint16_t port)
         if (flag_val & EF_TERMINATION) {
             // for now, we terminate the whole operation, later we may pause or continue as we are
             log_info("[thread_manager_thread] receive thread terminated");
+            goto cleanup;
+        }
+        flag_val = get_event_flag(ui_flag);
+        if (flag_val & EF_TERMINATION) {
+            log_info("[thread_manager_thread] ui thread terminated");
             goto cleanup;
         }
     }
@@ -785,7 +786,7 @@ int create_ui_thread(UI_ARGS **args, pthread_t *tid)
     }
 
     (*args)->master_key = NULL;
-    (*args)->ready = 0;
+    (*args)->turn = 1;
 
     if (pthread_create(&thread, NULL, (void *)(&ui_thread), ui_args)) {
         pthread_mutex_destroy(&((*args)->ui_mutex));

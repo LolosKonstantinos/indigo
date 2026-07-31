@@ -47,10 +47,11 @@ typedef struct UI_ARGS {
     EFLAG *ui_flag;
     EFLAG *ph_flag;
     EFLAG *send_flag;
+    EFLAG *wake_flag;
     unsigned char pk[crypto_sign_PUBLICKEYBYTES];
     pthread_mutex_t ui_mutex;
     pthread_cond_t ui_cond;
-    uint64_t ready;
+    uint64_t turn;
 }UI_ARGS;
 
 int verify_user(void **master_key);
