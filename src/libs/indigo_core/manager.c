@@ -549,7 +549,7 @@ cleanup:
         free(sockets);
     }
 
-    free(mempool);
+    free_mempool(mempool);
 
     free_tree(device_tree);
     free_tree(file_tree);

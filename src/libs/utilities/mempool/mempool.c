@@ -244,10 +244,11 @@ void free_mempool(mempool_t * const pool)
     }
 
     // free the pool structure
-    free(pool);
     pthread_mutex_unlock(&pool->mutex);
 
     pthread_mutex_destroy(&pool->mutex);
+
+    free(pool);
 }
 
 void *mempool_dalloc(mempool_t * const pool)

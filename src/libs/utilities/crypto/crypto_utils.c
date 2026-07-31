@@ -972,10 +972,10 @@ int decrypt_packet(packet_t *packet, unsigned char rk[crypto_kx_SESSIONKEYBYTES]
         return INDIGO_SUCCESS;
     }
     if (ret == -1) {
-        //log_warn("[decrypt_packet] attempt to decrypt invalid packet | return %d ",INDIGO_ERROR_INVALID_PACKET);
+        log_warn("[decrypt_packet] attempt to decrypt invalid packet | return %d ",INDIGO_ERROR_INVALID_PACKET);
         return INDIGO_ERROR_INVALID_PACKET;
     }
-    //log_error("unknown error in decrypt packet | return %d", INDIGO_ERROR);
+    log_error("unknown error in decrypt packet | return %d", INDIGO_ERROR);
     return INDIGO_ERROR;
 }
 

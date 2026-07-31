@@ -369,8 +369,9 @@ int test_encryption(){
     crypto_kx_keypair(cpk, csk);
     ret = crypto_kx_client_session_keys(rk,tk, cpk, csk, spk);
 
-    ret = encrypt_packet(&packet, tk,NULL);
-    if (ret) return TEST_FAILED;
+    ret = encrypt_packet(&packet, tk, NULL);
+    if (ret)
+        return TEST_FAILED;
 
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &start);
 
