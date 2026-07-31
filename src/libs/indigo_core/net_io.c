@@ -1769,13 +1769,10 @@ int *recv_thread(RECV_ARGS *args)
         }
     }
     free(recv_events);
-#ifdef _WIN32
-    WSACloseEvent(args->termination_handle);
-    WSACloseEvent(args->wake_handle);
-#else
-    close(args->termination_fd);
-    close(args->wake_fd);
-#endif
+
+    close(epoll_fd);
+    close(multicast_recv_socket);
+
     *process_return = INDIGO_SUCCESS;
     log_info("[recv_thread] receive thread successful exit | return %d", INDIGO_SUCCESS);
     return process_return;
@@ -1786,13 +1783,6 @@ cleanup:
     free(recv_events);
     close(epoll_fd);
     close(multicast_recv_socket);
-#ifdef _WIN32
-    WSACloseEvent(args->termination_handle);
-    WSACloseEvent(args->wake_handle);
-#else
-    close(args->termination_fd);
-    close(args->wake_fd);
-#endif
 
     return process_return;
 }
@@ -1818,8 +1808,6 @@ int *send_thread(SEND_ARGS *args)
     if (process_return == NULL) {
         set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
-        destroy_queue(args->queue);
-        free(args->queue);
         log_fatal("[send_thread] malloc failed allocating %d bytes for thread return value | return NULL", sizeof(int));
         return NULL;
     }
@@ -1829,8 +1817,6 @@ int *send_thread(SEND_ARGS *args)
     if (!active_files) {
         set_event_flag(args->flag, EF_TERMINATION);
         set_event_flag(args->wake, EF_WAKE_MANAGER);
-        destroy_queue(args->queue);
-        free(args->queue);
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_fatal("[send_thread] new_lht() failed creating linked hash table for active files | return %d | errno %d",
                   INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR, errno);
@@ -1861,8 +1847,6 @@ int *send_thread(SEND_ARGS *args)
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
                 delete_lht(active_files);
-                destroy_queue(args->queue);
-                free(args->queue);
                 *process_return = ret;
                 log_fatal("[send_thread] send_discovery_packets() failed while sending multiple packets on request | "
                           "return %d",
@@ -1901,8 +1885,6 @@ int *send_thread(SEND_ARGS *args)
                     set_event_flag(args->flag, EF_TERMINATION);
                     set_event_flag(args->wake, EF_WAKE_MANAGER);
                     delete_lht(active_files);
-                    destroy_queue(args->queue);
-                    free(args->queue);
                     *process_return = ret;
                     log_info("[send_thread] send_packet() failed | return %d", *process_return);
                     return process_return;
@@ -1934,8 +1916,6 @@ int *send_thread(SEND_ARGS *args)
                         set_event_flag(args->flag, EF_TERMINATION);
                         set_event_flag(args->wake, EF_WAKE_MANAGER);
                         delete_lht(active_files);
-                        destroy_queue(args->queue);
-                        free(args->queue);
                         *process_return = ret;
                         log_fatal("[send_thread] send_file_packet() failed while re-sending file chunk | return %d",
                                   ret);
@@ -1985,8 +1965,6 @@ int *send_thread(SEND_ARGS *args)
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
                 delete_lht(active_files);
-                destroy_queue(args->queue);
-                free(args->queue);
                 *process_return = ret;
                 log_fatal("[send_thread] send_next_file_packet() failed | return %d", ret);
                 return process_return;
@@ -2024,8 +2002,6 @@ int *send_thread(SEND_ARGS *args)
             set_event_flag(args->flag, EF_TERMINATION);
             set_event_flag(args->wake, EF_WAKE_MANAGER);
             delete_lht(active_files);
-            destroy_queue(args->queue);
-            free(args->queue);
             *process_return = ret;
             log_fatal(
                 "[send_thread] send_discovery_packets() failed while sending scheduled discovery packets | return %d",
@@ -2060,8 +2036,6 @@ int *send_thread(SEND_ARGS *args)
                 set_event_flag(args->flag, EF_TERMINATION);
                 set_event_flag(args->wake, EF_WAKE_MANAGER);
                 delete_lht(active_files);
-                destroy_queue(args->queue);
-                free(args->queue);
                 *process_return = INDIGO_ERROR_INVALID_STATE;
                 log_fatal("[send_thread] pthread_cond_timedwait() failed | return %d | errno %d", *process_return,
                           errno);
@@ -2071,8 +2045,6 @@ int *send_thread(SEND_ARGS *args)
                 if (args->flag->event_flag & EF_TERMINATION) {
                     pthread_mutex_unlock(&(args->flag->mutex));
                     delete_lht(active_files);
-                    destroy_queue(args->queue);
-                    free(args->queue);
                     *process_return = INDIGO_SUCCESS;
                     log_info("[send_thread] send thread successful exit | return %d", *process_return);
                     return process_return;
@@ -2083,8 +2055,6 @@ int *send_thread(SEND_ARGS *args)
     }
 
     delete_lht(active_files);
-    destroy_queue(args->queue);
-    free(args->queue);
     log_info("[send_thread] send thread successful exit | return %d", *process_return);
     return process_return;
 }

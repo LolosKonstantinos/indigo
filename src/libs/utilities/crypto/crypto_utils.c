@@ -705,7 +705,7 @@ int cmp_password_hash(const char *psw, const uint64_t psw_len)
     int ret = 0;
 
     if (psw == NULL || psw_len == 0) {
-        return -1;
+        return 1;
     }
 
     ret = load_password_hash(&stored_hash);

@@ -1555,7 +1555,7 @@ void *ui_thread(UI_ARGS *args)
     pthread_cond_broadcast(&(args->ui_cond));
 
     while (args->turn != 1) pthread_cond_wait(&(args->ui_cond), &(args->ui_mutex));
-    
+
     pthread_mutex_unlock(&(args->ui_mutex));
     //copy and free the arguments
     dev_tree = args->dev_tree;
@@ -1591,7 +1591,7 @@ void *ui_thread(UI_ARGS *args)
     pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
 
     // the main loop
-    while (1) {
+    while (!termination_is_on(ui_flag)) {
         ret = get_user_input(device_pad, &ch);
         if (ret == KEY_CODE_YES) {
             // function keys

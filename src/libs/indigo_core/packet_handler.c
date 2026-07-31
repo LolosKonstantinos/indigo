@@ -465,8 +465,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     }
 
     free_tree(xsr_tree);
-    destroy_queue(args->queue);
-    free(args->queue);
     log_info("[packet_handler_thread] thread successful exit");
     return process_return;
 
@@ -476,8 +474,6 @@ cleanup:
 
     set_event_flag(args->flag, EF_TERMINATION);
     set_event_flag(args->wake, EF_WAKE_MANAGER);
-    destroy_queue(args->queue);
-    free(args->queue);
     log_info("[packet_handler_thread] thread exit with errors");
     return process_return;
 }

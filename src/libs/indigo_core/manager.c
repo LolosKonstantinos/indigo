@@ -440,13 +440,23 @@ cleanup:
     // send
     if (pthread_equal(tid_send, pthread_self()) == 0) {
         if (send_args) {
-            free(send_args->flag);
+            free_event_flag(send_args->flag);
+            destroy_queue(send_args->queue);
+            free(send_args->queue);
             free(send_args);
+
         }
     }
     // receive
     if (pthread_equal(tid_receive, pthread_self()) == 0) {
         if (recv_args) {
+#ifdef _WIN32
+            WSACloseEvent(recv_args->termination_handle);
+            WSACloseEvent(recv_args->wake_handle);
+#else
+            close(recv_args->termination_fd);
+            close(recv_args->wake_fd);
+#endif
             free_event_flag(recv_args->flag);
             free(recv_args);
         }
@@ -454,6 +464,11 @@ cleanup:
     // updater
     if (pthread_equal(tid_update, pthread_self()) == 0) {
         if (update_args) {
+#ifdef _WIN32
+            WSACloseEvent(update_args->termination_handle);
+#else
+            close(update_args->termination_fd);
+#endif
             free_event_flag(update_args->flag);
             free(update_args);
         }
@@ -462,6 +477,8 @@ cleanup:
     if (pthread_equal(tid_handler, pthread_self()) == 0) {
         if (handler_args) {
             free_event_flag(handler_args->flag);
+            destroy_queue(handler_args->queue);
+            free(handler_args->queue);
             free(handler_args);
         }
     }

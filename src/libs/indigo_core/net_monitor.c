@@ -949,25 +949,24 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args)
         }
 
     }
-#ifdef _WIN32
-    WSACloseEvent(update_args->termination_handle);
-#else
+    
+#ifdef __linux__
     write(args->termination_fd, &termination_val, 8);
-#endif
     close(sock);
     close(epoll_fd);
+#endif
+
     log_info("[interface_updater_thread] interface updater thread successful exit | return %d", *process_return);
     return process_return;
 cleanup:
-#ifdef _WIN32
-WSACloseEvent(update_args->termination_handle);
-#else
+#ifdef __linux__
     write(args->termination_fd, &termination_val, 8);
-#endif
     if (sock >= 0)
         close(sock);
     if (epoll_fd >= 0)
         close(epoll_fd);
     return process_return;
+#endif
+
 }
 #endif
