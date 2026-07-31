@@ -43,9 +43,6 @@ typedef struct xsr_t {
     unsigned char *skx;
 } xsr_t;
 
-// packet_number takes this value when the xfp is used to store the file of a file we want to send
-#define XFP_CLIENT_FILE 0
-
 typedef struct PACKET_HANDLER_ARGS {
     EFLAG *flag;
     EFLAG *wake;
@@ -78,7 +75,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
                           unsigned char pk[crypto_sign_PUBLICKEYBYTES], socket_ll *sockets, EFLAG *flag);
 
 int create_client_session(const packet_t *packet, const packet_info_t *packet_info, tree_t *dev_tree,
-                          tree_t *session_tree, QUEUE *send_queue);
+                          tree_t *session_tree, QUEUE *send_queue, EFLAG *send_flag);
 
 int init_packet_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *xsr_tree,
                         tree_t *known_keys_tree, char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1],

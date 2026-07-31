@@ -78,6 +78,12 @@ SOFTWARE.
 #define KNOWN_KEY_STATUS_BAD 0x0020
 #define KNOWN_KEY_STATUS_EVIL_AND_SINISTER 0x0040
 
+// packet_number takes this value when the xfp is used to store the file of a file we want to send
+#define SESSION_FLAG_CLIENT_FILE 0x0001
+#define SESSION_FLAG_ACTIVE      0x0002
+#define SESSION_FLAG_UPSTREAM    0x0004
+
+
 #define PAC_VERSION (1)
 #define DISCOVERY_SEND_PERIOD_SEC (10)
 

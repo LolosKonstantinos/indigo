@@ -1793,7 +1793,7 @@ void *ui_thread(UI_ARGS *args)
 
                             memcpy(esr->session_id.pk, last_id, crypto_sign_PUBLICKEYBYTES);
 
-                            randombytes(nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
+                            randombytes_buf(nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
                             build_packet(&(fwd_packet->packet), MSG_FILE_SENDING_REQUEST, pk, nonce, NULL, 0);
 
                             memcpy(rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);

@@ -243,7 +243,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         if (packet->magic_number != MAGIC_NUMBER_2)
                             break;
                         ret = create_client_session(packet, packet_info, args->device_tree, args->session_tree,
-                                                    args->send_queue);
+                                                    args->send_queue, TODO);
                         if (ret) {
                             *process_return = ret;
                             log_fatal("[packet_handler_thread] failed to create client session | "
@@ -310,13 +310,14 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
             }
             else if (node->type == QET_EXPECT_SEND_RESPONSE) {
                 log_debug("[packet_handler_thread] received expect send response via queue");
-                Q_EXPECT_SEND_RESPONSE *qe = (Q_EXPECT_SEND_RESPONSE *)node->data;
+                Q_EXPECT_SEND_RESPONSE *qe = node->data;
                 // we sent a request to send a file, and we expect a response to that request
                 memset(&session, 0, sizeof(session_t));
                 memcpy(&(session.session_id), &(qe->session_id), sizeof(session_id_t));
                 session.file = qe->file;
                 session.timestamp = time(NULL);
-                session.total_packet_count = XFP_CLIENT_FILE;
+                session.total_packet_count = 0;
+                session.status_flags |= SESSION_FLAG_CLIENT_FILE;
                 log_debug("[packet_handler_thread] expecting response for %llu", qe->session_id.serial);
                 free(node->data);
                 destroy_qnode(node);
@@ -505,7 +506,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     session_t session;
     unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
     file_sending_response_data_t file_sending_response_data = {0};
-    char file_name[2 * sizeof(session_id_t) + 1 + 9] = INDIGO_TEMP_DIR;
+    char file_name[2 * sizeof(session_id_t) + 1] = INDIGO_TEMP_DIR;
     char xpath[PATH_MAX];
     char *initial_cwd;
 
@@ -524,21 +525,25 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
 
     // necessary allocations
     packet = malloc(sizeof(struct udp_packet_t));
+    if (packet == NULL) {
+        log_error("[create_server_session] memory allocation failed");
+        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+    }
 
-    // zero out the xfp. Not sure if this is necessary, probably will be optimized out by the compiler
+    // zero out the session Not sure if this is necessary, probably will be optimized out by the compiler
     memset(&session, 0, sizeof(session_t));
     // create the file we will write to
     for (int i = 0; i < crypto_sign_PUBLICKEYBYTES; ++i) {
         sprintf(file_name + (2 * i), "%02x", (session.session_id.pk)[i]);
     }
-    sprintf(file_name, "%016lx", session.session_id.serial);
+    sprintf(file_name + (2*crypto_sign_PUBLICKEYBYTES), "%016lx", session.session_id.serial);
     file_name[2 * sizeof(session_id_t)] = '\0';
 
     initial_cwd = g_get_current_dir();
     get_source_dir(xpath);
     chdir(xpath);
 
-    session.file = fopen(file_name, "wb");
+    session.file = fopen(file_name, "w");
     if (!session.file) {
         chdir(initial_cwd);
         g_free(initial_cwd);
@@ -582,13 +587,15 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     session.packets_writen = 0;
     session.last_chunk = 0;
     session.missing_range_ll = NULL;
-    session.file = NULL;
+    session.start_time = session.timestamp;
+    session.end_time = session.timestamp;
     session.bytes_moved = 0;
-    session.start_time = time(NULL);
-    session.status_flags = 0;
     session.ip = fwd->addr;
+    session.status_flags = SESSION_FLAG_ACTIVE;
+
     session.session_id.serial = file_sending_response_data.serial;
     memcpy(session.session_id.pk, fwd->id, crypto_sign_PUBLICKEYBYTES);
+
 
     ret = session_tree->insert(session_tree, &session);
     if (ret) {
@@ -604,7 +611,7 @@ cleanup:
 }
 
 int create_client_session(const packet_t *const packet, const packet_info_t *const packet_info, tree_t *dev_tree,
-                          tree_t *session_tree, QUEUE *send_queue)
+                          tree_t *session_tree, QUEUE *send_queue, EFLAG *send_flag)
 {
     // we got their one time public key, and confirmation to proceed
     // we calculate the send key
@@ -617,58 +624,60 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
 
     // check if the peer is in the device tree (if they are not, we shouldn't create a session)
     ret = dev_tree->search(dev_tree, &rdev);
-    if (ret == 0)
-        goto cleanup;
+    if (ret == 0) return 1;
+    if (rdev.session_keys == NULL) return 1;
 
     // add an expected file packet (xfp) for this session
     memcpy(&(session.session_id.pk), packet->id, crypto_sign_PUBLICKEYBYTES);
     session.session_id.serial = ((file_sending_response_data_t *)(packet->data))->serial;
-    /*We sent a packet with a seral to begin a session.
-     * we created an xfp with that serial. (don't worry there is an expiration time, it will not stay forever).
+    /*We sent a packet with a serial to begin a session.
+     * we created an session with that serial. (don't worry there is an expiration time, it will not stay forever).
      * we expect a response with the serial we sent (it is an identifier for that session that is being created).
      * If we don't receive a response, nothing should happen.
      */
     // if the session id is not found, then the returned serial is not valid, and the session is rejected
-    ret = session_tree->search(session_tree, &session);
+    ret = session_tree->search_pin(session_tree, &session, (void **)&found_session);
     if (ret == 0) {
+        tree_unlock(session_tree);
         ret = INDIGO_ERROR_PEER_NOT_FOUND;
         log_warn("[create_client_session] peer not found in expected files tree. Can not create client session");
-        goto cleanup;
+        return 1;
     }
 
     // if they sent us a serial of a file we are receiving then we reject.
     //(an attacker or a badly writen mod, either way me not happy).
-    if (session.total_packet_count != XFP_CLIENT_FILE) {
+    if ((session.status_flags & SESSION_FLAG_CLIENT_FILE) == 0) {
         // we don't goto cleanup here. we don't want to remove an active file
-        log_warn("[create_client_session] peer not found in expected files tree. Can not create client session");
+        tree_unlock(session_tree);
+        log_warn("[create_client_session] peer not found in session tree. Can not create client session");
         return INDIGO_ERROR_INVALID_PEER_PARAM;
     }
 
     // necessary allocations
-    tmp_active_file = malloc(sizeof(active_file_t));
-    found_session = malloc(sizeof(session_t));
-    if (!found_session || !tmp_active_file) {
-        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        log_error("[create_client_session] malloc failed allocating %d+%dB for active file and session | return %d",
-                  sizeof(active_file_t), sizeof(session_t), ret);
-        goto cleanup;
-    }
 
-    memcpy(&(found_session->session_id), &(session.session_id), sizeof(session_id_t));
+    found_session->timestamp = time(NULL);
+    found_session->packets_writen = 0;
+    found_session->last_chunk = 0;
     found_session->bytes_moved = 0;
+    found_session->missing_range_ll = NULL;
     found_session->start_time = time(NULL);
-    found_session->status_flags = 0;
+    found_session->end_time = time(NULL);
+    found_session->status_flags = SESSION_FLAG_ACTIVE | SESSION_FLAG_UPSTREAM;
     found_session->ip = packet_info->address.sin_addr.s_addr;
+    tree_unlock(session_tree);
 
-    ret = session_tree->insert(session_tree, found_session);
-    if (ret) {
-        log_error("[create_client_session] session insert failed | return %d", ret);
-        goto cleanup;
+    tmp_active_file = malloc(sizeof(active_file_t));
+    if (tmp_active_file == NULL) {
+        log_error("[create_client_session] malloc failed");
+        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
 
-    tmp_active_file->fd = session.file; // todo xfp should contain a file descriptor, as for now it is not initialized
+    tmp_active_file->fd = session.file;
     tmp_active_file->counter = 0;
     tmp_active_file->next = NULL;
+    tmp_active_file->tk = rdev.session_keys->client_tk;
+    tmp_active_file->port = PORT;
+    randombytes_buf(tmp_active_file->nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
     memcpy(tmp_active_file->session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
     tmp_active_file->session_id.serial = ((file_sending_response_data_t *)(packet->data))->serial;
 
@@ -677,14 +686,12 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
         log_error("[create_client_session] queue_push failed pushing active file to send queue | return %d", ret);
         goto cleanup;
     }
+    set_event_flag(send_flag, EF_CHECK_QUEUE);
 
-    session_tree->remove(session_tree, &session);
     return 0;
 
 cleanup:
     free(tmp_active_file);
-    free(found_session);
-    session_tree->remove(session_tree, &session);
     return ret;
 }
 
@@ -1369,7 +1376,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
         return 1;
     }
     // if it is a client file (we expect an accept response) we don't receive it
-    if (found_session->total_packet_count == XFP_CLIENT_FILE) {
+    if (found_session->status_flags & SESSION_FLAG_CLIENT_FILE) {
         session_tree->search_release(session_tree);
         return 1;
     }
@@ -1388,8 +1395,10 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
                 break;
             prev_node = range_node;
         }
-        if (range_node == NULL)
+        if (range_node == NULL) {
+            tree_unlock(session_tree);
             return 1;
+        }
 
         // remove the file chunk from the range
         if (range_node->r.start == range_node->r.end) {
@@ -1416,7 +1425,6 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
                 prev_node = malloc(sizeof(range_node_t));
                 if (!prev_node) {
                     // IDK do something
-                    session_tree->search_release(session_tree);
                     session_tree->search_release(session_tree);
                     return -1;
                 }
@@ -1457,8 +1465,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
                 case ENOMEM:
                 case ENXIO:
                 default:
-                    session_tree->search_release(session_tree);
-                    session_tree->search_release(session_tree);
+                    tree_unlock(session_tree);
                     break;
             }
             return 1;
@@ -1475,11 +1482,8 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
             }
             // TODO: rename the file
             fclose(found_session->file);
-            session_tree->search_release(session_tree);
-            session_tree->search_release(session_tree);
-
-            session_tree->remove(session_tree, &session);
-            session_tree->remove(session_tree, &session);
+            avl_delete_unlocked(session_tree, &session);
+            tree_unlock(session_tree);
             return 1;
         }
 
@@ -1492,8 +1496,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
             // send the packet
             ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, sockets, &temp_packet, flag);
             if (ret) {
-                session_tree->search_release(session_tree);
-                session_tree->search_release(session_tree);
+                tree_unlock(session_tree);
                 switch (ret) {
                     case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
                     case INDIGO_ERROR_INVALID_PARAM:
@@ -1511,21 +1514,21 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
                     default:
                         break; // winlib errors go here
                 }
+                return 1;
             }
         }
         range_node = NULL;
 
-        session_tree->search_release(session_tree);
-        session_tree->search_release(session_tree);
+        tree_unlock(session_tree);
         return 1;
     }
+
     if (chunk_number > found_session->last_chunk) {
         // we lost a packet, send a re-send packet
 
         range_node = malloc(sizeof(range_node_t));
         if (!range_node) {
-            session_tree->search_release(session_tree);
-            session_tree->search_release(session_tree);
+            tree_unlock(session_tree);
             log_fatal("[file_chunk_routine] malloc failed allocating %d bytes for "
                       "missing packet range node | return %d",
                       -1);
@@ -1546,8 +1549,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
         // send the packet
         ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, sockets, &temp_packet, flag);
         if (ret) {
-            session_tree->search_release(session_tree);
-            session_tree->search_release(session_tree);
+            tree_unlock(session_tree);
             switch (ret) {
                 case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
                 case INDIGO_ERROR_INVALID_PARAM:
@@ -1564,6 +1566,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
                 default:
                     break; // winlib errors go here
             }
+            return 1;
         }
     }
 
@@ -1580,14 +1583,12 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
 
     ret_val = fwrite(((file_chunk_data_t *)packet->data)->data, 1, PAC_DATA_PAYLOAD_BYTES, found_session->file);
     if (ret_val != PAC_DATA_PAYLOAD_BYTES) {
-        session_tree->search_release(session_tree);
-        session_tree->search_release(session_tree);
+        tree_unlock(session_tree);
         log_fatal("[file_chunk_routine] send_packet fwrite failed writing file chunk "
                   "to file | return %d | errno %d",
                   -1, errno);
         ret = ferror(found_session->file);
-        // todo: here are all the errors of fwrite, handle them. these are bad errors, most of
-        // them
+        // todo: here are all the errors of fwrite, handle them. these are bad errors, most of them
         switch (ret) {
             case EAGAIN:
             case EBADF:
@@ -1601,6 +1602,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
             default:
                 break;
         }
+        return -1;
     }
     if (chunk_number >= found_session->last_chunk)
         found_session->last_chunk = chunk_number + 1;
@@ -1615,17 +1617,12 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
         }
         // TODO: rename the file
         fclose(found_session->file);
-        session_tree->search_release(session_tree);
-        session_tree->search_release(session_tree);
-
-        session_tree->remove(session_tree, &session);
-        session_tree->remove(session_tree, &session);
+        avl_delete_unlocked(session_tree, &session);
+        tree_unlock(session_tree);
         return 1;
     }
 
-    session_tree->search_release(session_tree);
-    session_tree->search_release(session_tree);
-
+    tree_unlock(session_tree);
     return 0;
 }
 
