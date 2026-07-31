@@ -1262,6 +1262,7 @@ int print_device(WINDOW *win, remote_device_t *rdev, int row, char highlight)
         wattron(win, COLOR_PAIR(3));
         wprintw(win, " (%d)", rdev->fsr_count);
         wattroff(win, COLOR_PAIR(3));
+        log_debug("[print_device] device has fsr %d", rdev->fsr_count);
     }
 
     if (highlight) {
@@ -1760,12 +1761,13 @@ void *ui_thread(UI_ARGS *args)
                             goto cleanup;
                         }
                         if (ret == 1) {
-                            halfdelay(1);
+                            halfdelay(10);
                             curs_set(0);
                             continue;
                         }
                         if (ret == 0) {
-                            halfdelay(1);
+                            log_debug("[ui_thread] selected file | return -1");
+                            halfdelay(10);
                             curs_set(0);
                             // send this to the queue
                             fwd_packet = malloc(sizeof(fwd_packet_t));

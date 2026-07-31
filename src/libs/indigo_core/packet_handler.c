@@ -241,7 +241,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                             break;
                         ret = create_client_session(packet, packet_info, args->device_tree, args->session_tree,
                                                     args->send_queue, args->send_flag);
-                        if (ret) {
+                        if (ret<0) {
                             *process_return = ret;
                             log_fatal("[packet_handler_thread] failed to create client session | "
                                       "return %d",
@@ -619,6 +619,7 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
     session_t session;
 
     // check if the peer is in the device tree (if they are not, we shouldn't create a session)
+    memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
     ret = dev_tree->search(dev_tree, &rdev);
     if (ret == 0) {
         log_error("[create_client_session] device not found");
