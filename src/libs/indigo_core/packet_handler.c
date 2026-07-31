@@ -87,7 +87,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     session_t session;
     session_t *found_session = NULL;
 
-
     void *remove_array = NULL;
     size_t remove_array_size = 0;
 
@@ -99,8 +98,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     tree_t *dev_tree = NULL;
 
     char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1] = {0};
-
-
 
     int ret = 0; // general purpose return variable
 
@@ -295,9 +292,10 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
             else if (node->type == QET_SESSION_START) {
                 // they sent us a send request and the user said yes
                 fwd = node->data;
-                ret = create_server_session(fwd, args->device_tree, session_tree, public_key, args->sockets, args->flag);
+                ret =
+                    create_server_session(fwd, args->device_tree, session_tree, public_key, args->sockets, args->flag);
                 free(fwd);
-                if (ret) {
+                if (ret<0) {
                     // todo: create_server_session() uses send_packet() and returns its errors
                     // todo: do more complex error handling
                     *process_return = ret;
@@ -323,14 +321,16 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 destroy_qnode(node);
                 node = NULL;
 
-
                 ret = session_tree->insert(session_tree, &session);
-                if (ret) {
+                if (ret<0) {
                     fclose(session.file);
                     *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
                     log_fatal("[packet_handler_thread] session_tree insert failed inserting client file| return %d",
                               *process_return);
                     goto cleanup;
+                }
+                if (ret>0) {
+                    fclose(session.file);
                 }
 
                 log_debug("[packet_handler_thread] expecting response success");
@@ -508,22 +508,21 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
 
     // there is no point to receive a file of 0 bytes, I mean we don't transfer metadata, so I guess there is no point
     if (fwd->file_size == 0) {
-        ret = 1;
         log_error("[create_server_session] file size is 0 | return %d", ret);
-        goto cleanup;
+        return 1;
     }
     memcpy(&(rdev.peer_pk), fwd->id, crypto_sign_PUBLICKEYBYTES);
     ret = dev_tree->search(dev_tree, &rdev);
     if (ret == 0) {
         log_warn("[create_server_session] peer not found in device tree. Can not create session");
-        return INDIGO_ERROR_INVALID_PEER_PARAM;
+        return 1;
     }
 
     // necessary allocations
     packet = malloc(sizeof(struct udp_packet_t));
     if (packet == NULL) {
         log_error("[create_server_session] memory allocation failed");
-        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        return -1;
     }
 
     // zero out the session Not sure if this is necessary, probably will be optimized out by the compiler
@@ -532,7 +531,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     for (int i = 0; i < crypto_sign_PUBLICKEYBYTES; ++i) {
         sprintf(file_name + (2 * i), "%02x", (session.session_id.pk)[i]);
     }
-    sprintf(file_name + (2*crypto_sign_PUBLICKEYBYTES), "%016lx", session.session_id.serial);
+    sprintf(file_name + (2 * crypto_sign_PUBLICKEYBYTES), "%016lx", session.session_id.serial);
     file_name[2 * sizeof(session_id_t)] = '\0';
 
     initial_cwd = g_get_current_dir();
@@ -543,7 +542,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     if (!session.file) {
         chdir(initial_cwd);
         g_free(initial_cwd);
-        ret = INDIGO_ERROR_CAN_NOT_OPEN_FILE;
+        ret = -1;
         log_error("[create_server_session] failed opening file %s for receiving | return %d |errno %d ", file_name, ret,
                   errno);
         goto cleanup;
@@ -564,12 +563,14 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
                  sizeof(file_sending_response_data_t));
     ret = encrypt_packet(packet, rdev.session_keys->server_tk, nonce);
     if (ret) {
+        ret = -1;
         log_error("[create_server_session] encrypt packet failed | return %d", ret);
         goto cleanup;
     }
 
     ret = send_packet(PORT, fwd->addr, sockets, packet, flag);
     if (ret) {
+        ret = -1;
         log_error("[create_server_session] send_packet failed sending file sending response| return %d", ret);
         goto cleanup; // it's up to the caller to handle these errors, we cant do anything
     }
@@ -591,7 +592,6 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
 
     session.session_id.serial = file_sending_response_data.serial;
     memcpy(session.session_id.pk, fwd->id, crypto_sign_PUBLICKEYBYTES);
-
 
     ret = session_tree->insert(session_tree, &session);
     if (ret) {
@@ -622,11 +622,11 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
     ret = dev_tree->search(dev_tree, &rdev);
     if (ret == 0) {
         log_error("[create_client_session] device not found");
-        return 0;
+        return 1;
     }
     if (rdev.session_keys == NULL) {
         log_error("[create_client_session] device has no session keys");
-        return 0;
+        return 1;
     }
 
     // add an expected file packet (xfp) for this session
@@ -643,7 +643,7 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
         tree_unlock(session_tree);
         ret = INDIGO_ERROR_PEER_NOT_FOUND;
         log_warn("[create_client_session] peer not found in expected files tree. Can not create client session");
-        return 0;
+        return 1;
     }
 
     // if they sent us a serial of a file we are receiving then we reject.
@@ -652,7 +652,7 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
         // we don't goto cleanup here. we don't want to remove an active file
         tree_unlock(session_tree);
         log_warn("[create_client_session] peer not found in session tree. Can not create client session");
-        return INDIGO_ERROR_INVALID_PEER_PARAM;
+        return 1;
     }
 
     // necessary allocations
@@ -671,7 +671,7 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
     tmp_active_file = malloc(sizeof(active_file_t));
     if (tmp_active_file == NULL) {
         log_error("[create_client_session] malloc failed");
-        return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        return -1;
     }
 
     tmp_active_file->fd = session.file;
@@ -685,6 +685,7 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
 
     ret = queue_push(send_queue, tmp_active_file, QET_SEND_FILE);
     if (ret != 0) {
+        ret = -1;
         log_error("[create_client_session] queue_push failed pushing active file to send queue | return %d", ret);
         goto cleanup;
     }
@@ -879,7 +880,6 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
         return -1;
     }
 
-
     // if the peer is verified we don't need to send a signing request
     memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
     ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev);
@@ -926,7 +926,8 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
             ret = dev_tree->insert(dev_tree, &rdev);
             if (ret < 0) {
                 log_fatal("[packet_handler_thread] device_tree insert failed inserting device"
-                          " from signing request | return %d", -1);
+                          " from signing request | return %d",
+                          -1);
                 return -1;
             }
         }
@@ -954,7 +955,8 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
             session_pk = NULL;
             session_sk = NULL;
             log_fatal("[signing_request_routine] crypto_kx_keypair() failed creating session keys"
-                      " | return %d", -1);
+                      " | return %d",
+                      -1);
             return -1;
         }
 
@@ -969,10 +971,8 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
         xsr.pkx = session_pk;
         xsr.skx = session_sk;
 
-
         memcpy(signing_response_data.pkx, session_pk, crypto_kx_PUBLICKEYBYTES);
         signing_response_data.zero = 0;
-
 
         ret = xsr_tree->insert(xsr_tree, &xsr);
         if (ret < 0) {
@@ -985,8 +985,10 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
             log_fatal("[signing_request_routine] xsr_tree insert failed | return %d", -1);
             return -1;
         }
-        if (ret == 0)log_debug("[signing_request_routine] xsr inserted");
-        if (!session_pk || !session_sk) log_debug("[signing_request_routine] keys are null");
+        if (ret == 0)
+            log_debug("[signing_request_routine] xsr inserted");
+        if (!session_pk || !session_sk)
+            log_debug("[signing_request_routine] keys are null");
     }
 
     build_packet(packet, MSG_SIGNING_RESPONSE, signing_keys->public, NULL, &signing_response_data,
@@ -997,7 +999,8 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
                                signing_keys->secret);
     if (ret) {
         log_fatal("[signing_request_routine] crypto_sign_detached() failed signing nonce for"
-                  " signing request | return %d", -1);
+                  " signing request | return %d",
+                  -1);
         return -1;
     }
 
@@ -1651,7 +1654,8 @@ int resend_routine(packet_t *packet, QUEUE *send_queue, EFLAG *send_flag)
     if (ret) {
         free(qdata);
         log_fatal("[resend_routine] queue_push failed pushing resend file chunk node to "
-                  "send thread | return %d", -1);
+                  "send thread | return %d",
+                  -1);
         return -1;
     }
     return 0;
@@ -1679,7 +1683,8 @@ int stop_file_transmission_routine(packet_t *packet, QUEUE *send_queue, EFLAG *s
     if (ret) {
         free(qdata);
         log_fatal("[stop_file_transmission_routine] queue_push failed pushing stop file transmission "
-                  "node to send thread | return %d",-1);
+                  "node to send thread | return %d",
+                  -1);
         return -1;
     }
     return 0;
@@ -1707,7 +1712,8 @@ int pause_file_transmission_routine(packet_t *packet, QUEUE *send_queue, EFLAG *
     if (ret) {
         free(qdata);
         log_fatal("[pause_file_transmission_routine] queue_push failed pushing pause file transmission "
-                  "node to send thread | return %d",-1);
+                  "node to send thread | return %d",
+                  -1);
         return -1;
     }
     return 0;
@@ -1735,7 +1741,8 @@ int continue_file_transmission_routine(packet_t *packet, QUEUE *send_queue, EFLA
     if (ret) {
         free(qdata);
         log_fatal("[continue_file_transmission_routine] queue_push failed pushing continue file "
-                  "transmission node to send thread | return %d",-1);
+                  "transmission node to send thread | return %d",
+                  -1);
         return -1;
     }
     return 0;
