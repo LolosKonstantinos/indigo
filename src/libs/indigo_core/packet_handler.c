@@ -620,8 +620,14 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
 
     // check if the peer is in the device tree (if they are not, we shouldn't create a session)
     ret = dev_tree->search(dev_tree, &rdev);
-    if (ret == 0) return 1;
-    if (rdev.session_keys == NULL) return 1;
+    if (ret == 0) {
+        log_error("[create_client_session] device not found");
+        return 0;
+    }
+    if (rdev.session_keys == NULL) {
+        log_error("[create_client_session] device has no session keys");
+        return 0;
+    }
 
     // add an expected file packet (xfp) for this session
     memcpy(&(session.session_id.pk), packet->id, crypto_sign_PUBLICKEYBYTES);
@@ -637,7 +643,7 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
         tree_unlock(session_tree);
         ret = INDIGO_ERROR_PEER_NOT_FOUND;
         log_warn("[create_client_session] peer not found in expected files tree. Can not create client session");
-        return 1;
+        return 0;
     }
 
     // if they sent us a serial of a file we are receiving then we reject.
