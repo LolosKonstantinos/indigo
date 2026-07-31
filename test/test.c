@@ -35,7 +35,7 @@ SOFTWARE.
 
 int main(void) {
     printf("testing indigo libraries...\n");
-    run_tests(test_arr,8);
+    run_tests(test_arr,9);
     return 0;
 }
 
@@ -345,6 +345,49 @@ int test_signature()
 
     ret = crypto_sign_verify_detached(((init_packet_data_t *)packet.data)->signature, (unsigned char *)&packet,
                             offsetof(packet_t, data) + offsetof(init_packet_data_t, signature), packet.id);
+    if (ret) return TEST_FAILED;
+
+    return TEST_PASSED;
+}
+int test_encryption(){
+    int ret;
+    struct timespec start, end;
+    uint64_t nanotime = 0;
+    alignas(8) packet_t packet, dummy_packet;
+    unsigned char spk[crypto_kx_PUBLICKEYBYTES];
+    unsigned char ssk[crypto_kx_SECRETKEYBYTES];
+    unsigned char cpk[crypto_kx_PUBLICKEYBYTES];
+    unsigned char csk[crypto_kx_SECRETKEYBYTES];
+    unsigned char rk[crypto_kx_SESSIONKEYBYTES];
+    unsigned char tk[crypto_kx_SESSIONKEYBYTES];
+
+
+    randombytes_buf(&packet, sizeof(packet_t));
+    memcpy(&dummy_packet, &packet, sizeof(packet_t));
+
+    crypto_kx_keypair(spk, ssk);
+    crypto_kx_keypair(cpk, csk);
+    ret = crypto_kx_client_session_keys(rk,tk, cpk, csk, spk);
+
+    ret = encrypt_packet(&packet, tk,NULL);
+    if (ret) return TEST_FAILED;
+
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &start);
+
+    decrypt_packet(&packet, rk);
+
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end);
+    nanotime = ((end.tv_sec - start.tv_sec) * 1000000000) + (end.tv_nsec - start.tv_nsec);
+    printf("\ndecrypt_fail: %lu ns\n", nanotime);
+
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &start);
+
+    ret = decrypt_packet(&packet, tk);
+
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end);
+    nanotime = ((end.tv_sec - start.tv_sec) * 1000000000) + (end.tv_nsec - start.tv_nsec);
+    printf("\ndecrypt_success: %lu ns\n", nanotime);
+
     if (ret) return TEST_FAILED;
 
     return TEST_PASSED;

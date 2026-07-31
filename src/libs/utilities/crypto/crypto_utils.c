@@ -944,10 +944,9 @@ int encrypt_packet(packet_t *packet, unsigned char tk[crypto_kx_SESSIONKEYBYTES]
                                                      PAC_ENCRYPT_BYTES, (unsigned char *)packet, PAC_ENCRYPT_OFFSET,
                                                      NULL, packet->nonce, tk);
     if (ret != 0) {
-        log_error("crypto_aead_xchacha20poly1305_ietf_encryp() failed | return %d",INDIGO_ERROR_INVALID_PARAM);
+        log_error("crypto_aead_xchacha20poly1305_ietf_encrypt() failed | return %d",INDIGO_ERROR_INVALID_PARAM);
         return INDIGO_ERROR_INVALID_PARAM;
     }
-    sodium_memzero(&(packet->zero), PAC_ENCRYPT_BYTES);
     memcpy(&(packet->zero), ciphertext, PAC_ENCRYPT_BYTES + crypto_aead_xchacha20poly1305_ietf_ABYTES);
 
     return INDIGO_SUCCESS;
@@ -957,25 +956,26 @@ int decrypt_packet(packet_t *packet, unsigned char rk[crypto_kx_SESSIONKEYBYTES]
 {
     int ret;
     unsigned long long decrypted_len;
+    packet_t tmp_packet;
     if (!packet || !rk)
         return INDIGO_ERROR_INVALID_PARAM;
 
-    ret = crypto_aead_xchacha20poly1305_ietf_decrypt((unsigned char *)&(packet->zero), &decrypted_len, NULL,
+    ret = crypto_aead_xchacha20poly1305_ietf_decrypt((unsigned char *)&(tmp_packet.zero), &decrypted_len, NULL,
                                                      (unsigned char *)&(packet->zero),
                                                      PAC_ENCRYPT_BYTES + crypto_aead_xchacha20poly1305_ietf_ABYTES,
                                                      (unsigned char *)packet, PAC_ENCRYPT_OFFSET, packet->nonce, rk);
-
     if (ret == 0) {
         // zero out the parts of the packet that is not data
+        memcpy(&(packet->zero), &(tmp_packet.zero), decrypted_len);
         sodium_memzero(((unsigned char *)&(packet->zero)) + decrypted_len,
                        PAC_ENCRYPT_BYTES + crypto_aead_xchacha20poly1305_ietf_ABYTES - decrypted_len);
         return INDIGO_SUCCESS;
     }
     if (ret == -1) {
-        log_warn("attempt to decrypt invalid packet | return %d ",INDIGO_ERROR_INVALID_PACKET);
+        //log_warn("[decrypt_packet] attempt to decrypt invalid packet | return %d ",INDIGO_ERROR_INVALID_PACKET);
         return INDIGO_ERROR_INVALID_PACKET;
     }
-    log_error("unknown error in decrypt packet | return %d", INDIGO_ERROR);
+    //log_error("unknown error in decrypt packet | return %d", INDIGO_ERROR);
     return INDIGO_ERROR;
 }
 

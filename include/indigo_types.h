@@ -88,11 +88,11 @@ SOFTWARE.
 #define DISCOVERY_SEND_PERIOD_SEC (10)
 
 #define PAC_DATA_PAYLOAD_BYTES (1 << 10)
-#define PAC_DATA_BYTES_USABLE (PAC_DATA_PAYLOAD_BYTES + (sizeof(uint64_t) << 1)) // 1KiB payload + 2 64bit ints
+#define PAC_DATA_BYTES_USABLE (PAC_DATA_PAYLOAD_BYTES + (sizeof(uint64_t) * 2)) // 1KiB payload + 2 64bit ints
 #define PAC_DATA_BYTES (PAC_DATA_BYTES_USABLE + crypto_aead_xchacha20poly1305_ietf_ABYTES)
-#define PAC_MIN_BYTES (sizeof(udp_packet_header_t))
 #define PAC_ENCRYPT_OFFSET (offsetof(packet_t, zero))
 #define PAC_ENCRYPT_BYTES (PAC_DATA_BYTES_USABLE + 4)
+#define PAC_MIN_BYTES (sizeof(udp_packet_header_t))
 #define PAC_MAX_BYTES (sizeof(packet_t))
 #define PAC_ALIGNMENT (8)
 

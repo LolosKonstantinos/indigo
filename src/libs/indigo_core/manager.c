@@ -363,6 +363,58 @@ int thread_manager(uint32_t address, uint16_t port)
     pthread_mutex_destroy(&sockets->mutex);
     pthread_cond_destroy(&sockets->cond);
     free_discv_sock_ll(sockets->head);
+    free(sockets);
+
+    if (pthread_equal(tid_send, pthread_self()) == 0) {
+        if (send_args) {
+            free_event_flag(send_args->flag);
+            destroy_queue(send_args->queue);
+            free(send_args->queue);
+            free(send_args);
+        }
+    }
+    // receive
+    if (pthread_equal(tid_receive, pthread_self()) == 0) {
+        if (recv_args) {
+#ifdef _WIN32
+            WSACloseEvent(recv_args->termination_handle);
+            WSACloseEvent(recv_args->wake_handle);
+#else
+            close(recv_args->termination_fd);
+            close(recv_args->wake_fd);
+#endif
+            free_event_flag(recv_args->flag);
+            free(recv_args);
+        }
+    }
+    // updater
+    if (pthread_equal(tid_update, pthread_self()) == 0) {
+        if (update_args) {
+#ifdef _WIN32
+            WSACloseEvent(update_args->termination_handle);
+#else
+            close(update_args->termination_fd);
+#endif
+            free_event_flag(update_args->flag);
+            free(update_args);
+        }
+    }
+    // packet handler
+    if (pthread_equal(tid_handler, pthread_self()) == 0) {
+        if (handler_args) {
+            free_event_flag(handler_args->flag);
+            destroy_queue(handler_args->queue);
+            free(handler_args->queue);
+            free(handler_args);
+        }
+    }
+    if (pthread_equal(tid_ui, pthread_self()) == 0) {
+        if (ui_flag) {
+            destroy_queue(ui_queue);
+            free(ui_queue);
+            free_event_flag(ui_flag);
+        }
+    }
 
     free_mempool(mempool);
 
@@ -483,15 +535,19 @@ cleanup:
         }
     }
     if (pthread_equal(tid_ui, pthread_self()) == 0) {
-        if (ui_flag) free_event_flag(ui_flag);
+        if (ui_flag) {
+            destroy_queue(ui_queue);
+            free(ui_queue);
+            free_event_flag(ui_flag);
+        }
     }
 
     if (sockets) {
         pthread_mutex_destroy(&sockets->mutex);
         pthread_cond_destroy(&sockets->cond);
         free_discv_sock_ll(sockets->head);
+        free(sockets);
     }
-
 
     free(mempool);
 
