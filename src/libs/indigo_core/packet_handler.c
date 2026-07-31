@@ -243,7 +243,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         if (packet->magic_number != MAGIC_NUMBER_2)
                             break;
                         ret = create_client_session(packet, packet_info, args->device_tree, args->session_tree,
-                                                    args->send_queue, TODO);
+                                                    args->send_queue, args->send_flag);
                         if (ret) {
                             *process_return = ret;
                             log_fatal("[packet_handler_thread] failed to create client session | "
