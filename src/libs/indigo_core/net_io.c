@@ -1879,7 +1879,6 @@ int *send_thread(SEND_ARGS *args)
                 queue_unlock(args->queue);
 
                 fwd_packet = node->data;
-
                 ret = send_packet(fwd_packet->port,fwd_packet->address, args->sockets, &(fwd_packet->packet),args->flag);
                 if (ret) {
                     set_event_flag(args->flag, EF_TERMINATION);
@@ -1889,8 +1888,6 @@ int *send_thread(SEND_ARGS *args)
                     log_info("[send_thread] send_packet() failed | return %d", *process_return);
                     return process_return;
                 }
-                log_debug("[send_thread] sent file sending request | return %d", *process_return);
-
             }
             else if (node->type == QET_RESEND_FILE_CHUNK) {
                 queue_remove_front_no_free_tu(args->queue);
@@ -2026,7 +2023,7 @@ int *send_thread(SEND_ARGS *args)
         lht_list(active_files, &list);
         ret = 0;
         // while there are no more files to send, and we didn't time out and the termination or new file flag is risen
-        while (!list && ret == 0 && !(args->flag->event_flag & (EF_TERMINATION | EF_SEND_NEW_FILE))) {
+        while (!list && ret == 0 && !(args->flag->event_flag)) {
             ret = pthread_cond_timedwait(&(args->flag->cond), &(args->flag->mutex), &deadline_ts);
 
             if ((ret != ETIMEDOUT) && (ret != 0)) {
