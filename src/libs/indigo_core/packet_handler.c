@@ -420,7 +420,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
         if (rdev_iterator) {
             while (tree_has_next(rdev_iterator)) {
                 tree_next(rdev_iterator, (void **)&found_rdev);
-                time_diff = curr_time - found_rdev->expiration_time;
+                time_diff = curr_time - found_rdev->timestamp;
                 if (time_diff > EXPIRATION_TIME) {
                     tmp_ptr = realloc(remove_array, (++remove_array_size) * sizeof(remote_device_t *));
                     if (tmp_ptr == NULL) {
@@ -498,6 +498,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     // they sent us a send request and the user said yes
     int ret;
     remote_device_t rdev;
+    remote_device_t *found_rdev;
     packet_t *packet = NULL;
     session_t session;
     unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
@@ -508,15 +509,18 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
 
     // there is no point to receive a file of 0 bytes, I mean we don't transfer metadata, so I guess there is no point
     if (fwd->file_size == 0) {
-        log_error("[create_server_session] file size is 0 | return %d", ret);
+        log_error("[create_server_session] file size is 0 | return 1");
         return 1;
     }
     memcpy(&(rdev.peer_pk), fwd->id, crypto_sign_PUBLICKEYBYTES);
-    ret = dev_tree->search(dev_tree, &rdev);
+    ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev);
     if (ret == 0) {
+        tree_unlock(dev_tree);
         log_warn("[create_server_session] peer not found in device tree. Can not create session");
         return 1;
     }
+    found_rdev->last_fid +=1;
+    tree_unlock(dev_tree);
 
     // necessary allocations
     packet = malloc(sizeof(struct udp_packet_t));
@@ -553,7 +557,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     // check if the serial is valid
     if (rdev.last_fid >= fwd->serial) {
         // reject the session, no bargaining, if the serial cant be used, then no session
-        ret = INDIGO_ERROR_INVALID_PEER_PARAM;
+        ret = 1;
         goto cleanup;
     }
     file_sending_response_data.serial = fwd->serial;
@@ -574,7 +578,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
         log_error("[create_server_session] send_packet failed sending file sending response| return %d", ret);
         goto cleanup; // it's up to the caller to handle these errors, we cant do anything
     }
-
+    log_debug("[create_server_session] sent file sending response");
     free(packet);
     packet = NULL;
 
@@ -595,7 +599,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
 
     ret = session_tree->insert(session_tree, &session);
     if (ret) {
-        log_error("[create_server_session] xfp insert failed");
+        log_error("[create_server_session] session insert failed");
         goto cleanup;
     }
 
@@ -642,8 +646,8 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
     ret = session_tree->search_pin(session_tree, &session, (void **)&found_session);
     if (ret == 0) {
         tree_unlock(session_tree);
-        ret = INDIGO_ERROR_PEER_NOT_FOUND;
-        log_warn("[create_client_session] peer not found in expected files tree. Can not create client session");
+        log_warn("[create_client_session] peer not found in expected files tree. Can not create client session,"
+                 " serial %lu", session.session_id.serial);
         return 1;
     }
 
@@ -738,7 +742,7 @@ int init_packet_routine(packet_t *packet, packet_info_t *packet_info, tree_t *de
     ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev);
 
     if (ret == 1) {
-        found_rdev->expiration_time = time(NULL); // renew the timestamp
+        found_rdev->timestamp = time(NULL); // renew the timestamp
         found_rdev->ip = packet_info->address.sin_addr.s_addr;
         found_rdev->port = packet_info->address.sin_port;
         // copy the username
@@ -753,9 +757,10 @@ int init_packet_routine(packet_t *packet, packet_info_t *packet_info, tree_t *de
     dev_tree->search_release(dev_tree);
 
     // the remote device is not on the tree so we add it
-    rdev.expiration_time = time(NULL);
+    rdev.timestamp = time(NULL);
     rdev.ip = packet_info->address.sin_addr.s_addr;
     rdev.port = packet_info->address.sin_port;
+    rdev.last_fid = 0;
     rdev.session_keys = NULL;
     rdev.fsr_list = NULL;
     rdev.fsr_count = 0;
@@ -886,7 +891,7 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
     ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev);
     if (ret == 1 && found_rdev->dev_state_flag & RDSF_VERIFIED) {
         // the device is found
-        found_rdev->expiration_time = time(NULL);
+        found_rdev->timestamp = time(NULL);
         found_rdev->ip = packet_info->address.sin_addr.s_addr;
         found_rdev->port = packet_info->address.sin_port;
 
@@ -901,9 +906,10 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
         // add the device to the device table
         // we detected the device (though it is unverified)
         if (ret == 0) {
-            rdev.expiration_time = time(NULL);
+            rdev.timestamp = time(NULL);
             rdev.ip = packet_info->address.sin_addr.s_addr;
             rdev.session_keys = NULL;
+            rdev.last_fid = 0;
             rdev.fsr_list = NULL;
             rdev.fsr_count = 0;
             memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
@@ -1087,7 +1093,7 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
         return 1;
     }
 
-    found_rdev->expiration_time = time(NULL);
+    found_rdev->timestamp = time(NULL);
     found_rdev->ip = packet_info->address.sin_addr.s_addr; // ip may have changed
 
     found_rdev->dev_state_flag |= RDSF_VERIFIED;
@@ -1305,11 +1311,18 @@ int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, t
     memcpy(fsr->file_name, data->file_name, NAME_MAX);
     fsr->file_name[NAME_MAX] = '\0';
     fsr->addr = packet_info->address.sin_addr.s_addr;
-    fsr->serial = data->serial;
-    fsr->expiration_time = time(NULL);
+    fsr->timestamp = time(NULL);
 
     memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
     if (dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev)) {
+        if (found_rdev->last_fid >= data->serial) {
+            free(fsr);
+            fsr = NULL;
+            return 1;
+        }
+        fsr->serial = data->serial;
+        found_rdev->last_fid = data->serial;
+
         if (found_rdev->dev_state_flag & KNOWN_KEY_STATUS_TOO_GOOD) {
             // in this case and this case only the user has specified
             // that this peer does not need approval
@@ -1325,6 +1338,7 @@ int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, t
             }
             return 0;
         }
+
         if (found_rdev->fsr_count == MAX_SEND_REQUEST_COUNT) {
             // remove the last request
             for (Q_FILE_SENDING_REQUEST *i = found_rdev->fsr_list; i->next != NULL; i = i->next) {
@@ -1336,10 +1350,15 @@ int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, t
             }
             (found_rdev->fsr_count)--;
         }
+
         (found_rdev->fsr_count)++;
         temp_fsr = found_rdev->fsr_list;
         found_rdev->fsr_list = fsr;
         fsr->next = temp_fsr;
+    }
+    else {
+        free(fsr);
+        fsr = NULL;
     }
     dev_tree->search_release(dev_tree);
 

@@ -1262,7 +1262,6 @@ int print_device(WINDOW *win, remote_device_t *rdev, int row, char highlight)
         wattron(win, COLOR_PAIR(3));
         wprintw(win, " (%d)", rdev->fsr_count);
         wattroff(win, COLOR_PAIR(3));
-        log_debug("[print_device] device has fsr %d", rdev->fsr_count);
     }
 
     if (highlight) {

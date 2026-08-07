@@ -216,7 +216,7 @@ typedef struct fwd_fsr_t {
     uint32_t addr;
     unsigned char id[crypto_sign_PUBLICKEYBYTES];
     char zero[4];
-    uint64_t expiration_time;
+    uint64_t timestamp;
     struct fwd_fsr_t *next;
 } fwd_fsr_t;
 
@@ -235,7 +235,7 @@ typedef struct session_keys_t {
 }session_keys_t;
 
 typedef struct remote_device_t {
-    uint64_t expiration_time; // the time until which we consider the device active,
+    uint64_t timestamp; // the time until which we consider the device active,
                             // updated with any packet
     uint64_t last_fid;
     int port;
