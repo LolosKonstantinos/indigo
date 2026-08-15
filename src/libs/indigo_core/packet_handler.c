@@ -236,7 +236,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                                                            args->sign_keys, args->sockets, args->flag);
                         break;
                     case MSG_FILE_SENDING_RESPONSE:
-                        log_debug("[packet_handler_thread] received file sending response");
+                        log_debug("[packet_handler_thread] received file sending response, creating client session...");
                         if (packet->magic_number != MAGIC_NUMBER_2)
                             break;
                         ret = create_client_session(packet, packet_info, args->device_tree, args->session_tree,

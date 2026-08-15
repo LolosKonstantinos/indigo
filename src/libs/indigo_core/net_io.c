@@ -1888,6 +1888,7 @@ int *send_thread(SEND_ARGS *args)
                     log_info("[send_thread] send_packet() failed | return %d", *process_return);
                     return process_return;
                 }
+                log_debug("[send_thread] sent packet)");
             }
             else if (node->type == QET_RESEND_FILE_CHUNK) {
                 queue_remove_front_no_free_tu(args->queue);
