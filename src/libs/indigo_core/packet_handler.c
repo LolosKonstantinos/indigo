@@ -512,7 +512,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
         log_error("[create_server_session] file size is 0 | return 1");
         return 1;
     }
-    memcpy(&(rdev.peer_pk), fwd->id, crypto_sign_PUBLICKEYBYTES);
+    memcpy(rdev.peer_pk, fwd->id, crypto_sign_PUBLICKEYBYTES);
     ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev);
     if (ret == 0) {
         tree_unlock(dev_tree);
@@ -555,7 +555,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     g_free(initial_cwd);
 
     // check if the serial is valid
-    if (rdev.last_fid >= fwd->serial) {
+    if (found_rdev->last_fid >= fwd->serial) {
         // reject the session, no bargaining, if the serial cant be used, then no session
         ret = 1;
         goto cleanup;
@@ -565,7 +565,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     randombytes_buf(nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
     build_packet(packet, MSG_FILE_SENDING_RESPONSE, pk, nonce, &file_sending_response_data,
                  sizeof(file_sending_response_data_t));
-    ret = encrypt_packet(packet, rdev.session_keys->server_tk, nonce);
+    ret = encrypt_packet(packet, found_rdev->session_keys->server_tk, nonce);
     if (ret) {
         ret = -1;
         log_error("[create_server_session] encrypt packet failed | return %d", ret);

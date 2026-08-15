@@ -940,9 +940,15 @@ int encrypt_packet(packet_t *packet, unsigned char tk[crypto_kx_SESSIONKEYBYTES]
 
     packet->zero = 0;
 
-    ret = crypto_aead_xchacha20poly1305_ietf_encrypt(ciphertext, NULL, (unsigned char *)&(packet->zero),
-                                                     PAC_ENCRYPT_BYTES, (unsigned char *)packet, PAC_ENCRYPT_OFFSET,
-                                                     NULL, packet->nonce, tk);
+    ret = crypto_aead_xchacha20poly1305_ietf_encrypt(ciphertext,
+                                                     NULL,
+                                                     (unsigned char *)&(packet->zero),
+                                                     PAC_ENCRYPT_BYTES,
+                                                     (unsigned char *)packet,
+                                                     PAC_ENCRYPT_OFFSET,
+                                                     NULL,
+                                                     packet->nonce,
+                                                     tk);
     if (ret != 0) {
         log_error("crypto_aead_xchacha20poly1305_ietf_encrypt() failed | return %d",INDIGO_ERROR_INVALID_PARAM);
         return INDIGO_ERROR_INVALID_PARAM;
