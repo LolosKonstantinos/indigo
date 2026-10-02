@@ -22,6 +22,7 @@ SOFTWARE.
 #ifndef INDIGO_TYPES_H
 #define INDIGO_TYPES_H
 
+#include <sodium/crypto_kem.h>
 #include <sodium/utils.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -40,6 +41,7 @@ SOFTWARE.
 #include <stdint.h>
 #include <stdio.h>
 #include <stdalign.h>
+#include <set.h>
 
 /*GLOBAL DEFINITIONS*/
 #define FORCE_INLINE inline __attribute__((always_inline))
@@ -71,6 +73,7 @@ SOFTWARE.
 // RDSF == RemoteDeviceStateFlag
 #define RDSF_UNVERIFIED 0x0001
 #define RDSF_VERIFIED 0x0002
+
 // known key status values (can be used in the dev_state_flag)
 #define KNOWN_KEY_STATUS_TOO_GOOD 0x0004
 #define KNOWN_KEY_STATUS_GOOD 0x0008
@@ -87,14 +90,15 @@ SOFTWARE.
 #define PAC_VERSION (1)
 #define DISCOVERY_SEND_PERIOD_SEC (10)
 
-#define PAC_DATA_PAYLOAD_BYTES (1 << 10)
-#define PAC_DATA_BYTES_USABLE (PAC_DATA_PAYLOAD_BYTES + (sizeof(uint64_t) * 2)) // 1KiB payload + 2 64bit ints
-#define PAC_DATA_BYTES (PAC_DATA_BYTES_USABLE + crypto_aead_xchacha20poly1305_ietf_ABYTES)
+#define PAC_DATA_MAX_PAYLOAD_BYTES (1346) //the size of the biggest packet type (signing response)
+#define PAC_DATA_BYTES (PAC_DATA_MAX_PAYLOAD_BYTES + crypto_aead_xchacha20poly1305_ietf_ABYTES)
 #define PAC_ENCRYPT_OFFSET (offsetof(packet_t, zero))
 #define PAC_ENCRYPT_BYTES (PAC_DATA_BYTES_USABLE + 4)
 #define PAC_MIN_BYTES (sizeof(udp_packet_header_t))
 #define PAC_MAX_BYTES (sizeof(packet_t))
 #define PAC_ALIGNMENT (8)
+
+#define FILE_CHUNK_DATA_BYTES (PAC_DATA_MAX_PAYLOAD_BYTES - 2*sizeof(uint64_t))
 
 // message types
 #define MSG_INIT_PACKET 0x01
@@ -141,7 +145,6 @@ typedef struct PACKED udp_packet_t {
     unsigned char pac_version;
     unsigned char data[PAC_DATA_BYTES];
 } packet_t;
-_Static_assert(sizeof(packet_t) == 1120, "unexpected padding in packet_t");
 
 typedef struct PACKED udp_packet_header {
     uint32_t magic_number;
@@ -175,11 +178,14 @@ typedef struct PACKED signing_request_data_t {
 #define PAC_SIGNING_REQUEST_SIZE (sizeof(udp_packet_header) + sizeof(signing_request_data_t))
 
 typedef struct PACKED signing_response_data_t {
-    unsigned char signed_nonce[INDIGO_NONCE_SIZE + crypto_sign_BYTES];
-    unsigned char pkx[crypto_kx_PUBLICKEYBYTES];
+    unsigned char signed_nonce[INDIGO_NONCE_SIZE];
     unsigned char sig_request;
     unsigned char zero; // odd bytes eww
     unsigned char nonce[INDIGO_NONCE_SIZE];
+    union {
+        unsigned char kem_ct[crypto_kem_CIPHERTEXTBYTES];
+        unsigned char kem_pk[crypto_kem_PUBLICKEYBYTES];
+    };
     unsigned char signature[crypto_sign_BYTES];
 } signing_response_data_t;
 #define PAC_SIGNING_RESPONSE_SIZE (sizeof(udp_packet_header) + sizeof(signing_response_data_t))
@@ -199,7 +205,7 @@ typedef struct PACKED file_sending_response_data_t {
 typedef struct PACKED file_chunk_data_t {
     uint64_t serial;
     uint64_t chunk_number;
-    unsigned char data[PAC_DATA_PAYLOAD_BYTES];
+    unsigned char data[PAC_DATA_MAX_PAYLOAD_BYTES - 2* sizeof(uint64_t)];
 } file_chunk_data_t;
 #define PAC_FILE_CHUNK_SIZE (sizeof(udp_packet_header) + sizeof(file_chunk_data_t))
 
@@ -228,16 +234,13 @@ typedef struct fwd_packet_t {
 }fwd_packet_t;
 
 typedef struct session_keys_t {
-    unsigned char client_rk[crypto_kx_SESSIONKEYBYTES];
-    unsigned char client_tk[crypto_kx_SESSIONKEYBYTES];
-    unsigned char server_rk[crypto_kx_SESSIONKEYBYTES];
-    unsigned char server_tk[crypto_kx_SESSIONKEYBYTES];
+    unsigned char rk[crypto_aead_xchacha20poly1305_ietf_KEYBYTES];
+    unsigned char tk[crypto_aead_xchacha20poly1305_ietf_KEYBYTES];
 }session_keys_t;
 
 typedef struct remote_device_t {
     uint64_t timestamp; // the time until which we consider the device active,
                             // updated with any packet
-    uint64_t last_fid;
     int port;
     uint32_t ip;
     unsigned char peer_pk[crypto_sign_PUBLICKEYBYTES];
@@ -248,6 +251,7 @@ typedef struct remote_device_t {
     uint32_t dev_state_flag;
     uint32_t fsr_count;
     fwd_fsr_t *fsr_list;
+    set_t *fid_set;
 } remote_device_t;
 
 typedef struct session_id_t {
@@ -304,10 +308,16 @@ static FORCE_INLINE void free_rdev(void *rdev)
     fwd_fsr_t *next = NULL;
     fwd_fsr_t *curr;
     if (!rdev) return;
+
+    if (((remote_device_t *)rdev)->fid_set) {
+        free_set(&((remote_device_t *)rdev)->fid_set);
+    }
+
     if (((remote_device_t *)rdev)->session_keys) {
         sodium_munlock(((remote_device_t *)rdev)->session_keys, sizeof(session_keys_t));
         free(((remote_device_t *)rdev)->session_keys);
     }
+
     curr = ((remote_device_t *)rdev)->fsr_list;
     while (curr != NULL) {
         next = curr->next;
@@ -344,4 +354,6 @@ static FORCE_INLINE void free_session(void *session)
     }
     free(session);
 }
+
+#define fast_MIN(a,b,bytes) ( (a) + ( ((b) - (a)) & (((b) - (a)) >> ((bytes) * CHAR_BIT - 1)) ) )
 #endif // INDIGO_TYPES_H

@@ -365,8 +365,7 @@ int test_encryption(){
     randombytes_buf(&packet, sizeof(packet_t));
     memcpy(&dummy_packet, &packet, sizeof(packet_t));
 
-    crypto_kx_keypair(spk, ssk);
-    crypto_kx_keypair(cpk, csk);
+    crypto_kem_keypair(spk, ssk);
     ret = crypto_kx_client_session_keys(rk,tk, cpk, csk, spk);
 
     ret = encrypt_packet(&packet, tk, NULL);

@@ -30,6 +30,17 @@ SOFTWARE.
 #define INDIGO_PSW_HASH_TIMELIMIT_UPPER 5
 #define INDIGO_PSW_HASH_TIMELIMIT_LOWER 3
 
+/*these labels are used for key derivation in key exchange
+ * they specify the role of each device during the key exchange
+ * they do NOT specify the role of the key
+ * both keys are treated as transmit keys
+ * relative to the roles during the exchange
+ * and YES they are also receive keys for the other party
+ * the server's transmit key is the receive key of the client
+ */
+#define INDIGO_KDF_CTX_CLIENT "client"
+#define INDIGO_KDF_CTX_SERVER "server"
+
 typedef struct PSW_HASH_SETTINGS PSW_HASH_SETTINGS;
 
 struct signing_key_pair_t {

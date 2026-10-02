@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>Login_dialog</class>
+ <widget class="QDialog" name="Login_dialog">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>400</width>
+    <height>300</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Dialog</string>
+  </property>
+  <layout class="QGridLayout" name="gridLayout_2">
+   <item row="7" column="0" colspan="2">
+    <widget class="QPushButton" name="Enter_button">
+     <property name="styleSheet">
+      <string notr="true">background-color: rgb(63, 0, 255);</string>
+     </property>
+     <property name="text">
+      <string>Enter</string>
+     </property>
+    </widget>
+   </item>
+   <item row="3" column="0" alignment="Qt::AlignmentFlag::AlignBottom">
+    <widget class="QLabel" name="password_label">
+     <property name="text">
+      <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-weight:700;&quot;&gt;password:&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+     </property>
+    </widget>
+   </item>
+   <item row="5" column="0">
+    <widget class="QPushButton" name="forgot_password_button">
+     <property name="text">
+      <string>forgot your password?</string>
+     </property>
+    </widget>
+   </item>
+   <item row="4" column="0">
+    <widget class="QLineEdit" name="user_input_line_edit"/>
+   </item>
+   <item row="6" column="0" colspan="2">
+    <widget class="QLabel" name="label">
+     <property name="text">
+      <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; color:#ffc106;&quot;&gt;Password is invalid! Try again.&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+     </property>
+    </widget>
+   </item>
+   <item row="0" column="0" alignment="Qt::AlignmentFlag::AlignVCenter">
+    <widget class="QLabel" name="Welcome_label">
+     <property name="whatsThis">
+      <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p align=&quot;center&quot;&gt;&lt;br/&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+     </property>
+     <property name="text">
+      <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p align=&quot;center&quot;&gt;&lt;span style=&quot; font-size:18pt; font-weight:700; color:#f0f0f0;&quot;&gt;Welcome to Indigo!&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <tabstops>
+  <tabstop>user_input_line_edit</tabstop>
+  <tabstop>forgot_password_button</tabstop>
+  <tabstop>Enter_button</tabstop>
+ </tabstops>
+ <resources/>
+ <connections/>
+</ui>

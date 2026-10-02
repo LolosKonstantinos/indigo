@@ -39,7 +39,6 @@ typedef struct xsr_t {
     time_t expiration_time;
     unsigned char nonce[INDIGO_NONCE_SIZE];
     unsigned char id[crypto_sign_PUBLICKEYBYTES];
-    unsigned char *pkx;
     unsigned char *skx;
 } xsr_t;
 

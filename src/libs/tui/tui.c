@@ -1765,7 +1765,7 @@ void *ui_thread(UI_ARGS *args)
                             continue;
                         }
                         if (ret == 0) {
-                            log_debug("[ui_thread] selected file | return -1");
+                            log_debug("[ui_thread] selected file");
                             halfdelay(10);
                             curs_set(0);
                             // send this to the queue
@@ -1816,9 +1816,9 @@ void *ui_thread(UI_ARGS *args)
                             if (ret == 1 && rdev_p->session_keys != NULL) {
                                 fwd_packet->address = rdev_p->ip;
                                 fwd_packet->port = PORT;
-                                esr->session_id.serial = ++(rdev_p->last_fid);
+                                esr->session_id.serial = set_get_highest_not_in_set(rdev_p->fid_set);
+                                set_add(rdev_p->fid_set, esr->session_id.serial);
                                 file_sending_request_data->serial = esr->session_id.serial;
-
                                 encrypt_packet(&(fwd_packet->packet), rdev_p->session_keys->client_tk, nonce);
                             }
                             else {
@@ -1829,10 +1829,11 @@ void *ui_thread(UI_ARGS *args)
                                 fwd_packet = NULL;
                                 continue;
                             }
-                            dev_tree->search_release(dev_tree);
 
                             ret = queue_push(send_queue, fwd_packet, QET_SEND_PACKET);
                             if (ret) {
+                                set_remove(rdev_p->fid_set, esr->session_id.serial);
+                                tree_unlock(dev_tree);
                                 free(fwd_packet);
                                 free(esr);
                                 fwd_packet = NULL;
@@ -1843,6 +1844,8 @@ void *ui_thread(UI_ARGS *args)
                             set_event_flag(send_flag, EF_CHECK_QUEUE);
                             ret = queue_push(ph_queue, esr, QET_EXPECT_SEND_RESPONSE);
                             if (ret) {
+                                set_remove(rdev_p->fid_set, esr->session_id.serial);
+                                tree_unlock(dev_tree);
                                 free(fwd_packet);
                                 free(esr);
                                 fwd_packet = NULL;
@@ -1850,6 +1853,7 @@ void *ui_thread(UI_ARGS *args)
                                 log_error("queue_push() failed | return %d", ret);
                                 goto cleanup;
                             }
+                            tree_unlock(dev_tree);
                             set_event_flag(ph_flag, EF_CHECK_QUEUE);
                             fwd_packet = NULL;
                             log_debug("[create_main_interface] pushed to queue esr and send_packet");
@@ -1925,7 +1929,7 @@ void *ui_thread(UI_ARGS *args)
                     }
                     set_event_flag(ph_flag, EF_CHECK_QUEUE);
                     fwd_packet = NULL;
-                    log_debug("[create_main_interface] pushed to queue fsr");
+                    log_debug("[create_main_interface] pushed fsr to queue");
                 }
             }
             else if (ch == ' ' && context == 1 && file_last_level == 2) {
