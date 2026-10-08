@@ -25,6 +25,7 @@ SOFTWARE.
 #include "config.h"
 #include "indigo_types.h"
 #include "mempool.h"
+#include "time_utils.h"
 
 #include <binary_tree.h>
 #include <stdio.h>
@@ -35,7 +36,7 @@ SOFTWARE.
 
 int main(void) {
     printf("testing indigo libraries...\n");
-    run_tests(test_arr,9);
+    run_tests(test_arr,10);
     return 0;
 }
 
@@ -389,6 +390,30 @@ int test_encryption(){
     printf("\ndecrypt_success: %lu ns\n", nanotime);
 
     if (ret) return TEST_FAILED;
+
+    return TEST_PASSED;
+}
+
+int test_timespec()
+{
+    struct timespec a, b,c;
+    a.tv_sec = 5;
+    a.tv_nsec = 700000000;
+    b.tv_sec = 2;
+    b.tv_nsec = 500000000;
+    c = timespec_diff(&a,&b);
+    if (c.tv_sec != 3 && c.tv_nsec != 200000000) TEST_FAILED;
+
+    c = timespec_diff(&b, &a);
+    if (c.tv_sec != 3 && c.tv_nsec != 200000000) TEST_FAILED;
+
+    b.tv_nsec = 800000000;
+
+    c = timespec_diff(&a, &b);
+    if (c.tv_sec != 2 && c.tv_nsec != 900000000) TEST_FAILED;
+
+    c = timespec_diff(&b, &a);
+    if (c.tv_sec != 2 && c.tv_nsec != 900000000) TEST_FAILED;
 
     return TEST_PASSED;
 }

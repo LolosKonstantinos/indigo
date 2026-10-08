@@ -27,7 +27,7 @@ SOFTWARE.
 #include "hash_functions.h"
 
 struct dynamic_perfect_hash_table_priv {
-    hashFunction hash; //kinda useless, we always use MurMurHash anyway
+    hashFunction_32 hash; //kinda useless, we always use MurMurHash anyway
     first_level_ht_node *hash_table;    //the first level hash table
     size_t cell_count;                  //the number of elements stored currently
     size_t data_size;                   //the number of bytes of the data part of the bucket
@@ -44,7 +44,7 @@ struct dynamic_perfect_hash_table_priv {
 
 
 struct first_level_ht_node {
-    hashFunction hash;                   //the hash function used for this hash table
+    hashFunction_32 hash;                   //the hash function used for this hash table
     void *second_level_hash_table;       //the second level hash table
     size_t bucket_count;                 //the total number of buckets in the second level
     size_t hash_code;                    //the hash code that corresponds to this hash table //todo: kinda useless
@@ -69,7 +69,7 @@ dpHashTable *new_dynamic_perfect_hash_table(size_t data_size, size_t key_count,u
     hash_table->priv->cell_count = key_count;
     hash_table->priv->data_size = data_size;
     hash_table->priv->key_length = max_key_length;
-    hash_table->priv->hash = MurMurHash;
+    hash_table->priv->hash = MurMurHash_32;
 
     //allocate space for the first hash table, we allocate 1.5 x key_count
     hash_table->priv->hash_table = calloc(key_count + (key_count>>1),sizeof(first_level_ht_node));

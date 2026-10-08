@@ -1819,7 +1819,7 @@ void *ui_thread(UI_ARGS *args)
                                 esr->session_id.serial = set_get_highest_not_in_set(rdev_p->fid_set);
                                 set_add(rdev_p->fid_set, esr->session_id.serial);
                                 file_sending_request_data->serial = esr->session_id.serial;
-                                encrypt_packet(&(fwd_packet->packet), rdev_p->session_keys->client_tk, nonce);
+                                encrypt_packet(&(fwd_packet->packet), rdev_p->session_keys->tk, nonce);
                             }
                             else {
                                 tree_unlock(dev_tree);

@@ -50,7 +50,6 @@ SOFTWARE.
 #endif
 #endif
 
-#define DEVICE_TIME_UNTIL_DISCONNECTED (90)
 
 // for device discovery
 #define PORT (htons(2693))
@@ -59,6 +58,8 @@ SOFTWARE.
 // used for discovery packet
 #define MAGIC_NUMBER_1 (htonl(1841452771))
 #define MAGIC_NUMBER_2 (htonl(0x7fffffff))
+
+#define MS_UNTIL_FILE_REMOVAL 3000
 
 #ifdef _WIN32
 typedef struct RECV_INFO {

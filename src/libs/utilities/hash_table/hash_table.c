@@ -29,7 +29,7 @@ SOFTWARE.
 //todo: create normal hash table with 1.5 growth factor
 
 struct hash_table_priv {
-    hashFunction hash;          //kinda useless, we always use MurMurHash anyway
+    hashFunction_32 hash;          //kinda useless, we always use MurMurHash anyway
     unsigned char *table;       //the array of the hash table
     size_t data_size;           //the number of bytes of the data part of the bucket
     size_t bucket_count;        //the total number of buckets on the first level
@@ -81,7 +81,7 @@ hash_table_t *new_hash_table(size_t data_size, size_t key_length, size_t init_si
     pthread_cond_init(&priv->cond, NULL);
     ht->private = priv;
 
-    priv->hash = FastHash;
+    priv->hash = FastHash_32;
     priv->bucket_count = init_size ? init_size : 1;
     priv->hash_bit_length = sizeof(size_t) * 8 - __builtin_ctz(init_size * init_size - 1);
     priv->data_size = data_size;

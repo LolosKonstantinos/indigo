@@ -1,16 +1,34 @@
 
 #include "hash_functions.h"
 
-unsigned int MurMurHash(const char *str, unsigned int length) {
+unsigned int MurMurHash_32(const char *str, unsigned int length) {
     uint32_t hash;
 
-    MurmurHash3_x86_32(str, length, 0x7FFFFFFF, &hash);
+    MurmurHash3_x86_32(str, (int)length, 0x7FFFFFFF, &hash);
     return hash;
 }
 
-unsigned int FastHash(const char *str, unsigned int length) {
+uint64_t MurMurHash_64(const char *str, unsigned int length) {
+    uint64_t hash[2];
+
+    MurmurHash3_x86_128(str, (int)length, 0x7FFFFFFF, hash);
+    return hash[0]^hash[1];
+}
+
+void MurMurHash_128(const char *str, unsigned int length, unsigned char *hash)
+{
+    MurmurHash3_x86_128(str, (int)length, 0x7FFFFFFF, hash);
+}
+
+
+unsigned int FastHash_32(const char *str, unsigned int length) {
     uint64_t hash = fasthash64(str,length,0x7FFFFFFF);
     return hash - (hash >> 32);
+}
+
+uint64_t FastHash_64(const char *str, unsigned int length)
+{
+    return fasthash64(str,length,0x7FFFFFFF);
 }
 
 unsigned int RSHash(const char* str, unsigned int length){

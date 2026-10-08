@@ -32,14 +32,14 @@ SOFTWARE.
 #include <stddef.h>
 #include <stdint.h>
 
-#define EXPIRATION_TIME 15
-
 // eXpected Signing Response
 typedef struct xsr_t {
-    time_t expiration_time;
+    uint64_t tries;
+    struct timespec expiration_time;
     unsigned char nonce[INDIGO_NONCE_SIZE];
     unsigned char id[crypto_sign_PUBLICKEYBYTES];
     unsigned char *skx;
+
 } xsr_t;
 
 typedef struct PACKET_HANDLER_ARGS {

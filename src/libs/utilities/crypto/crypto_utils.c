@@ -39,7 +39,7 @@ SOFTWARE.
 #include <limits.h>
 #endif
 
-
+#include <assert.h>
 
 struct PSW_HASH_SETTINGS {
     unsigned char mem_cost;
@@ -996,13 +996,36 @@ int nonce_increment(unsigned char *nonce, size_t nonce_len, uint64_t increment)
         return INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
     }
 
+    //write increment in little endian
     for (int i = 0; i < CHAR_BIT; i++) {
-        incr_bytes[i] = (increment >> (i << 3)) & 0xFF;
+        incr_bytes[i] = (increment >> (i*8)) & 0xFF;
     }
 
     sodium_add(nonce, incr_bytes, nonce_len);
     free(incr_bytes);
     return INDIGO_SUCCESS;
+}
+
+_Static_assert(crypto_aead_xchacha20poly1305_ietf_NPUBBYTES == 24, "aead nonce is not 24 bytes");
+
+void nonce_24_increment(unsigned char nonce[24], uint64_t increment)
+{
+    unsigned char increment_array[24] = {0};
+    //write increment in little endian
+    for (int i = 0; i < sizeof(uint64_t); i++) {
+        increment_array[i] = (unsigned char)(increment >> (i*CHAR_BIT));
+    }
+    sodium_add(nonce, increment_array, 24);
+}
+
+void nonce_32_increment(unsigned char nonce[23], uint64_t increment)
+{
+    unsigned char increment_array[32] = {0};
+    //write increment in little endian
+    for (int i = 0; i < sizeof(uint64_t); i++) {
+        increment_array[i] = (unsigned char)(increment >> (i*CHAR_BIT));
+    }
+    sodium_add(nonce, increment_array, 32);
 }
 
 int bypass_password(void **master_key) {

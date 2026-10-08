@@ -42,6 +42,8 @@ SOFTWARE.
 #include "lht.h"
 #include "mempool.h"
 #include "net_monitor.h"
+#include "time_utils.h"
+
 #include <log.h>
 #include <errno.h>
 
@@ -794,21 +796,18 @@ int send_next_file_packet(active_file_t *file, const unsigned char *const pk, so
         log_error("[send_next_file_packet] invalid null parameter");
         return INDIGO_ERROR_INVALID_PARAM;
     }
-    if (!(file->fd)) {
+    if (file->is_completed) {
         return INDIGO_SUCCESS;
     }
+
     if (file->counter == 0) {
         randombytes_buf(file->nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
     }
     memcpy(nonce, file->nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
-    ret = nonce_increment(nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES, file->counter);
-    if (ret) {
-        log_error("[send_next_file_packet] nonce_increment() failed | return %d", ret);
-        return ret;
-    }
+    nonce_24_increment(nonce, file->counter);
 
     build_packet(&packet, MSG_FILE_CHUNK, pk, nonce, NULL, 0);
-    read_ret = fread(packet.data, PAC_DATA_BYTES_USABLE, 1, file->fd);
+    read_ret = fread(packet.data, FILE_CHUNK_DATA_BYTES, 1, file->fd);
     if (read_ret != 0) {
         ret = feof(file->fd);
         if (ret != 0) {
@@ -855,14 +854,10 @@ int send_file_packet(active_file_t *file, uint64_t counter, const unsigned char 
         randombytes_buf(file->nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
     }
     memcpy(nonce, file->nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
-    ret = nonce_increment(nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES, counter);
-    if (ret) {
-        log_error("[send_file_packet] nonce_increment() failed | return %d", ret);
-        return ret;
-    }
+    nonce_24_increment(nonce, counter);
 
     build_packet(&packet, MSG_FILE_CHUNK, pk, nonce, NULL, 0);
-    read_ret = fread(packet.data, PAC_DATA_BYTES_USABLE, 1, file->fd);
+    read_ret = fread(packet.data, FILE_CHUNK_DATA_BYTES, 1, file->fd);
     if (read_ret != 0) {
         ret = feof(file->fd);
         if (ret != 0) {
@@ -1790,6 +1785,7 @@ cleanup:
 
 int *send_thread(SEND_ARGS *args)
 {
+    static char startup = 1;
     uint32_t flag_val;
     struct timespec deadline_ts;
     struct timespec current_ts;
@@ -1825,6 +1821,25 @@ int *send_thread(SEND_ARGS *args)
 
     load_username(username);
 
+    //we want to send a single init packet when the app starts
+    //If the send thread terminates and is re-created by the manager we don't want to send new init packets
+    if (startup){
+        startup = 0;
+        //send one discovery packet on start up
+        ret = send_discovery_packets(args->port, args->multicast_addr, args->sockets, args->flag, 1, 0,
+                                     args->sign_keys, username);
+        if (ret != INDIGO_SUCCESS) {
+            set_event_flag(args->flag, EF_TERMINATION);
+            set_event_flag(args->wake, EF_WAKE_MANAGER);
+            delete_lht(active_files);
+            *process_return = ret;
+            log_fatal(
+                "[send_thread] send_discovery_packets() failed while sending scheduled discovery packets | return %d",
+                ret);
+            return process_return;
+        }
+    }
+
     // the main loop
     while (!termination_is_on(args->flag)) {
         ///////////////////////////////////
@@ -1833,15 +1848,10 @@ int *send_thread(SEND_ARGS *args)
 
         flag_val = get_event_flag(args->flag);
 
-        if (flag_val & EF_OVERRIDE_IO) {
-            wait_on_flag_condition(args->flag, EF_OVERRIDE_IO, OFF);
-        }
+        if (flag_val & EF_SEND_INIT_PACKET) {
+            reset_single_event(args->flag, EF_SEND_INIT_PACKET);
 
-        else if (flag_val & EF_SEND_MULTIPLE_PACKETS) {
-
-            reset_single_event(args->flag, EF_SEND_MULTIPLE_PACKETS);
-
-            ret = send_discovery_packets(args->port, args->multicast_addr, args->sockets, args->flag, 3, 150,
+            ret = send_discovery_packets(args->port, args->multicast_addr, args->sockets, args->flag, 2, 150,
                                          args->sign_keys, username);
             if (ret != INDIGO_SUCCESS) {
                 set_event_flag(args->flag, EF_TERMINATION);
@@ -1871,7 +1881,12 @@ int *send_thread(SEND_ARGS *args)
 
                 ret = active_files->insert(active_files, &(((active_file_t *)node->data)->session_id), node->data);
                 if (ret) {
-                    // todo: do something
+                    set_event_flag(args->flag, EF_TERMINATION);
+                    set_event_flag(args->wake, EF_WAKE_MANAGER);
+                    delete_lht(active_files);
+                    *process_return = ret;
+                    log_info("[send_thread] lht_insert() failed | return %d", *process_return);
+                    return process_return;
                 }
             }
             else if (node->type == QET_SEND_PACKET) {
@@ -1904,6 +1919,8 @@ int *send_thread(SEND_ARGS *args)
                     node = NULL;
                     continue;
                 }
+
+                clock_gettime(CLOCK_REALTIME, &(af->timestamp));
 
                 for (size_t i = data.range.start; i < data.range.end + 1; i++) {
                     ret = send_file_packet(af, i, args->sign_keys->public, args->sockets, args->flag);
@@ -1967,44 +1984,28 @@ int *send_thread(SEND_ARGS *args)
                 log_fatal("[send_thread] send_next_file_packet() failed | return %d", ret);
                 return process_return;
             }
-            // if a file descriptor is null then the file has been transferred
-            /*todo: it is a good idea to have a flag, so that if something went wrong in the last packets,
-             * we can resend them. we need the fd to do that, so we dont wipe it out. wait something like 3 seconds
-             * or have them send a packet for successful transfer or both.
-             */
-            if (!curr_af->fd) {
-                lht_delete(active_files, &(curr_af->session_id));
 
-                // check if we need to send discovery packets
-                clock_gettime(CLOCK_REALTIME, &current_ts);
-                if (deadline_ts.tv_sec <= current_ts.tv_sec && deadline_ts.tv_nsec <= current_ts.tv_nsec)
-                    break;
-
-                // if we remove a node, then curr_af is the next file to be sent
-                // if we don't continue we skip curr_af, and it's next packet is not sent
-                continue;
+            if (curr_af->is_completed) {
+                //check if the timeout is over and we can remove the file
+                struct timespec ts_now;
+                struct timespec ts_timeout;
+                struct timespec ts_diff;
+                ts_timeout = mstotimespec(MS_UNTIL_FILE_REMOVAL);
+                clock_gettime(CLOCK_REALTIME, &ts_now);
+                ts_diff = timespec_diff(&ts_now,&(curr_af->timestamp));
+                if (timespec_cmp(&ts_diff,&ts_timeout) >= 0) {
+                    lht_delete(active_files, &(curr_af->session_id));
+                }
             }
 
-            // check if we need to send discovery packets
-            clock_gettime(CLOCK_REALTIME, &current_ts);
-            if (deadline_ts.tv_sec <= current_ts.tv_sec && deadline_ts.tv_nsec <= current_ts.tv_nsec)
+            //check if there are other tasks to complete
+            flag_val = get_event_flag(args->flag);
+            if (flag_val) {
                 break;
+            }
 
             list = list->next;
             curr_af = list->data;
-        }
-
-        ret = send_discovery_packets(args->port, args->multicast_addr, args->sockets, args->flag, 1, 0, args->sign_keys,
-                                     username);
-        if (ret != INDIGO_SUCCESS) {
-            set_event_flag(args->flag, EF_TERMINATION);
-            set_event_flag(args->wake, EF_WAKE_MANAGER);
-            delete_lht(active_files);
-            *process_return = ret;
-            log_fatal(
-                "[send_thread] send_discovery_packets() failed while sending scheduled discovery packets | return %d",
-                ret);
-            return process_return;
         }
 
         // set next deadline

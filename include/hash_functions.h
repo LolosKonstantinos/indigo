@@ -24,10 +24,11 @@ SOFTWARE.
 #include <stddef.h>
 #include <stdint.h>
 
-typedef unsigned int (*hashFunction)(const char *, unsigned int);
+typedef unsigned int (*hashFunction_32)(const char *, unsigned int);
+typedef uint64_t (*hashFunction)(const char *, unsigned int);
 
-unsigned int MurMurHash(const char *str, unsigned int length);
-unsigned int FastHash(const char *str, unsigned int length);
+unsigned int MurMurHash_32(const char *str, unsigned int length);
+unsigned int FastHash_32(const char *str, unsigned int length);
 
 unsigned int RSHash(const char *str, unsigned int length);
 unsigned int JSHash(const char *str, unsigned int length);
@@ -36,6 +37,10 @@ unsigned int SDBMHash(const char *str, unsigned int length);
 unsigned int DJBHash(const char *str, unsigned int length);
 unsigned int DEKHash(const char *str, unsigned int length);
 unsigned int APHash(const char *str, unsigned int length);
+
+uint64_t FastHash_64(const char *str, unsigned int length);
+void MurMurHash_128(const char *str, unsigned int length, unsigned char *hash);
+uint64_t MurMurHash_64(const char *str, unsigned int length);
 
 /*GitHub code*/
 // murmur hash
@@ -49,7 +54,7 @@ void MurmurHash3_x64_128(const void *key, int len, uint32_t seed, void *out);
 // fasthash
 uint64_t fasthash64(const void *buf, size_t len, uint64_t seed);
 
-static hashFunction HF_ARRAY[9] = {MurMurHash, FastHash, RSHash,
+static hashFunction_32 HF_ARRAY[9] = {MurMurHash_32, FastHash_32, RSHash,
                                    JSHash,     BKDRHash, SDBMHash,
                                    DJBHash,    DEKHash,  APHash};
 

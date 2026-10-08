@@ -93,7 +93,7 @@ SOFTWARE.
 #define PAC_DATA_MAX_PAYLOAD_BYTES (1346) //the size of the biggest packet type (signing response)
 #define PAC_DATA_BYTES (PAC_DATA_MAX_PAYLOAD_BYTES + crypto_aead_xchacha20poly1305_ietf_ABYTES)
 #define PAC_ENCRYPT_OFFSET (offsetof(packet_t, zero))
-#define PAC_ENCRYPT_BYTES (PAC_DATA_BYTES_USABLE + 4)
+#define PAC_ENCRYPT_BYTES (PAC_DATA_MAX_PAYLOAD_BYTES + 4)
 #define PAC_MIN_BYTES (sizeof(udp_packet_header_t))
 #define PAC_MAX_BYTES (sizeof(packet_t))
 #define PAC_ALIGNMENT (8)
@@ -112,8 +112,16 @@ SOFTWARE.
 #define MSG_PAUSE_FILE_TRANSMISSION 0x09
 #define MSG_CONTINUE_FILE_TRANSMISSION 0x0a
 #define MSG_IP_CHANGE 0x0b
+#define MSG_KEEP_ALIVE 0x0c
+#define MSG_FILE_RECEIVED 0x0d
+#define MSG_DISCONNECTING 0x0f
 #define MSG_ERR 0xff
 // more types may be added
+
+#define MS_UNTIL_DISCONNECT 3000
+#define MS_UNTIL_SESSION_TERMINATION 1000
+#define MS_UNTIL_SIGN_REQUEST_RESEND 150
+#define MS_UNTIL_SIGN_REQUEST_DELETION 400
 
 typedef uint64_t utf8_char_t;
 
@@ -205,7 +213,7 @@ typedef struct PACKED file_sending_response_data_t {
 typedef struct PACKED file_chunk_data_t {
     uint64_t serial;
     uint64_t chunk_number;
-    unsigned char data[PAC_DATA_MAX_PAYLOAD_BYTES - 2* sizeof(uint64_t)];
+    unsigned char data[FILE_CHUNK_DATA_BYTES];
 } file_chunk_data_t;
 #define PAC_FILE_CHUNK_SIZE (sizeof(udp_packet_header) + sizeof(file_chunk_data_t))
 
@@ -239,7 +247,7 @@ typedef struct session_keys_t {
 }session_keys_t;
 
 typedef struct remote_device_t {
-    uint64_t timestamp; // the time until which we consider the device active,
+    struct timespec timestamp; // the time until which we consider the device active,
                             // updated with any packet
     int port;
     uint32_t ip;
@@ -261,7 +269,7 @@ typedef struct session_id_t {
 
 typedef struct session_t {
     session_id_t session_id;
-    uint64_t timestamp;
+    struct timespec timestamp;
     uint64_t total_packet_count;
     uint64_t packets_writen;
     uint64_t last_chunk;
@@ -276,14 +284,16 @@ typedef struct session_t {
 
 
 typedef struct active_file_t {
+    struct timespec timestamp;
     struct active_file_t *next;
     FILE *fd;
     uint64_t counter;
     session_id_t session_id;
     unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
     unsigned char *tk;
-    int port;
     uint32_t ip;
+    uint16_t port;
+    uint16_t is_completed;
 } active_file_t;
 
 typedef struct known_key_t {
@@ -356,4 +366,5 @@ static FORCE_INLINE void free_session(void *session)
 }
 
 #define fast_MIN(a,b,bytes) ( (a) + ( ((b) - (a)) & (((b) - (a)) >> ((bytes) * CHAR_BIT - 1)) ) )
+
 #endif // INDIGO_TYPES_H

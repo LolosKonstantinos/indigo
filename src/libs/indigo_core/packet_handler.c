@@ -44,6 +44,7 @@ SOFTWARE.
 #define _FILE_OFFSET_BITS_64
 #define fseeko64 fseeko
 #include <errno.h>
+#include <time_utils.h>
 #endif
 
 //////////////////////////////////////////////////////////
@@ -64,10 +65,10 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     uint32_t flag_val = 0;
     QNODE *node = NULL;
 
-    uint64_t curr_time = 0;
+    struct timespec curr_time = {0};
     struct timespec timespec;
-    uint64_t lowest_time = 600;
-    uint64_t time_diff = 0;
+    struct timespec lowest_time = {0};
+    struct timespec time_diff = {0};
 
     unsigned char iterations_until_cleanup = 10;
 
@@ -311,7 +312,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 memset(&session, 0, sizeof(session_t));
                 memcpy(&(session.session_id), &(qe->session_id), sizeof(session_id_t));
                 session.file = qe->file;
-                session.timestamp = time(NULL);
+                clock_gettime(CLOCK_REALTIME, &(session.timestamp));
                 session.total_packet_count = 0;
                 session.status_flags |= SESSION_FLAG_CLIENT_FILE;
                 log_debug("[packet_handler_thread] expecting response for %llu", qe->session_id.serial);
@@ -359,7 +360,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
         /////////////////////////////////////////
         ///     phase 2: update the trees     ///
         /////////////////////////////////////////
-        curr_time = time(NULL);
+        clock_gettime(CLOCK_REALTIME,&curr_time);
         tmp_ptr = NULL;
         remove_array = NULL;
 
@@ -371,10 +372,12 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
             goto cleanup;
         }
         if (tree_iterator) {
+            struct timespec ts_ms_del = mstotimespec(MS_UNTIL_SIGN_REQUEST_DELETION);
+            struct timespec ts_ms_resend = mstotimespec(MS_UNTIL_SIGN_REQUEST_RESEND);
             while (tree_has_next(tree_iterator)) {
                 tree_next(tree_iterator, (void **)&found_xsr);
-                time_diff = curr_time - found_xsr->expiration_time;
-                if (time_diff >= EXPIRATION_TIME) {
+                time_diff = timespec_diff(&curr_time, &(found_xsr->expiration_time));
+                if (found_xsr->tries >= 1 && timespec_cmp(&time_diff, &ts_ms_del) >= 0) {
                     tmp_ptr = realloc(remove_array, (++remove_array_size) * sizeof(xsr_t *));
                     if (tmp_ptr == NULL) {
                         free(remove_array);
@@ -386,10 +389,59 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                     remove_array = tmp_ptr;
                     ((xsr_t **)remove_array)[remove_array_size - 1] = found_xsr;
                 }
+                else if (found_xsr->tries == 0 && timespec_cmp(&time_diff, &ts_ms_resend) >= 0) {
+                    signing_request_data_t signing_request_data;
+                    packet_t sign_packet;
+
+                    //resend the request with new nonce
+                    found_xsr->tries = 1;
+                    clock_gettime(CLOCK_REALTIME, &found_xsr->expiration_time);
+
+                    // send signing request
+                    randombytes_buf(found_xsr->nonce, INDIGO_NONCE_SIZE);
+                    memcpy(signing_request_data.nonce, found_xsr->nonce, INDIGO_NONCE_SIZE);
+                    signing_request_data.timestamp = time(NULL);
+                    strcpy(signing_request_data.username, username);
+
+                    build_packet(&sign_packet, MSG_SIGNING_REQUEST, public_key, NULL, &signing_request_data,
+                                 sizeof(signing_request_data_t));
+
+                    ret = crypto_sign_detached(signing_request_data.signature, NULL, (unsigned char *)&sign_packet,
+                                               offsetof(packet_t, data) + offsetof(signing_request_data_t, signature),
+                                               args->sign_keys->secret);
+                    if (ret) {
+                        log_fatal("[init_packet_routine] crypto_sign_detached failed | return %d", -1);
+                        *process_return = ret;
+                        goto cleanup;
+                    }
+
+                    memcpy(((signing_request_data_t *)sign_packet.data)->signature, signing_request_data.signature, crypto_sign_BYTES);
+
+                    ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, args->sockets, &sign_packet, args->flag);
+
+                    if (ret) {
+                        switch (ret) {
+                            case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
+                            case INDIGO_ERROR_INVALID_PARAM:
+                            case INDIGO_ERROR_NETWORK_SUBSYS_DOWN:
+                                log_fatal("[init_packet_routine] send_packet() failed to send signing request "
+                                          "| return %d",
+                                          ret);
+                                *process_return = ret;
+                                goto cleanup;
+                            case INDIGO_ERROR_NO_SYS_RESOURCES: // todo: I don't think we should terminate for that
+                                break;
+                            case INDIGO_ERROR_NETWORK_RESET:
+                                set_event_flag(args->flag, EF_RESET_SOCKETS);
+                                break;
+                            default:
+                                break; // winlib errors go here
+                        }
+                    }
+
+                }
                 else {
-                    // branchless minimum
-                    time_diff = EXPIRATION_TIME - time_diff;
-                    lowest_time = fast_MIN(time_diff, lowest_time, sizeof(time_t));
+                    lowest_time = min_timespec(&time_diff, &lowest_time);
                 }
             }
             // clangd says that there is a use after free and double free or remove array.
@@ -416,10 +468,11 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
             goto cleanup;
         }
         if (tree_iterator) {
+            struct timespec ts_ms = mstotimespec(MS_UNTIL_DISCONNECT);
             while (tree_has_next(tree_iterator)) {
                 tree_next(tree_iterator, (void **)&found_rdev);
-                time_diff = curr_time - found_rdev->timestamp;
-                if (time_diff >= EXPIRATION_TIME) {
+                time_diff = timespec_diff(&curr_time, &(found_rdev->timestamp));
+                if (timespec_cmp(&time_diff, &ts_ms)>=0) {
                     tmp_ptr = realloc(remove_array, (++remove_array_size) * sizeof(remote_device_t *));
                     if (tmp_ptr == NULL) {
                         free(remove_array);
@@ -433,8 +486,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 }
                 else {
                     // branchless minimum
-                    time_diff = EXPIRATION_TIME - time_diff;
-                    lowest_time = fast_MIN(time_diff, lowest_time, sizeof(time_t));
+                    lowest_time = min_timespec(&time_diff, &lowest_time);
                 }
             }
             if (remove_array) {
@@ -459,10 +511,11 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
             goto cleanup;
         }
         if (tree_iterator) {
+            struct timespec ts_ms = mstotimespec(MS_UNTIL_SESSION_TERMINATION);
             while (tree_has_next(tree_iterator)) {
                 tree_next(tree_iterator, (void **)&found_session);
-                time_diff = curr_time - found_session->timestamp;
-                if (time_diff >= EXPIRATION_TIME) {
+                time_diff = timespec_diff(&curr_time , &(found_session->timestamp));
+                if (timespec_cmp(&time_diff, &ts_ms)>=0) {
                     tmp_ptr = realloc(remove_array, (++remove_array_size) * sizeof(session_t *));
                     if (tmp_ptr == NULL) {
                         free(remove_array);
@@ -484,8 +537,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 }
                 else {
                     // branchless minimum
-                    time_diff = EXPIRATION_TIME - time_diff;
-                    lowest_time = fast_MIN(time_diff, lowest_time, sizeof(time_t));
+                    lowest_time = min_timespec(&time_diff, &lowest_time);
                 }
             }
             if (remove_array) {
@@ -506,7 +558,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
         ///  phase 3: wait a little and go again  ///
         /////////////////////////////////////////////
         clock_gettime(CLOCK_REALTIME, &timespec);
-        timespec.tv_sec += (time_t)lowest_time;
+        timespec_add(&timespec, &lowest_time);
 
         pthread_mutex_lock(&(args->flag->mutex));
         pthread_cond_timedwait(&(args->flag->cond), &(args->flag->mutex), &timespec);
@@ -640,13 +692,13 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     packet = NULL;
 
     // create expected file packets
-    session.timestamp = time(NULL);
+    clock_gettime(CLOCK_REALTIME, &(session.timestamp));
     session.total_packet_count = (uint64_t)ceil((double)(fwd->file_size) / (double)(1 << 10));
     session.packets_writen = 0;
     session.last_chunk = 0;
     session.missing_range_ll = NULL;
-    session.start_time = session.timestamp;
-    session.end_time = session.timestamp;
+    session.start_time = time(NULL);
+    session.end_time = 0;
     session.bytes_moved = 0;
     session.ip = fwd->addr;
     session.status_flags = SESSION_FLAG_ACTIVE;
@@ -718,7 +770,7 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
 
     // necessary allocations
 
-    found_session->timestamp = time(NULL);
+    clock_gettime(CLOCK_REALTIME, &(session.timestamp));
     found_session->packets_writen = 0;
     found_session->last_chunk = 0;
     found_session->bytes_moved = 0;
@@ -798,7 +850,7 @@ int init_packet_routine(packet_t *packet, packet_info_t *packet_info, tree_t *de
     ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev);
 
     if (ret == 1) {
-        found_rdev->timestamp = time(NULL); // renew the timestamp
+        clock_gettime(CLOCK_REALTIME, &(found_rdev->timestamp)); // renew the timestamp
         found_rdev->ip = packet_info->address.sin_addr.s_addr;
         found_rdev->port = packet_info->address.sin_port;
         // copy the username
@@ -813,7 +865,7 @@ int init_packet_routine(packet_t *packet, packet_info_t *packet_info, tree_t *de
     dev_tree->search_release(dev_tree);
 
     // the remote device is not on the tree so we add it
-    rdev.timestamp = time(NULL);
+    clock_gettime(CLOCK_REALTIME, &(rdev.timestamp));
     rdev.ip = packet_info->address.sin_addr.s_addr;
     rdev.port = packet_info->address.sin_port;
     rdev.session_keys = NULL;
@@ -889,7 +941,7 @@ int init_packet_routine(packet_t *packet, packet_info_t *packet_info, tree_t *de
     }
     log_debug("[init_packet_routine] sent signing request");
     // add signing response to expected packets
-    xsr.expiration_time = time(NULL);
+    clock_gettime(CLOCK_REALTIME, &(xsr.expiration_time));
     memcpy(xsr.nonce, signing_request_data.nonce, INDIGO_NONCE_SIZE);
     memcpy(xsr.id, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
     ret = xsr_tree->insert(xsr_tree, &xsr);
@@ -943,7 +995,7 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
 
     if (ret == 1 && found_rdev->dev_state_flag & RDSF_VERIFIED) {
         // the device is found
-        found_rdev->timestamp = time(NULL);
+        clock_gettime(CLOCK_REALTIME, &(found_rdev->timestamp));
         found_rdev->ip = packet_info->address.sin_addr.s_addr;
         found_rdev->port = packet_info->address.sin_port;
 
@@ -958,7 +1010,7 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
         // add the device to the device table
         // we detected the device (though it is unverified)
         if (ret == 0) {
-            rdev.timestamp = time(NULL);
+            clock_gettime(CLOCK_REALTIME, &(rdev.timestamp));
             rdev.ip = packet_info->address.sin_addr.s_addr;
             rdev.session_keys = NULL;
             rdev.fsr_list = NULL;
@@ -1030,7 +1082,7 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
 
         memcpy(xsr.id, rdev.peer_pk, crypto_sign_PUBLICKEYBYTES);
 
-        xsr.expiration_time = time(NULL);
+        clock_gettime(CLOCK_REALTIME, &(xsr.expiration_time));
         xsr.skx = kem_sk;
 
         memcpy(signing_response_data.kem_pk, kem_pk, crypto_kx_PUBLICKEYBYTES);
@@ -1146,7 +1198,7 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
         return 1;
     }
 
-    found_rdev->timestamp = time(NULL);
+    clock_gettime(CLOCK_REALTIME, &(found_rdev->timestamp));
     found_rdev->ip = packet_info->address.sin_addr.s_addr; // ip may have changed
 
     found_rdev->dev_state_flag |= RDSF_VERIFIED;
@@ -1394,7 +1446,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
         return 1;
     }
 
-    found_session->timestamp = time(NULL);
+    clock_gettime(CLOCK_REALTIME, &(found_session->timestamp));
 
     chunk_number = ((file_chunk_data_t *)packet->data)->chunk_number;
 

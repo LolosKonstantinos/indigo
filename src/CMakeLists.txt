@@ -1,5 +1,5 @@
 add_subdirectory(libs)
-add_subdirectory(qt_ui)
+#add_subdirectory(qt_ui)
 
 # Create the executable from main.c.
 add_executable(${PROJECT_NAME}_tui main_tui.c)

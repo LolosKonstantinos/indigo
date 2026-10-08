@@ -38,6 +38,9 @@ typedef struct test_t {
 void run_tests(test_t *tests, uint64_t count);
 int test_signature();
 int test_encryption();
+
+int test_timespec();
+
 //test utilities
 int test_binary_tree();
 int test_buffer();
@@ -92,6 +95,7 @@ static test_t test_arr[] = {
     test_queue, "queue",
     test_signature, "sig",
     test_encryption, "encryption",
+    test_timespec, "timespec",
 };
 
 #endif //INDIGO_TEST_H

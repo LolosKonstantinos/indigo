@@ -15,7 +15,8 @@ target_link_libraries(indigo_core PRIVATE
         binary_tree
         config
         PkgConfig::GLIB
-        logger)
+        logger
+        set)
 if(WIN32)
   target_link_libraries(indigo_core PRIVATE ws2_32 IPHLPAPI)
 elseif(LINUX)

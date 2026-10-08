@@ -27,7 +27,7 @@ SOFTWARE.
 
 #define EF_ERROR                         0x00000001
 #define EF_INTERFACE_UPDATE              0x00000002
-#define EF_SEND_MULTIPLE_PACKETS         0x00000004
+#define EF_SEND_INIT_PACKET              0x00000004
 #define EF_NEW_PACKET                    0x00000008
 #define EF_TERMINATION                   0x00000010
 #define EF_OVERRIDE_IO                   0x00000020

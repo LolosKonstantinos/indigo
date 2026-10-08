@@ -10,12 +10,13 @@ add_library(queue_includes INTERFACE Queue.h)
 add_library(buffer_includes INTERFACE buffer.h)
 add_library(mempool_includes INTERFACE mempool.h)
 add_library(binary_tree_includes INTERFACE binary_tree.h)
-add_library(hash_table_includes INTERFACE dpht.h hash_functions.h hash_table.h lht.h)
+add_library(hash_table_includes INTERFACE dpht.h hash_functions.h hash_table.h lht.h ducktable.h)
 add_library(indigo_errors INTERFACE indigo_errors.h)
 add_library(indigo_types INTERFACE indigo_types.h)
 add_library(config_includes INTERFACE config.h)
 add_library(logger_includes INTERFACE logger.h)
 add_library(set_includes INTERFACE set.h)
+add_library(time_utils INTERFACE time_utils.h)
 
 # The interface target makes all its consumers aware of the include directory.
 target_include_directories(crypto_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -29,6 +30,7 @@ target_include_directories(hash_table_includes INTERFACE ${CMAKE_CURRENT_SOURCE_
 target_include_directories(config_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(logger_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(set_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(time_utils INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_include_directories(indigo_errors INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(indigo_types INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})

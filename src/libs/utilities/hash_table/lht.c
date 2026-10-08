@@ -29,7 +29,7 @@ SOFTWARE.
 
 struct lht_priv {
     lht_node_t *head;           //the head of the linked list
-    hashFunction hash;          //kinda useless, we always use MurMurHash anyway
+    hashFunction_32 hash;          //kinda useless, we always use MurMurHash anyway
     unsigned char *table;       //the array of the hash table
     size_t data_size;           //the number of bytes of the data part of the bucket
     size_t bucket_count;        //the total number of buckets on the first level
@@ -80,7 +80,7 @@ lht_t *new_lht(size_t data_size, size_t key_length, size_t init_size) {
     pthread_cond_init(&priv->cond, NULL);
     ht->private = priv;
     priv->head = NULL;
-    priv->hash = FastHash;
+    priv->hash = FastHash_32;
     priv->bucket_count = init_size ? init_size : 1;
     priv->hash_bit_length = (sizeof(size_t) * 8) - __builtin_ctz((init_size * init_size) - 1);
     priv->data_size = data_size;
