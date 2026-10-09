@@ -1,3 +1,24 @@
+/*
+Copyright (c) 2026 Lolos Konstantinos
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
 #include "ducktable.h"
 #include "hash_functions.h"
 #include <stdint.h>
@@ -6,7 +27,7 @@
 #include <pthread.h>
 #include <string.h>
 
-#define log2_ceil(n) (sizeof(size_t) * CHAR_BIT - __builtin_clz(n-1))
+#define log2_ceil(n) (sizeof(uint64_t) * CHAR_BIT - __builtin_clz(n-1))
 #define pow2(n) (1 << (n))
 
 #define BLOCK_SIZE 16
@@ -63,8 +84,9 @@ struct ducktable_t {
     uint64_t bucket_count;
     uint64_t data_size;
     int key_size;
+    int key_offset;
     uint8_t hash_bits; //the number of bits we keep from the hash. raised to the power of 2 is the number of blocks
-    char zero[3];
+    char zero[7];
     pthread_mutex_t mutex;
 };
 
@@ -88,7 +110,7 @@ static FORCE_INLINE uint16_t get_bit_map(const block_t *const block,const uint8_
     return bit_mask;
 }
 
-ducktable_t *new_ducktable(int key_size, int data_size, uint64_t init_size,hashFunction hash_function)
+ducktable_t *new_ducktable(int key_size, int key_offset, int data_size, uint64_t init_size)
 {
     ducktable_t *restrict ducktable;
     const uint64_t empty_block = byte_pattern_64(BLOCK_EMPTY);
@@ -101,7 +123,7 @@ ducktable_t *new_ducktable(int key_size, int data_size, uint64_t init_size,hashF
     }
     ducktable->data_size = data_size;
     ducktable->key_size = key_size;
-    hash = hash_function ? hash_function : MurMurHash_64;
+    ducktable->key_offset = key_offset;
 
     init_size = init_size > 16 ? init_size : 16;
     init_size = log2_ceil(init_size);
@@ -121,7 +143,7 @@ ducktable_t *new_ducktable(int key_size, int data_size, uint64_t init_size,hashF
         memcpy(((unsigned char *)ducktable->blocks) + i*sizeof(empty_block), &empty_block, sizeof(empty_block));
     }
 
-    ducktable->data = malloc(pow2(init_size) * (data_size+key_size));
+    ducktable->data = malloc(pow2(init_size) * data_size);
     if (ducktable->data == NULL) {
         free(ducktable->blocks);
         free(ducktable);
@@ -155,8 +177,8 @@ static int expand_ducktable(ducktable_t *const restrict ducktable)
     ++(ducktable->hash_bits);
 
     //allocate new data array and re-hash the whole table
-    new_table = malloc(pow2(ducktable->hash_bits) * (ducktable->key_size + ducktable->data_size));
-    new_blocks = malloc(pow2(ducktable->hash_bits));
+    new_table = malloc(pow2(ducktable->hash_bits) * ducktable->data_size);
+    new_blocks = malloc(pow2(ducktable->hash_bits) * BLOCK_SIZE);
     key = malloc(ducktable->key_size);
     if (!new_table || !new_blocks || !key) {
         free(new_table);
@@ -185,7 +207,7 @@ static int expand_ducktable(ducktable_t *const restrict ducktable)
         while (occupied_bit_map != 0) {
             memcpy(key,
                   ducktable->data
-                   + (i + first_on_bit_64(occupied_bit_map)) * (ducktable->data_size + ducktable->key_size),
+                   + (i*BLOCK_SIZE + first_on_bit_64(occupied_bit_map)) * (ducktable->data_size) + ducktable->key_offset,
                    ducktable->key_size);
 
             //do a modified insert
@@ -206,12 +228,8 @@ static int expand_ducktable(ducktable_t *const restrict ducktable)
                     //hb/16 is the 16 item block possession
                     //16*i is how many block away from the original block we found an empty spot
                     //idx is the index inside the block [0,15]
-                    memcpy(new_table + ((((hb + k)%pow2(ducktable->hash_bits)) + idx)*(ducktable->data_size + ducktable->key_size)),
-                           key,
-                           ducktable->key_size);
-
-                    memcpy(new_table + (((hb + k)%pow2(ducktable->hash_bits)) + idx)*(ducktable->data_size +ducktable->key_size) + ducktable->key_size,
-                            ducktable->data + (i + first_on_bit_64(occupied_bit_map)) * (ducktable->data_size + ducktable->key_size) + ducktable->key_size,
+                    memcpy(new_table + (((hb + k)%pow2(ducktable->hash_bits)) + idx)*(ducktable->data_size),
+                            ducktable->data + (i + first_on_bit_64(occupied_bit_map)) * (ducktable->data_size),
                             ducktable->data_size);
 
                     new_blocks[(hb + k)%pow2(ducktable->hash_bits)].block_bytes[idx] = hs;
@@ -258,9 +276,9 @@ int ducktable_search(ducktable_t *const restrict ducktable,const char *restrict 
         while (candidate_bit_map != 0) {
             if (memcmp(key,
                 ducktable->data +
-                ((hb + i)%pow2(ducktable->hash_bits) /*move to the block*/
+                (((hb + i)%pow2(ducktable->hash_bits))*BLOCK_SIZE /*move to the block*/
                 +first_on_bit_64(candidate_bit_map)) /*move to the elements in the block*/
-                *(ducktable->key_size + ducktable->data_size),
+                *(ducktable->data_size) + ducktable->key_offset,
                 ducktable->key_size) == 0)
             {
                 return 1;
@@ -299,16 +317,16 @@ int ducktable_retrieve(ducktable_t *restrict ducktable,const char *restrict key,
         while (candidate_bit_map != 0) {
             if (memcmp(key,
                 ducktable->data +
-                ((hb + i)%pow2(ducktable->hash_bits) /*move to the block*/
+                (((hb + i)%pow2(ducktable->hash_bits)) * BLOCK_SIZE /*move to the block*/
                 +first_on_bit_64(candidate_bit_map)) /*move to the elements in the block*/
-                *(ducktable->key_size + ducktable->data_size),
+                *(ducktable->data_size) + ducktable->key_offset,
                 ducktable->key_size) == 0)
             {
                 //copy the data part to return it to the user
                 memcpy(data,
                    ducktable->data +
-                       ((hb + i)%pow2(ducktable->hash_bits) +first_on_bit_64(candidate_bit_map))
-                       *(ducktable->key_size + ducktable->data_size) + ducktable->key_size,
+                       (((hb + i)%pow2(ducktable->hash_bits))*BLOCK_SIZE +first_on_bit_64(candidate_bit_map))
+                       *(ducktable->data_size),
                        ducktable->data_size);
                 return 1;
             }
@@ -345,14 +363,14 @@ int ducktable_access(ducktable_t *restrict ducktable,const char *restrict key, v
         while (candidate_bit_map != 0) {
             if (memcmp(key,
                 ducktable->data +
-                ((hb + i)%pow2(ducktable->hash_bits) /*move to the block*/
+                (((hb + i)%pow2(ducktable->hash_bits))*BLOCK_SIZE /*move to the block*/
                 +first_on_bit_64(candidate_bit_map)) /*move to the elements in the block*/
-                *(ducktable->key_size + ducktable->data_size),
+                *(ducktable->data_size),
                 ducktable->key_size) == 0)
             {
                 *data = ducktable->data +
-                       ((hb + i)%pow2(ducktable->hash_bits) +first_on_bit_64(candidate_bit_map))
-                       *(ducktable->key_size + ducktable->data_size) + ducktable->key_size;
+                       (((hb + i)%pow2(ducktable->hash_bits))*BLOCK_SIZE +first_on_bit_64(candidate_bit_map))
+                       *(ducktable->data_size);
                 return 1;
             }
             //we checked this one so we turn of the respective bit
@@ -379,7 +397,7 @@ int ducktable_insert(ducktable_t *const restrict ducktable,const char *restrict 
     if (!ducktable || !key) return -1;
 
     //check if we need to resize
-    if ( ducktable->bucket_count+1 > pow2(ducktable->hash_bits)/(ducktable->data_size + ducktable->key_size) ) {
+    if ( ducktable->bucket_count+1 > pow2(ducktable->hash_bits)/(ducktable->data_size) ) {
         // we need to resize
         const int ret = expand_ducktable(ducktable);
         if (ret != 0) {
@@ -398,9 +416,9 @@ int ducktable_insert(ducktable_t *const restrict ducktable,const char *restrict 
         while (candidate_bit_map != 0) {
             if (memcmp(key,
                 ducktable->data +
-                ((hb + i)%pow2(ducktable->hash_bits) /* move to the block*/
+                (((hb + i)%pow2(ducktable->hash_bits))*BLOCK_SIZE /* move to the block*/
                 +first_on_bit_64(candidate_bit_map)) /*move to the elements in the block*/
-                *(ducktable->key_size + ducktable->data_size), /*times the size of a bucket*/
+                *(ducktable->data_size) + ducktable->key_offset, /*times the size of a bucket*/
                 ducktable->key_size) == 0)
             {
                 return 1;
@@ -420,11 +438,7 @@ int ducktable_insert(ducktable_t *const restrict ducktable,const char *restrict 
             //idx is the index inside the block [0,15]
 
             memcpy(ducktable->data
-                +((hb + i)%pow2(ducktable->hash_bits) + idx)*(ducktable->data_size + ducktable->key_size)
-                ,key,ducktable->key_size);
-
-            memcpy(ducktable->data
-                +((hb + i)%pow2(ducktable->hash_bits) + idx)*(ducktable->data_size + ducktable->key_size) + ducktable->key_size
+                +(((hb + i)%pow2(ducktable->hash_bits))*BLOCK_SIZE + idx)*(ducktable->data_size)
                 ,data,ducktable->data_size);
 
             ducktable->blocks[(hb + i)%pow2(ducktable->hash_bits)].block_bytes[idx] = hs;
@@ -459,9 +473,9 @@ int ducktable_remove(ducktable_t *const restrict ducktable,const char *restrict 
         while (candidate_bit_map != 0) {
             if (memcmp(key,
                 ducktable->data +
-                ((hb + i)%pow2(ducktable->hash_bits) /*move to the block*/
+                (((hb + i)%pow2(ducktable->hash_bits))*BLOCK_SIZE /*move to the block*/
                 +first_on_bit_64(candidate_bit_map)) /*move to the elements in the block*/
-                *(ducktable->key_size + ducktable->data_size),
+                *(ducktable->data_size) + ducktable->key_offset,
                 ducktable->key_size) == 0)
             {
                 //just edit the block. You dont need to erase data
@@ -507,7 +521,7 @@ int ducktable_rehash(ducktable_t *ducktable)
     const uint64_t empty_block = byte_pattern_64(BLOCK_EMPTY);
 
     //allocate new data array and re-hash the whole table
-    new_table = malloc(pow2(ducktable->hash_bits) * (ducktable->key_size + ducktable->data_size));
+    new_table = malloc(pow2(ducktable->hash_bits) * (ducktable->data_size));
     new_blocks = malloc(pow2(ducktable->hash_bits));
     key = malloc(ducktable->key_size);
     if (!new_table || !new_blocks || !key) {
@@ -536,7 +550,7 @@ int ducktable_rehash(ducktable_t *ducktable)
         while (occupied_bit_map != 0) {
             memcpy(key,
                   ducktable->data
-                   + (i + first_on_bit_64(occupied_bit_map)) * (ducktable->data_size + ducktable->key_size),
+                   + (i*BLOCK_SIZE + first_on_bit_64(occupied_bit_map)) * (ducktable->data_size) + ducktable->key_offset,
                    ducktable->key_size);
 
             //do a modified insert
@@ -557,13 +571,9 @@ int ducktable_rehash(ducktable_t *ducktable)
                     //hb/16 is the 16 item block possession
                     //16*i is how many block away from the original block we found an empty spot
                     //idx is the index inside the block [0,15]
-                    memcpy(new_table + ((((hb + k)%pow2(ducktable->hash_bits)) + idx)*(ducktable->data_size + ducktable->key_size)),
-                           key,
-                           ducktable->key_size);
-
-                    memcpy(new_table + (((hb + k)%pow2(ducktable->hash_bits)) + idx)*(ducktable->data_size +ducktable->key_size) + ducktable->key_size,
-                            ducktable->data + (i + first_on_bit_64(occupied_bit_map)) * (ducktable->data_size + ducktable->key_size) + ducktable->key_size,
-                            ducktable->data_size);
+                    memcpy(new_table + (((hb + k)%pow2(ducktable->hash_bits))*BLOCK_SIZE + idx)*(ducktable->data_size),
+                           ducktable->data + (i*BLOCK_SIZE + first_on_bit_64(occupied_bit_map))*(ducktable->data_size),
+                           ducktable->data_size);
 
                     new_blocks[(hb + k)%pow2(ducktable->hash_bits)].block_bytes[idx] = hs;
 

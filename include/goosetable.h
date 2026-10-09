@@ -19,8 +19,8 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
-#ifndef INDIGO_DUCKTABLE_H
-#define INDIGO_DUCKTABLE_H
+#ifndef INDIGO_GOOSETABLE_H
+#define INDIGO_GOOSETABLE_H
 
 #include "hash_functions.h"
 
@@ -28,22 +28,22 @@ SOFTWARE.
 #define FORCE_INLINE inline __attribute__((always_inline))
 #endif
 
-typedef struct ducktable_t ducktable_t;
+typedef struct goosetable_t goosetable_t;
 
-ducktable_t *new_ducktable(int key_size, int key_offset, int data_size, uint64_t init_size);
-void free_ducktable(ducktable_t *ducktable);
+goosetable_t *new_goosetable(int key_size, int data_size, uint64_t init_size,hashFunction hash_function);
+void free_goosetable(goosetable_t *goosetable);
 
-int ducktable_search(ducktable_t *ducktable,const char *restrict key);
-int ducktable_retrieve(ducktable_t *ducktable,const char *restrict key, void *restrict data);
-int ducktable_access(ducktable_t *ducktable,const char *restrict key, void **data);
-int ducktable_insert(ducktable_t *ducktable,const char *restrict key,const char *restrict data);
-int ducktable_remove(ducktable_t *ducktable,const char *restrict key);
+int goosetable_search(goosetable_t *goosetable,const char *restrict key);
+int goosetable_retrieve(goosetable_t *goosetable,const char *restrict key, void *restrict data);
+int goosetable_access(goosetable_t *goosetable,const char *restrict key, void **data);
+int goosetable_insert(goosetable_t *goosetable,const char *restrict key,const char *restrict data);
+int goosetable_remove(goosetable_t *goosetable,const char *restrict key);
 
-void ducktable_lock(ducktable_t *ducktable);
-void ducktable_unlock(ducktable_t *ducktable);
+void goosetable_lock(goosetable_t *goosetable);
+void goosetable_unlock(goosetable_t *goosetable);
 
-// void ducktable_read_lock(ducktable_t *ducktable);
-// void ducktable_write_lock(ducktable_t *ducktable);
+// void goosetable_read_lock(ducktable_t *ducktable);
+// void goosetable_write_lock(ducktable_t *ducktable);
 
-int ducktable_rehash(ducktable_t *ducktable);
-#endif // INDIGO_DUCKTABLE_H
+int goosetable_rehash(goosetable_t *goosetable);
+#endif // INDIGO_GOOSETABLE_H
