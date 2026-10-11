@@ -136,6 +136,13 @@ goosetable_t *new_goosetable(int key_size, int data_size, uint64_t init_size,has
         return NULL;
     }
 
+    if (pthread_mutex_init(&goosetable->mutex, NULL)) {
+        free(goosetable->blocks);
+        free(goosetable->keys);
+        free(goosetable);
+        return NULL;
+    }
+
     return NULL;
 }
 void free_goosetable(goosetable_t *goosetable)
@@ -495,13 +502,32 @@ int goosetable_remove(goosetable_t *goosetable,const char *restrict key)
         //check every matching item in the block
         while (candidate_bit_map != 0) {
             if (memcmp(key,
-                goosetable->data +
-                (((hb + i)%pow2(goosetable->hash_bits))*BLOCK_SIZE /*move to the block*/
+                goosetable->keys +
+                (((hb + i)%pow2(goosetable->hash_bits))*BLOCK_SIZE /* move to the block*/
                 +first_on_bit_64(candidate_bit_map)) /*move to the elements in the block*/
-                *(goosetable->data_size),
+                *(goosetable->key_size + sizeof(uint64_t)), /*times the size of a bucket*/
                 goosetable->key_size) == 0)
             {
-                //just edit the block. You dont need to erase data
+                const uint64_t removed_idx = *((uint64_t *)(goosetable->keys +
+                                    (((hb + i)%pow2(goosetable->hash_bits)) * BLOCK_SIZE /*move to the block*/
+                                    +first_on_bit_64(candidate_bit_map)) /*move to the elements in the block*/
+                                    *(goosetable->key_size + sizeof(uint64_t))
+                                    + goosetable->key_size));
+                const uint64_t replacement_idx = *(uint64_t *)(goosetable->data
+                                                            + (goosetable->bucket_count -1)
+                                                            * (sizeof(uint64_t) + goosetable->data_size));
+
+                //if the removed node is not the last node in the data array
+                if (removed_idx != goosetable->bucket_count - 1) {
+                    //move the last node to the place of the removed node
+                    memcpy(goosetable->data +(removed_idx*(goosetable->data_size + sizeof(uint64_t))),
+                           goosetable->data + (goosetable->bucket_count -1) * (sizeof(uint64_t) + goosetable->data_size),
+                           goosetable->data_size + sizeof(uint64_t));
+                    //edit the key to have the right index stored
+                    memcpy(goosetable->keys + replacement_idx, &removed_idx, sizeof(uint64_t));
+                }
+
+                //edit the block to remove the item
                 goosetable->blocks[(hb + i)%pow2(goosetable->hash_bits)]
                 .block_bytes[first_on_bit_64(candidate_bit_map)]= BLOCK_DEAD;
                 --(goosetable->bucket_count);
