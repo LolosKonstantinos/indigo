@@ -89,6 +89,13 @@ struct goosetable_t {
     pthread_mutex_t mutex;
 };
 
+struct goosetable_iterator_t {
+    unsigned char *item_array;
+    size_t item_count;
+    uint64_t item_size;
+    uint64_t current_item;
+};
+
 goosetable_t *new_goosetable(int key_size, int data_size, uint64_t init_size,hashFunction hash_function)
 {
     goosetable_t *goosetable;
@@ -543,6 +550,34 @@ int goosetable_remove(goosetable_t *goosetable,const char *restrict key)
         }
     }
     return 1;
+}
+
+int new_goosetable_iterator(goosetable_t *goosetable,goosetable_iterator_t **iterator)
+{
+    if (!goosetable || !iterator) return -1;
+    goosetable_iterator_t *const restrict iter = malloc(sizeof(goosetable_iterator_t));
+    if (!iter) return -1;
+    iter->current_item = 0;
+    iter->item_count = goosetable->bucket_count;
+    iter->item_size = goosetable->data_size;
+    iter->item_array = goosetable->data;
+    *iterator = iter;
+    return 0;
+}
+int goosetable_has_next(goosetable_iterator_t *iterator)
+{
+    if (!iterator) return 0;
+    if (iterator->current_item >= iterator->item_count) return 0;
+    return 1;
+}
+void *goosetable_next(goosetable_iterator_t *iterator)
+{
+    void *item;
+    if (!iterator) return NULL;
+    if (iterator->current_item >= iterator->item_count) return NULL;
+    item = iterator->item_array + iterator->current_item *(iterator->item_size + sizeof(uint64_t));
+    iterator->current_item++;
+    return item;
 }
 
 void goosetable_lock(goosetable_t *restrict goosetable)

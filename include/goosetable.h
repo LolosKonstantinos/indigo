@@ -29,6 +29,7 @@ SOFTWARE.
 #endif
 
 typedef struct goosetable_t goosetable_t;
+typedef struct goosetable_iterator_t goosetable_iterator_t;
 
 goosetable_t *new_goosetable(int key_size, int data_size, uint64_t init_size,hashFunction hash_function);
 void free_goosetable(goosetable_t *goosetable);
@@ -38,6 +39,10 @@ int goosetable_retrieve(goosetable_t *goosetable,const char *restrict key, void 
 int goosetable_access(goosetable_t *goosetable,const char *restrict key, void **data);
 int goosetable_insert(goosetable_t *goosetable,const char *restrict key,const char *restrict data);
 int goosetable_remove(goosetable_t *goosetable,const char *restrict key);
+
+int new_goosetable_iterator(goosetable_t *goosetable,goosetable_iterator_t **iterator);
+int goosetable_has_next(goosetable_iterator_t *iterator);
+void *goosetable_next(goosetable_iterator_t *iterator);
 
 void goosetable_lock(goosetable_t *goosetable);
 void goosetable_unlock(goosetable_t *goosetable);
