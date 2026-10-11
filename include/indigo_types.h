@@ -22,6 +22,9 @@ SOFTWARE.
 #ifndef INDIGO_TYPES_H
 #define INDIGO_TYPES_H
 
+#include "ducktable.h"
+#include "goosetable.h"
+
 #include <sodium/crypto_kem.h>
 #include <sodium/utils.h>
 #include <sys/stat.h>
@@ -281,6 +284,11 @@ typedef struct session_t {
     uint32_t ip;
     uint32_t status_flags;
 } session_t;
+
+typedef struct sessions_t {
+    ducktable_t *recv_sessions;
+    goosetable_t *send_sessions;
+}sessions_t;
 
 
 typedef struct active_file_t {

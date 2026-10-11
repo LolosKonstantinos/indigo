@@ -27,8 +27,8 @@ SOFTWARE.
 
 #include <Queue.h>
 #include <binary_tree.h>
-#include <lht.h>
 // #include <ncursesw/curses.h>
+#include "ducktable.h"
 #include "event_flags.h"
 
 #include <curses.h>
@@ -36,7 +36,7 @@ SOFTWARE.
 
 typedef struct UI_ARGS {
     union {
-        tree_t *dev_tree;
+        ducktable_t *dev_tree;
         void *master_key;
     };
     tree_t *file_tree;

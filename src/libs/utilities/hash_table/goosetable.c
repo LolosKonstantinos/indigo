@@ -197,7 +197,7 @@ int goosetable_search(goosetable_t *goosetable,const char *restrict key)
                 goosetable->keys +
                 (((hb + i)%pow2(goosetable->hash_bits))*BLOCK_SIZE /*move to the block*/
                 +first_on_bit_64(candidate_bit_map)) /*move to the elements in the block*/
-                *(goosetable->key_size + sizeof(uint64_t)),
+                *(goosetable->key_size + sizeof(uint64_t))+ sizeof(uint64_t),
                 goosetable->key_size) == 0)
             {
                 return 1;
@@ -234,21 +234,20 @@ int goosetable_retrieve(goosetable_t *goosetable,const char *restrict key, void 
         //check every matching item in the block
         while (candidate_bit_map != 0) {
             if (memcmp(key,
-                goosetable->keys +
-                (((hb + i)%pow2(goosetable->hash_bits)) * BLOCK_SIZE /*move to the block*/
+                goosetable->keys
+                +(((hb + i)%pow2(goosetable->hash_bits)) * BLOCK_SIZE /*move to the block*/
                 +first_on_bit_64(candidate_bit_map)) /*move to the elements in the block*/
-                *(goosetable->key_size + sizeof(uint64_t)),
+                *(goosetable->key_size + sizeof(uint64_t)) + sizeof(uint64_t),
                 goosetable->key_size) == 0)
             {
                 //copy the index
-                const uint64_t idx = *((uint64_t *)(goosetable->keys +
-                                    (((hb + i)%pow2(goosetable->hash_bits)) * BLOCK_SIZE /*move to the block*/
+                const uint64_t idx = *((uint64_t *)(goosetable->keys
+                                    +(((hb + i)%pow2(goosetable->hash_bits)) * BLOCK_SIZE /*move to the block*/
                                     +first_on_bit_64(candidate_bit_map)) /*move to the elements in the block*/
-                                    *(goosetable->key_size + sizeof(uint64_t))
-                                    + goosetable->key_size));
+                                    *(goosetable->key_size + sizeof(uint64_t))));
 
                 // copy the data part to return it to the user
-                memcpy(data,goosetable->data + idx*(goosetable->data_size), goosetable->data_size);
+                memcpy(data,goosetable->data + idx*(goosetable->data_size + sizeof(uint64_t)), goosetable->data_size);
                 return 1;
             }
             //we checked this one so we turn of the respective bit
@@ -286,15 +285,14 @@ int goosetable_access(goosetable_t *goosetable,const char *restrict key, void **
                 goosetable->keys +
                 (((hb + i)%pow2(goosetable->hash_bits)) * BLOCK_SIZE /*move to the block*/
                 +first_on_bit_64(candidate_bit_map)) /*move to the elements in the block*/
-                *(goosetable->key_size + sizeof(uint64_t)),
+                *(goosetable->key_size + sizeof(uint64_t)) + sizeof(uint64_t),
                 goosetable->key_size) == 0)
             {
-                const uint64_t idx = *((uint64_t *)(goosetable->keys +
-                                    (((hb + i)%pow2(goosetable->hash_bits)) * BLOCK_SIZE /*move to the block*/
-                                    +first_on_bit_64(candidate_bit_map)) /*move to the elements in the block*/
-                                    *(goosetable->key_size + sizeof(uint64_t))
-                                    + goosetable->key_size));
-                *data = goosetable->data + idx*(goosetable->data_size);
+                const uint64_t idx = *(uint64_t *)(goosetable->keys
+                                   +(((hb + i) % pow2(goosetable->hash_bits)) * BLOCK_SIZE /*move to the block*/
+                                   + first_on_bit_64(candidate_bit_map)) /*move to the elements in the block*/
+                                   * (goosetable->key_size + sizeof(uint64_t)));
+                *data = goosetable->data + idx*(goosetable->data_size + sizeof(uint64_t));
                 return 1;
             }
             //we checked this one so we turn of the respective bit
@@ -367,7 +365,7 @@ static int expand_goosetable(goosetable_t *const restrict goosetable)
         while (occupied_bit_map != 0) {
             memcpy(key,
                   goosetable->keys + (i*BLOCK_SIZE + first_on_bit_64(occupied_bit_map))
-                  * (goosetable->key_size + sizeof(uint64_t)),
+                  * (goosetable->key_size + sizeof(uint64_t)) + sizeof(uint64_t),
                    goosetable->key_size);
 
             //do a modified insert
@@ -388,8 +386,8 @@ static int expand_goosetable(goosetable_t *const restrict goosetable)
                     //hb/16 is the 16 item block possession
                     //16*i is how many block away from the original block we found an empty spot
                     //idx is the index inside the block [0,15]
-                    memcpy(new_table + (((hb + k)%pow2(goosetable->hash_bits))*BLOCK_SIZE + idx)*(goosetable->key_size),
-                           goosetable->keys + (i*BLOCK_SIZE + first_on_bit_64(occupied_bit_map)) * (goosetable->key_size),
+                    memcpy(new_table + (((hb + k)%pow2(goosetable->hash_bits))*BLOCK_SIZE + idx)*(goosetable->key_size + sizeof(uint64_t)),
+                           goosetable->keys + (i*BLOCK_SIZE + first_on_bit_64(occupied_bit_map)) * (goosetable->key_size + sizeof(uint64_t)),
                            goosetable->key_size + sizeof(uint64_t));
 
                     new_blocks[(hb + k)%pow2(goosetable->hash_bits)].block_bytes[idx] = hs;
@@ -447,7 +445,7 @@ int goosetable_insert(goosetable_t *goosetable,const char *restrict key,const ch
                 goosetable->keys +
                 (((hb + i)%pow2(goosetable->hash_bits))*BLOCK_SIZE /* move to the block*/
                 +first_on_bit_64(candidate_bit_map)) /*move to the elements in the block*/
-                *(goosetable->key_size + sizeof(uint64_t)), /*times the size of a bucket*/
+                *(goosetable->key_size + sizeof(uint64_t)) + sizeof(uint64_t), /*times the size of a bucket*/
                 goosetable->key_size) == 0)
             {
                 return 1;
@@ -469,8 +467,8 @@ int goosetable_insert(goosetable_t *goosetable,const char *restrict key,const ch
                 (((hb + i)%pow2(goosetable->hash_bits))*BLOCK_SIZE + idx)*(goosetable->key_size + sizeof(uint64_t));
 
 
-            memcpy(goosetable->keys +key_idx ,key,goosetable->key_size);
-            memcpy(goosetable->keys +key_idx + sizeof(uint64_t),&(goosetable->bucket_count),sizeof(uint64_t));
+            memcpy(goosetable->keys +key_idx, &(goosetable->bucket_count),sizeof(uint64_t));
+            memcpy(goosetable->keys +key_idx + sizeof(uint64_t) ,key,goosetable->key_size);
 
             //write the data to the data array
             memcpy(goosetable->data + goosetable->bucket_count * (sizeof(uint64_t) + goosetable->data_size)
@@ -512,14 +510,14 @@ int goosetable_remove(goosetable_t *goosetable,const char *restrict key)
                 goosetable->keys +
                 (((hb + i)%pow2(goosetable->hash_bits))*BLOCK_SIZE /* move to the block*/
                 +first_on_bit_64(candidate_bit_map)) /*move to the elements in the block*/
-                *(goosetable->key_size + sizeof(uint64_t)), /*times the size of a bucket*/
+                *(goosetable->key_size + sizeof(uint64_t)) + sizeof(uint64_t), /*times the size of a bucket*/
                 goosetable->key_size) == 0)
             {
-                const uint64_t removed_idx = *((uint64_t *)(goosetable->keys +
-                                    (((hb + i)%pow2(goosetable->hash_bits)) * BLOCK_SIZE /*move to the block*/
+                const uint64_t removed_idx = *((uint64_t *)(goosetable->keys
+                                    +(((hb + i)%pow2(goosetable->hash_bits)) * BLOCK_SIZE /*move to the block*/
                                     +first_on_bit_64(candidate_bit_map)) /*move to the elements in the block*/
-                                    *(goosetable->key_size + sizeof(uint64_t))
-                                    + goosetable->key_size));
+                                    *(goosetable->key_size + sizeof(uint64_t))));
+
                 const uint64_t replacement_idx = *(uint64_t *)(goosetable->data
                                                             + (goosetable->bucket_count -1)
                                                             * (sizeof(uint64_t) + goosetable->data_size));
@@ -564,6 +562,12 @@ int new_goosetable_iterator(goosetable_t *goosetable,goosetable_iterator_t **ite
     *iterator = iter;
     return 0;
 }
+void free_goosetable_iterator(goosetable_iterator_t **iterator)
+{
+    if (!iterator) return;
+    free(*iterator);
+    *iterator = NULL;
+}
 int goosetable_has_next(goosetable_iterator_t *iterator)
 {
     if (!iterator) return 0;
@@ -578,6 +582,34 @@ void *goosetable_next(goosetable_iterator_t *iterator)
     item = iterator->item_array + iterator->current_item *(iterator->item_size + sizeof(uint64_t));
     iterator->current_item++;
     return item;
+}
+
+int goosetable_iterator_remove_current(goosetable_t *goosetable, goosetable_iterator_t *iterator)
+{
+    if (!goosetable || !iterator) return -1;
+    if (iterator->current_item >= iterator->item_count || iterator->current_item == 0) return -1;
+
+    const uint64_t removed_idx = *(uint64_t *)(goosetable->data
+                                    + (iterator->current_item - 1) * (iterator->item_size + sizeof(uint64_t)));
+
+    const uint64_t replacement_idx = *(uint64_t *)(goosetable->data
+                                                + (goosetable->bucket_count -1)
+                                                * (sizeof(uint64_t) + goosetable->data_size));
+
+    //if the removed node is not the last node in the data array
+    if (iterator->current_item - 1 != goosetable->bucket_count - 1) {
+        //move the last node to the place of the removed node
+        memcpy(goosetable->data + ((iterator->current_item - 1) * (goosetable->data_size + sizeof(uint64_t))),
+               goosetable->data + (goosetable->bucket_count - 1) * (sizeof(uint64_t) + goosetable->data_size),
+               goosetable->data_size + sizeof(uint64_t));
+        //edit the key to have the right index stored
+        memcpy(goosetable->keys + replacement_idx, &removed_idx, sizeof(uint64_t));
+    }
+
+    //edit the block to remove the item
+    *((unsigned char *)(goosetable->blocks) + removed_idx/(goosetable->key_size + sizeof(uint64_t)))= BLOCK_DEAD;
+    --(goosetable->bucket_count);
+    return 0;
 }
 
 void goosetable_lock(goosetable_t *restrict goosetable)

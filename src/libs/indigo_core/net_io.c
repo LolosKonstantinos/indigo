@@ -39,10 +39,10 @@ SOFTWARE.
 
 #include "config.h"
 #include "event_flags.h"
-#include "lht.h"
 #include "mempool.h"
 #include "net_monitor.h"
 #include "time_utils.h"
+#include "goosetable.h"
 
 #include <log.h>
 #include <errno.h>
@@ -1790,9 +1790,9 @@ int *send_thread(SEND_ARGS *args)
     struct timespec deadline_ts;
     struct timespec current_ts;
     QNODE *node;
-    lht_t *active_files = NULL;
+    goosetable_t *active_files = NULL;
     active_file_t *curr_af;
-    lht_node_t *list;
+    goosetable_iterator_t *af_iter;
     fwd_packet_t *fwd_packet = NULL;
     remote_device_t rdev = {0};
     char username[MAX_USERNAME_LEN  * sizeof(uint32_t) + 1];
@@ -1809,14 +1809,12 @@ int *send_thread(SEND_ARGS *args)
     }
     *process_return = 0;
 
-    active_files = new_lht(sizeof(active_file_t), sizeof(session_id_t), 1 << 4);
+    active_files = new_goosetable(sizeof(session_id_t),sizeof(active_file_t),  16, NULL);
     if (!active_files) {
-        set_event_flag(args->flag, EF_TERMINATION);
-        set_event_flag(args->wake, EF_WAKE_MANAGER);
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_fatal("[send_thread] new_lht() failed creating linked hash table for active files | return %d | errno %d",
                   INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR, errno);
-        return process_return;
+        goto cleanup;
     }
 
     load_username(username);
@@ -1829,14 +1827,11 @@ int *send_thread(SEND_ARGS *args)
         ret = send_discovery_packets(args->port, args->multicast_addr, args->sockets, args->flag, 1, 0,
                                      args->sign_keys, username);
         if (ret != INDIGO_SUCCESS) {
-            set_event_flag(args->flag, EF_TERMINATION);
-            set_event_flag(args->wake, EF_WAKE_MANAGER);
-            delete_lht(active_files);
             *process_return = ret;
             log_fatal(
                 "[send_thread] send_discovery_packets() failed while sending scheduled discovery packets | return %d",
                 ret);
-            return process_return;
+            goto cleanup;
         }
     }
 
@@ -1854,14 +1849,11 @@ int *send_thread(SEND_ARGS *args)
             ret = send_discovery_packets(args->port, args->multicast_addr, args->sockets, args->flag, 2, 150,
                                          args->sign_keys, username);
             if (ret != INDIGO_SUCCESS) {
-                set_event_flag(args->flag, EF_TERMINATION);
-                set_event_flag(args->wake, EF_WAKE_MANAGER);
-                delete_lht(active_files);
                 *process_return = ret;
                 log_fatal("[send_thread] send_discovery_packets() failed while sending multiple packets on request | "
                           "return %d",
                           ret);
-                return process_return;
+                goto cleanup;
             }
         }
         else if (flag_val & EF_CHECK_QUEUE) {
@@ -1879,14 +1871,11 @@ int *send_thread(SEND_ARGS *args)
                 queue_remove_front_no_free_tu(args->queue);
                 queue_unlock(args->queue);
 
-                ret = active_files->insert(active_files, &(((active_file_t *)node->data)->session_id), node->data);
+                ret = goosetable_insert(active_files, (char *)&(((active_file_t *)node->data)->session_id), node->data);
                 if (ret) {
-                    set_event_flag(args->flag, EF_TERMINATION);
-                    set_event_flag(args->wake, EF_WAKE_MANAGER);
-                    delete_lht(active_files);
                     *process_return = ret;
                     log_info("[send_thread] lht_insert() failed | return %d", *process_return);
-                    return process_return;
+                    goto cleanup;
                 }
             }
             else if (node->type == QET_SEND_PACKET) {
@@ -1896,12 +1885,9 @@ int *send_thread(SEND_ARGS *args)
                 fwd_packet = node->data;
                 ret = send_packet(fwd_packet->port,fwd_packet->address, args->sockets, &(fwd_packet->packet),args->flag);
                 if (ret) {
-                    set_event_flag(args->flag, EF_TERMINATION);
-                    set_event_flag(args->wake, EF_WAKE_MANAGER);
-                    delete_lht(active_files);
                     *process_return = ret;
                     log_info("[send_thread] send_packet() failed | return %d", *process_return);
-                    return process_return;
+                    goto cleanup;
                 }
                 log_debug("[send_thread] sent packet)");
             }
@@ -1912,8 +1898,8 @@ int *send_thread(SEND_ARGS *args)
                 active_file_t *af;
                 transmission_control_data_t data = ((Q_RESEND_FILE_CHUNK *)(node->data))->control;
 
-                af = lht_search(active_files, &(((Q_RESEND_FILE_CHUNK *)(node->data))->session_id));
-                if (!af) {
+                ret = goosetable_access(active_files, (char *)&(((Q_RESEND_FILE_CHUNK *)(node->data))->session_id), (void **)&af);
+                if (ret) {
                     free(node->data);
                     destroy_qnode(node);
                     node = NULL;
@@ -1928,13 +1914,10 @@ int *send_thread(SEND_ARGS *args)
                         free(node->data);
                         destroy_qnode(node);
                         node = NULL;
-                        set_event_flag(args->flag, EF_TERMINATION);
-                        set_event_flag(args->wake, EF_WAKE_MANAGER);
-                        delete_lht(active_files);
                         *process_return = ret;
                         log_fatal("[send_thread] send_file_packet() failed while re-sending file chunk | return %d",
                                   ret);
-                        return process_return;
+                        goto cleanup;
                     }
                 }
             }
@@ -1966,23 +1949,16 @@ int *send_thread(SEND_ARGS *args)
         //////////////////////////////////////////////////
 
         // send file packets
+        ret = new_goosetable_iterator(active_files, &af_iter);
 
-        // get the list
-        ret = lht_list(active_files, &list);
-        if (ret == 0 && list)
-            curr_af = list->data;
-        else
-            curr_af = NULL;
+        while (goosetable_has_next(af_iter)) { // for every active file send a packet, in circular way
+            curr_af = goosetable_next(af_iter);
 
-        while (curr_af) { // for every active file send a packet, in circular way
             ret = send_next_file_packet(curr_af, args->sign_keys->public, args->sockets, args->flag);
             if (ret) { // todo: are all errors non recoverable? check it please
-                set_event_flag(args->flag, EF_TERMINATION);
-                set_event_flag(args->wake, EF_WAKE_MANAGER);
-                delete_lht(active_files);
                 *process_return = ret;
                 log_fatal("[send_thread] send_next_file_packet() failed | return %d", ret);
-                return process_return;
+                goto cleanup;
             }
 
             if (curr_af->is_completed) {
@@ -1994,7 +1970,7 @@ int *send_thread(SEND_ARGS *args)
                 clock_gettime(CLOCK_REALTIME, &ts_now);
                 ts_diff = timespec_diff(&ts_now,&(curr_af->timestamp));
                 if (timespec_cmp(&ts_diff,&ts_timeout) >= 0) {
-                    lht_delete(active_files, &(curr_af->session_id));
+                    goosetable_iterator_remove_current(active_files, af_iter);
                 }
             }
 
@@ -2003,10 +1979,8 @@ int *send_thread(SEND_ARGS *args)
             if (flag_val) {
                 break;
             }
-
-            list = list->next;
-            curr_af = list->data;
         }
+        free_goosetable_iterator(&af_iter);
 
         // set next deadline
         clock_gettime(CLOCK_REALTIME, &deadline_ts);
@@ -2022,39 +1996,38 @@ int *send_thread(SEND_ARGS *args)
             break;
         }
 
-        lht_list(active_files, &list);
         ret = 0;
         // while there are no more files to send, and we didn't time out and the termination or new file flag is risen
-        while (!list && ret == 0 && !(args->flag->event_flag)) {
+        while (ret == 0 && !(args->flag->event_flag)) {
             ret = pthread_cond_timedwait(&(args->flag->cond), &(args->flag->mutex), &deadline_ts);
 
             if ((ret != ETIMEDOUT) && (ret != 0)) {
-                log_fatal("[send_thread] pthread_cond_timedwait() failed in device_discovery_sending");
                 pthread_mutex_unlock(&(args->flag->mutex));
-
-                set_event_flag(args->flag, EF_TERMINATION);
-                set_event_flag(args->wake, EF_WAKE_MANAGER);
-                delete_lht(active_files);
                 *process_return = INDIGO_ERROR_INVALID_STATE;
                 log_fatal("[send_thread] pthread_cond_timedwait() failed | return %d | errno %d", *process_return,
                           errno);
-                return process_return;
+                goto cleanup;
             }
             if (ret == 0) {
                 if (args->flag->event_flag & EF_TERMINATION) {
                     pthread_mutex_unlock(&(args->flag->mutex));
-                    delete_lht(active_files);
                     *process_return = INDIGO_SUCCESS;
                     log_info("[send_thread] send thread successful exit | return %d", *process_return);
-                    return process_return;
+                    goto cleanup;
                 }
             }
         }
         pthread_mutex_unlock(&(args->flag->mutex));
     }
 
-    delete_lht(active_files);
+    free_goosetable(active_files);
     log_info("[send_thread] send thread successful exit | return %d", *process_return);
+    return process_return;
+
+    cleanup:
+    free_goosetable(active_files);
+    set_event_flag(args->flag, EF_TERMINATION);
+    set_event_flag(args->wake, EF_WAKE_MANAGER);
     return process_return;
 }
 /////////////////////////////////////////////////////////////////

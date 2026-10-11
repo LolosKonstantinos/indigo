@@ -41,8 +41,10 @@ int goosetable_insert(goosetable_t *goosetable,const char *restrict key,const ch
 int goosetable_remove(goosetable_t *goosetable,const char *restrict key);
 
 int new_goosetable_iterator(goosetable_t *goosetable,goosetable_iterator_t **iterator);
+void free_goosetable_iterator(goosetable_iterator_t **iterator);
 int goosetable_has_next(goosetable_iterator_t *iterator);
 void *goosetable_next(goosetable_iterator_t *iterator);
+int goosetable_iterator_remove_current(goosetable_t *goosetable, goosetable_iterator_t *iterator);
 
 void goosetable_lock(goosetable_t *goosetable);
 void goosetable_unlock(goosetable_t *goosetable);

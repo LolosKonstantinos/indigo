@@ -78,7 +78,7 @@ static FORCE_INLINE void timespec_add(struct timespec *const a, const struct tim
 
 static inline struct timespec mstotimespec(const uint64_t ms)
 {
-    long ns = (long)(ms%THOUSAND);
+    const long ns = (long)(ms%THOUSAND);
     return (struct timespec){.tv_sec = mstos(ms-ns), .tv_nsec = mstons(ns)};
 }
 
@@ -89,7 +89,7 @@ static inline struct timespec stotimespec(const time_t s)
 
 static inline struct timespec nstotimespec(const uint64_t ns)
 {
-    long final_ns = (long)(ns%BILLION);
+    const long final_ns = (long)(ns%BILLION);
     return (struct timespec){.tv_sec = nstos(ns-final_ns), .tv_nsec = final_ns};
 }
 

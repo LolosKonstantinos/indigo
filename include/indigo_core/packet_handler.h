@@ -22,12 +22,13 @@ SOFTWARE.
 
 #ifndef PACKET_HANDLER_H
 #define PACKET_HANDLER_H
+#include <ducktable.h>
+#include <indigo_types.h>
 #include <indigo_core/net_io.h>
 #include <event_flags.h>
 #include <mempool.h>
 #include <crypto_utils.h>
 #include <Queue.h>
-#include "indigo_types.h"
 #include <binary_tree.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -49,9 +50,9 @@ typedef struct PACKET_HANDLER_ARGS {
     QUEUE *ui_queue;
     QUEUE *send_queue;
     EFLAG *send_flag;
-    tree_t *device_tree;
+    ducktable_t *device_table;
+    ducktable_t *session_table;
     tree_t *known_keys_tree;
-    tree_t *session_tree;
     mempool_t *mempool;
     signing_key_pair_t *sign_keys;
     socket_ll *sockets;
@@ -70,26 +71,27 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args);
 int cmp_xsr(void *s1, void *s2);
 void free_xsr(void *xsr);
 
-int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t *session_tree,
+int create_server_session(Q_FILE_SENDING_REQUEST *fwd, ducktable_t *dev_table, ducktable_t *session_table,
                           unsigned char pk[crypto_sign_PUBLICKEYBYTES], socket_ll *sockets, EFLAG *flag);
 
-int create_client_session(const packet_t *packet, const packet_info_t *packet_info, tree_t *dev_tree,
-                          tree_t *session_tree, QUEUE *send_queue, EFLAG *send_flag);
+int create_client_session(const packet_t *packet, const packet_info_t *packet_info, ducktable_t *dev_table,
+                          ducktable_t *session_table, QUEUE *send_queue, EFLAG *send_flag);
 
-int init_packet_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *xsr_tree,
+int init_packet_routine(packet_t *packet, packet_info_t *packet_info, ducktable_t *dev_table, tree_t *xsr_tree,
                         tree_t *known_keys_tree, char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1],
                         signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag);
 
-int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *xsr_tree,
+int signing_request_routine(packet_t *packet, packet_info_t *packet_info, ducktable_t *dev_table, tree_t *xsr_tree,
                             tree_t *known_keys_tree, signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag);
 
-int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *xsr_tree,
+int signing_response_routine(packet_t *packet, packet_info_t *packet_info, ducktable_t *dev_table, tree_t *xsr_tree,
                              signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag);
 
-int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *session_tree,
-                                 signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag);
+int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, ducktable_t *dev_table,
+                                 ducktable_t *session_table, signing_key_pair_t *signing_keys, socket_ll *sockets,
+                                 EFLAG *flag);
 
-int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *session_tree,
+int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, ducktable_t *session_table,
                        signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag);
 
 int resend_routine(packet_t *packet, QUEUE *send_queue, EFLAG *send_flag);

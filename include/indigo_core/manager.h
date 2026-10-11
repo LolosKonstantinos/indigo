@@ -62,9 +62,9 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
                                     EFLAG *wake_mngr, EFLAG *override_flags[], socket_ll *sockets, pthread_t *tid);
 
 int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *ui_queue, QUEUE *send_queue,
-                                 EFLAG *send_flag, mempool_t *mempool, tree_t *device_tree, tree_t *session_tree,
-                                 tree_t *known_keys_tree, socket_ll *sockets, signing_key_pair_t *keypair,
-                                 pthread_t *tid);
+                                 EFLAG *send_flag, mempool_t *mempool, ducktable_t *device_tree,
+                                 ducktable_t *session_tree, tree_t *known_keys_tree, socket_ll *sockets,
+                                 signing_key_pair_t *keypair, pthread_t *tid);
 
 int create_ui_thread(UI_ARGS **args, pthread_t *tid);
 #endif // THREAD_MANAGEMENT_H

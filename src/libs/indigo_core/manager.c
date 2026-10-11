@@ -61,10 +61,10 @@ int thread_manager(uint32_t address, uint16_t port)
 
     // the active session tree
 
-    tree_t *device_tree = NULL;
+    ducktable_t *device_table = NULL;
     tree_t *file_tree = NULL;
     tree_t *known_key_tree = NULL;
-    tree_t *session_tree = NULL; // todo: write cmp_session function and create the tree
+    ducktable_t *session_table = NULL; // todo: write cmp_session function and create the tree
 
     // the thread args
     SEND_ARGS *send_args = NULL;
@@ -126,9 +126,14 @@ int thread_manager(uint32_t address, uint16_t port)
 
     // prepare to create the threads
     // create the device tree
-
-    ret = new_tree(&device_tree, cmp_rdev, free_rdev, sizeof(remote_device_t), BINARY_TREE_FLAG_AVL);
-    if (ret) {
+    device_table = new_ducktable(crypto_sign_PUBLICKEYBYTES, offsetof(remote_device_t,peer_pk), sizeof(remote_device_t),16);
+    if (device_table == NULL) {
+        log_error("[main] new_tree failed");
+        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        goto cleanup;
+    }
+    session_table = new_ducktable(sizeof(session_id_t),offsetof(session_t,session_id), sizeof(session_t),16);
+    if (session_table == NULL) {
         log_error("[main] new_tree failed");
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
@@ -139,12 +144,7 @@ int thread_manager(uint32_t address, uint16_t port)
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
-    ret = new_tree(&session_tree, cmp_session, free_session, sizeof(session_t), BINARY_TREE_FLAG_AVL);
-    if (ret) {
-        log_error("[main] new_tree failed");
-        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
+
     ret = new_tree(&known_key_tree, key_cmp, NULL, sizeof(known_key_t), BINARY_TREE_FLAG_AVL);
     if (ret) {
         log_error("[main] new_tree failed");
@@ -239,7 +239,8 @@ int thread_manager(uint32_t address, uint16_t port)
     }
 
     if (create_packet_handler_thread(&handler_args, flag, ui_queue, send_args->queue, send_args->flag, mempool,
-                                     device_tree, session_tree, known_key_tree, sockets, signing_key_pair, &tid_handler)) {
+                                     device_table, session_table, known_key_tree, sockets, signing_key_pair,
+                                     &tid_handler)) {
         process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_error("[thread_manager_thread] packet handler thread creation failed | return %d", INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         goto cleanup;
@@ -264,7 +265,7 @@ int thread_manager(uint32_t address, uint16_t port)
     }
 
     //fill the ui arguments and signal the condition
-    ui_args->dev_tree = device_tree;
+    ui_args->dev_tree = device_table;
     ui_args->file_tree = file_tree;
     ui_args->known_key_tree = known_key_tree;
     ui_args->ui_queue = ui_queue;
@@ -281,6 +282,8 @@ int thread_manager(uint32_t address, uint16_t port)
     pthread_cond_broadcast(&(ui_args->ui_cond));
     //the ui thread frees its arguments so if we access them by accident we will create a use after free
     ui_args = NULL;
+
+
     // the main loop
     while (1) {
         pthread_mutex_lock(&(flag->mutex));
@@ -328,6 +331,8 @@ int thread_manager(uint32_t address, uint16_t port)
             log_info("[thread_manager_thread] ui thread terminated");
             goto cleanup;
         }
+
+
     }
 
 #ifdef _WIN32
@@ -418,9 +423,9 @@ int thread_manager(uint32_t address, uint16_t port)
 
     free_mempool(mempool);
 
-    free_tree(device_tree);
+    free_ducktable(device_table);
     free_tree(file_tree);
-    free_tree(session_tree);
+    free_ducktable(session_table);
     free_tree(known_key_tree);
 
     sodium_mprotect_readwrite(signing_key_pair);
@@ -551,9 +556,9 @@ cleanup:
 
     free_mempool(mempool);
 
-    free_tree(device_tree);
+    free_ducktable(device_table);
     free_tree(file_tree);
-    free_tree(session_tree);
+    free_ducktable(session_table);
     free_tree(known_key_tree);
 
     sodium_mprotect_readwrite(signing_key_pair);
@@ -767,9 +772,9 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
 }
 
 int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *ui_queue, QUEUE *send_queue,
-                                 EFLAG *send_flag, mempool_t *mempool, tree_t *device_tree, tree_t *session_tree,
-                                 tree_t *known_keys_tree, socket_ll *sockets, signing_key_pair_t *keypair,
-                                 pthread_t *tid)
+                                 EFLAG *send_flag, mempool_t *mempool, ducktable_t *device_tree,
+                                 ducktable_t *session_tree, tree_t *known_keys_tree, socket_ll *sockets,
+                                 signing_key_pair_t *keypair, pthread_t *tid)
 {
 
     pthread_t thread;
@@ -817,9 +822,9 @@ int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, Q
     handler_args->mempool = mempool;
     handler_args->wake = wake_mngr;
     handler_args->flag = flag;
-    handler_args->device_tree = device_tree;
+    handler_args->device_table = device_tree;
     handler_args->known_keys_tree = known_keys_tree;
-    handler_args->session_tree = session_tree;
+    handler_args->session_table = session_tree;
     handler_args->sockets = sockets;
     handler_args->send_flag = send_flag;
     handler_args->ui_queue = ui_queue;

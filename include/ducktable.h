@@ -29,6 +29,7 @@ SOFTWARE.
 #endif
 
 typedef struct ducktable_t ducktable_t;
+typedef struct ducktable_iterator_t ducktable_iterator_t;
 
 ducktable_t *new_ducktable(int key_size, int key_offset, int data_size, uint64_t init_size);
 void free_ducktable(ducktable_t *ducktable);
@@ -36,14 +37,25 @@ void free_ducktable(ducktable_t *ducktable);
 int ducktable_search(ducktable_t *ducktable,const char *restrict key);
 int ducktable_retrieve(ducktable_t *ducktable,const char *restrict key, void *restrict data);
 int ducktable_access(ducktable_t *ducktable,const char *restrict key, void **data);
-int ducktable_insert(ducktable_t *ducktable,const char *restrict key,const char *restrict data);
+int ducktable_insert(ducktable_t *ducktable, const char *restrict data);
 int ducktable_remove(ducktable_t *ducktable,const char *restrict key);
 
 void ducktable_lock(ducktable_t *ducktable);
 void ducktable_unlock(ducktable_t *ducktable);
 
+int ducktable_insert_ts(ducktable_t *ducktable, const char *restrict data);
+int ducktable_remove_ts(ducktable_t *ducktable,const char *restrict key);
+int ducktable_search_ts(ducktable_t *ducktable,const char *restrict key);
+int ducktable_retrieve_ts(ducktable_t *ducktable,const char *restrict key, void *restrict data);
+
 // void ducktable_read_lock(ducktable_t *ducktable);
 // void ducktable_write_lock(ducktable_t *ducktable);
 
 int ducktable_rehash(ducktable_t *ducktable);
+
+int new_ducktable_iterator(ducktable_t *goosetable,ducktable_iterator_t **iterator);
+void free_ducktable_iterator(ducktable_iterator_t **iterator);
+int ducktable_has_next(ducktable_iterator_t *iterator);
+void *ducktable_next(ducktable_iterator_t *iterator);
+int ducktable_iterator_remove_current(ducktable_iterator_t *iterator);
 #endif // INDIGO_DUCKTABLE_H

@@ -44,6 +44,7 @@ SOFTWARE.
 #define bit_mask_64(n) (((n)*0x0002040810204081ULL))
 #define first_on_bit_64(n) (__builtin_ctzll(n))
 #define last_on_bit_64(n) (__builtin_clzll(n))
+#define turn_off_bit_n_mask_64(n) (ULLONG_MAX & ~(1ULL<<(n)))
 #define get_hs(h) ((char)((h) & HS_MASK))
 #define get_hb(h,bits) (((h) >> CHAR_BIT)& ~pow2(bits))
 
@@ -88,6 +89,14 @@ struct ducktable_t {
     uint8_t hash_bits; //the number of bits we keep from the hash. raised to the power of 2 is the number of blocks
     char zero[7];
     pthread_mutex_t mutex;
+};
+
+struct ducktable_iterator_t {
+    ducktable_t *ducktable;
+    uint64_t block_idx;
+    bit_mask_t bit_mask;
+    char idx;
+    char zero[3];
 };
 
 static FORCE_INLINE char find_zero_64(const uint64_t n)
@@ -385,16 +394,14 @@ int ducktable_access(ducktable_t *restrict ducktable,const char *restrict key, v
     return 0;
 }
 
-int ducktable_insert(ducktable_t *const restrict ducktable,const char *restrict const key,const char *restrict const data)
+int ducktable_insert(ducktable_t *const restrict ducktable, const char *restrict const data)
 {
-    if (!ducktable || !key || !data) return -1;
-
     uint64_t hash_val;
     char hs;
     uint64_t hb;
     uint16_t candidate_bit_map = 0;
 
-    if (!ducktable || !key) return -1;
+    if (!ducktable || !data) return -1;
 
     //check if we need to resize
     if ( ducktable->bucket_count+1 > pow2(ducktable->hash_bits)/(ducktable->data_size) ) {
@@ -405,7 +412,7 @@ int ducktable_insert(ducktable_t *const restrict ducktable,const char *restrict 
         }
     }
 
-    hash_val = hash(key, ducktable->key_size);
+    hash_val = hash(data + ducktable->key_offset, ducktable->key_size);
     hs = get_hs(hash_val);
     hb = get_hb(hash_val, ducktable->hash_bits);
 
@@ -414,7 +421,7 @@ int ducktable_insert(ducktable_t *const restrict ducktable,const char *restrict 
         //create the bit map
         candidate_bit_map = get_bit_map(ducktable->blocks + (hb + i)%pow2(ducktable->hash_bits), hs);
         while (candidate_bit_map != 0) {
-            if (memcmp(key,
+            if (memcmp(data + ducktable->key_offset,
                 ducktable->data +
                 (((hb + i)%pow2(ducktable->hash_bits))*BLOCK_SIZE /* move to the block*/
                 +first_on_bit_64(candidate_bit_map)) /*move to the elements in the block*/
@@ -508,6 +515,224 @@ void ducktable_unlock(ducktable_t *restrict ducktable)
     pthread_mutex_unlock(&ducktable->mutex);
 }
 
+int ducktable_insert_ts(ducktable_t *ducktable, const char *restrict data)
+{
+    uint64_t hash_val;
+    char hs;
+    uint64_t hb;
+    uint16_t candidate_bit_map = 0;
+
+    if (!ducktable || !data) return -1;
+    pthread_mutex_lock(&ducktable->mutex);
+
+    //check if we need to resize
+    if ( ducktable->bucket_count+1 > pow2(ducktable->hash_bits)/(ducktable->data_size) ) {
+        // we need to resize
+        const int ret = expand_ducktable(ducktable);
+        if (ret != 0) {
+            pthread_mutex_unlock(&ducktable->mutex);
+            return ret;
+        }
+    }
+
+    hash_val = hash(data + ducktable->key_offset, ducktable->key_size);
+    hs = get_hs(hash_val);
+    hb = get_hb(hash_val, ducktable->hash_bits);
+
+    //do a modified search
+    for (uint64_t i = 0; i < pow2(ducktable->hash_bits); i++) {
+        //create the bit map
+        candidate_bit_map = get_bit_map(ducktable->blocks + (hb + i)%pow2(ducktable->hash_bits), hs);
+        while (candidate_bit_map != 0) {
+            if (memcmp(data + ducktable->key_offset,
+                ducktable->data +
+                (((hb + i)%pow2(ducktable->hash_bits))*BLOCK_SIZE /* move to the block*/
+                +first_on_bit_64(candidate_bit_map)) /*move to the elements in the block*/
+                *(ducktable->data_size) + ducktable->key_offset, /*times the size of a bucket*/
+                ducktable->key_size) == 0)
+            {
+                pthread_mutex_unlock(&ducktable->mutex);
+                return 1;
+            }
+
+            //we checked this one so we turn of the respective bit
+            candidate_bit_map &= (0xfffe)<<first_on_bit_64(candidate_bit_map);
+        }
+        //check if the block has empty cells.
+        //if there is at least one empty that means it was never inserted
+        if (get_bit_map(ducktable->blocks + (hb + i)%pow2(ducktable->hash_bits), BLOCK_EMPTY)) {
+            // we found an empty slot thus we insert it here
+            const char idx = first_on_bit_64(~candidate_bit_map);
+            //(hb + i)%pow2(ducktable->hash_bits) + idx
+            //TRANSLATION:
+            //(hb + i)%pow2(ducktable->hash_bits) is the block we found free
+            //idx is the index inside the block [0,15]
+
+            memcpy(ducktable->data
+                +(((hb + i)%pow2(ducktable->hash_bits))*BLOCK_SIZE + idx)*(ducktable->data_size)
+                ,data,ducktable->data_size);
+
+            ducktable->blocks[(hb + i)%pow2(ducktable->hash_bits)].block_bytes[idx] = hs;
+
+            ++(ducktable->bucket_count);
+            pthread_mutex_unlock(&ducktable->mutex);
+            return 0;
+        }
+    }
+    pthread_mutex_unlock(&ducktable->mutex);
+    return 0;
+}
+
+int ducktable_remove_ts(ducktable_t *ducktable,const char *restrict key)
+{
+    uint64_t hash_val;
+    char hs;
+    uint64_t hb;
+    uint16_t candidate_bit_map = 0;
+
+    if (!ducktable || !key) return -1;
+
+    pthread_mutex_lock(&ducktable->mutex);
+
+    hash_val = hash(key, ducktable->key_size);
+    hs = get_hs(hash_val);
+    hb = get_hb(hash_val, ducktable->hash_bits);
+
+    //for every block
+    for (uint64_t i = 0; i < pow2(ducktable->hash_bits); i++) {
+        //create the bit map
+        candidate_bit_map = get_bit_map(ducktable->blocks + hb + i, hs);
+
+        //check every matching item in the block
+        while (candidate_bit_map != 0) {
+            if (memcmp(key,
+                ducktable->data +
+                (((hb + i)%pow2(ducktable->hash_bits))*BLOCK_SIZE /*move to the block*/
+                +first_on_bit_64(candidate_bit_map)) /*move to the elements in the block*/
+                *(ducktable->data_size) + ducktable->key_offset,
+                ducktable->key_size) == 0)
+            {
+                //just edit the block. You dont need to erase data
+                ducktable->blocks[(hb + i)%pow2(ducktable->hash_bits)]
+                .block_bytes[first_on_bit_64(candidate_bit_map)]= BLOCK_DEAD;
+                --(ducktable->bucket_count);
+
+                pthread_mutex_unlock(&ducktable->mutex);
+                return 0;
+            }
+            //we checked this one so we turn of the respective bit
+            candidate_bit_map &= (0xfffe)<<first_on_bit_64(candidate_bit_map);
+        }
+        //check if the block has empty cells.
+        //if there is at least one empty that means it was never inserted
+        if (get_bit_map(ducktable->blocks + (hb + i)%pow2(ducktable->hash_bits), BLOCK_EMPTY)) {
+            pthread_mutex_unlock(&ducktable->mutex);
+            return 1;
+        }
+    }
+    pthread_mutex_unlock(&ducktable->mutex);
+    return 1;
+}
+
+int ducktable_search_ts(ducktable_t *ducktable,const char *restrict key)
+{
+    uint64_t hash_val;
+    char hs;
+    uint64_t hb;
+    uint16_t candidate_bit_map = 0;
+
+    if (!ducktable || !key) return -1;
+
+    pthread_mutex_lock(&ducktable->mutex);
+
+    hash_val = hash(key, ducktable->key_size);
+    hs = get_hs(hash_val);
+    hb = get_hb(hash_val, ducktable->hash_bits);
+
+    //for every block
+    for (uint64_t i = 0; i < pow2(ducktable->hash_bits); i++) {
+        //create the bit map
+        candidate_bit_map = get_bit_map(ducktable->blocks + hb + i, hs);
+
+        //check every matching item in the block
+        while (candidate_bit_map != 0) {
+            if (memcmp(key,
+                ducktable->data +
+                (((hb + i)%pow2(ducktable->hash_bits))*BLOCK_SIZE /*move to the block*/
+                +first_on_bit_64(candidate_bit_map)) /*move to the elements in the block*/
+                *(ducktable->data_size) + ducktable->key_offset,
+                ducktable->key_size) == 0)
+            {
+                pthread_mutex_unlock(&ducktable->mutex);
+                return 1;
+            }
+            //we checked this one so we turn of the respective bit
+            candidate_bit_map &= (0xfffe)<<first_on_bit_64(candidate_bit_map);
+        }
+        //check if the block has empty cells.
+        //if there is at least one empty that means it was never inserted
+        if (get_bit_map(ducktable->blocks + (hb + i)%pow2(ducktable->hash_bits), BLOCK_EMPTY)) {
+            pthread_mutex_unlock(&ducktable->mutex);
+            return 0;
+        }
+    }
+    pthread_mutex_unlock(&ducktable->mutex);
+    return 0;
+}
+
+int ducktable_retrieve_ts(ducktable_t *ducktable,const char *restrict key, void *restrict data)
+{
+    uint64_t hash_val;
+    char hs;
+    uint64_t hb;
+    uint16_t candidate_bit_map = 0;
+
+    if (!ducktable || !key || !data) return -1;
+
+    pthread_mutex_lock(&ducktable->mutex);
+
+    hash_val = hash(key, ducktable->key_size);
+    hs = get_hs(hash_val);
+    hb = get_hb(hash_val, ducktable->hash_bits);
+
+    //for every block
+    for (uint64_t i = 0; i < pow2(ducktable->hash_bits); i++) {
+        //create the bit map
+        candidate_bit_map = get_bit_map(ducktable->blocks + hb + i, hs);
+
+        //check every matching item in the block
+        while (candidate_bit_map != 0) {
+            if (memcmp(key,
+                ducktable->data +
+                (((hb + i)%pow2(ducktable->hash_bits)) * BLOCK_SIZE /*move to the block*/
+                +first_on_bit_64(candidate_bit_map)) /*move to the elements in the block*/
+                *(ducktable->data_size) + ducktable->key_offset,
+                ducktable->key_size) == 0)
+            {
+                //copy the data part to return it to the user
+                memcpy(data,
+                   ducktable->data +
+                       (((hb + i)%pow2(ducktable->hash_bits))*BLOCK_SIZE +first_on_bit_64(candidate_bit_map))
+                       *(ducktable->data_size),
+                       ducktable->data_size);
+
+                pthread_mutex_unlock(&ducktable->mutex);
+                return 1;
+            }
+            //we checked this one so we turn of the respective bit
+            candidate_bit_map &= (0xfffe)<<first_on_bit_64(candidate_bit_map);
+        }
+        //check if the block has empty cells.
+        //if there is at least one empty that means it was never inserted
+        if (get_bit_map(ducktable->blocks + (hb + i)%pow2(ducktable->hash_bits), BLOCK_EMPTY)) {
+            pthread_mutex_unlock(&ducktable->mutex);
+            return 0;
+        }
+    }
+    pthread_mutex_unlock(&ducktable->mutex);
+    return 0;
+}
+
 int ducktable_rehash(ducktable_t *ducktable)
 {
    unsigned char *restrict new_table;
@@ -593,5 +818,117 @@ int ducktable_rehash(ducktable_t *ducktable)
     ducktable->data = new_table;
     free(key);
 
+    return 0;
+}
+
+
+int new_ducktable_iterator(ducktable_t *ducktable,ducktable_iterator_t **iterator)
+{
+    bit_mask_t bit_map;
+    if (!ducktable || !iterator) return -1;
+    ducktable_iterator_t *iter = malloc(sizeof(ducktable_iterator_t));
+    if (!iter) return -1;
+    iter->ducktable = ducktable;
+
+    //find the first block with occupied cells.
+    //for every block create a bit map
+    for (uint64_t i = 0; i < pow2(ducktable->hash_bits); i++) {
+        bit_map = get_bit_map(ducktable->blocks + i,BLOCK_EMPTY);
+        bit_map |= get_bit_map(ducktable->blocks + i,BLOCK_DEAD);
+        bit_map = ~bit_map;
+
+        if (bit_map) {
+            iter->block_idx = i;
+            iter->idx = first_on_bit_64(bit_map);
+            iter->bit_mask = bit_map;
+            break;
+        }
+    }
+    return 1;
+
+}
+void free_ducktable_iterator(ducktable_iterator_t **iterator)
+{
+    if (!iterator) return;
+    free(*iterator);
+    *iterator = NULL;
+}
+int ducktable_has_next(ducktable_iterator_t *iterator)
+{
+    const ducktable_t *ducktable;
+    bit_mask_t bit_map;
+
+    if (!iterator) return 0;
+
+    if (iterator->bit_mask != 0) return 1;
+
+    ducktable = iterator->ducktable;
+
+    for (uint64_t i = iterator->block_idx + 1; i < pow2(ducktable->hash_bits); i++) {
+        bit_map = get_bit_map(ducktable->blocks + i,BLOCK_EMPTY);
+        bit_map |= get_bit_map(ducktable->blocks + i,BLOCK_DEAD);
+        bit_map = ~bit_map;
+        if (bit_map) {
+            iterator->block_idx = i;
+            iterator->idx = first_on_bit_64(bit_map);
+            iterator->bit_mask = bit_map;
+            return 1;
+        }
+    }
+    return 0;
+}
+void *ducktable_next(ducktable_iterator_t *iterator)
+{
+    const ducktable_t *ducktable;
+    bit_mask_t bit_map;
+    if (!iterator) return NULL;
+    ducktable = iterator->ducktable;
+
+    iterator->bit_mask = iterator->bit_mask & turn_off_bit_n_mask_64(iterator->idx);
+    if (iterator->bit_mask != 0) {
+        iterator->idx = first_on_bit_64(iterator->bit_mask);
+        return ducktable->data + (iterator->block_idx * BLOCK_SIZE + iterator->idx) * ducktable->data_size;
+    }
+
+    for (uint64_t i = iterator->block_idx + 1; i < pow2(ducktable->hash_bits); i++) {
+        bit_map = get_bit_map(ducktable->blocks + i,BLOCK_EMPTY);
+        bit_map |= get_bit_map(ducktable->blocks + i,BLOCK_DEAD);
+        bit_map = ~bit_map;
+        if (bit_map) {
+            iterator->block_idx = i;
+            iterator->idx = first_on_bit_64(bit_map);
+            iterator->bit_mask = bit_map;
+            break;
+        }
+    }
+
+    return ducktable->data + (iterator->block_idx * BLOCK_SIZE + iterator->idx) * ducktable->data_size;
+}
+int ducktable_iterator_remove_current(ducktable_iterator_t *iterator)
+{
+    const ducktable_t *ducktable;
+    bit_mask_t bit_map;
+    if (!iterator) return -1;
+    ducktable = iterator->ducktable;
+
+    ducktable->blocks[iterator->block_idx].block_bytes[iterator->idx] = BLOCK_DEAD;
+
+    iterator->bit_mask = iterator->bit_mask & turn_off_bit_n_mask_64(iterator->idx);
+    if (iterator->bit_mask != 0) {
+        iterator->idx = first_on_bit_64(iterator->bit_mask);
+        return 0;
+    }
+
+    for (uint64_t i = iterator->block_idx + 1; i < pow2(ducktable->hash_bits); i++) {
+        bit_map = get_bit_map(ducktable->blocks + i,BLOCK_EMPTY);
+        bit_map |= get_bit_map(ducktable->blocks + i,BLOCK_DEAD);
+        bit_map = ~bit_map;
+        if (bit_map) {
+            iterator->block_idx = i;
+            iterator->idx = first_on_bit_64(bit_map);
+            iterator->bit_mask = bit_map;
+            break;
+        }
+    }
     return 0;
 }

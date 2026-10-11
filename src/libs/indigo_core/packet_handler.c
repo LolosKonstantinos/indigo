@@ -86,7 +86,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     tree_t *xsr_tree = NULL;
     xsr_t *found_xsr;
 
-    tree_t *session_tree = NULL;
+    ducktable_t *session_table = NULL;
     session_t session;
     session_t *found_session = NULL;
 
@@ -96,7 +96,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     Q_FILE_SENDING_REQUEST *fwd = NULL;
 
     tree_t *known_keys_tree = NULL;
-    tree_t *dev_tree = NULL;
+    ducktable_t *dev_table = NULL;
 
     char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1] = {0};
 
@@ -120,8 +120,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     *process_return = 0;
 
     known_keys_tree = args->known_keys_tree;
-    dev_tree = args->device_tree;
-    session_tree = args->session_tree;
+    dev_table = args->device_table;
+    session_table = args->session_table;
 
     // the less the private key is exposed the better, we copy the public key since it is frequently used
     memcpy(public_key, args->sign_keys->public, crypto_sign_PUBLICKEYBYTES);
@@ -164,11 +164,11 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 // prepare the remote device struct to fill with the remote device info
                 // we zero so that previous garbage doesn't affect the new device
                 memset(&rdev, 0, sizeof(remote_device_t));
-                // most of the time we need to search the tree so we just copy it from the start
-                memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
+                // most of the time we need to search the tree
+
                 // check if the packet is encrypted
                 if (packet->magic_number == MAGIC_NUMBER_2) {
-                    ret = args->device_tree->search(args->device_tree, &rdev);
+                    ret = ducktable_retrieve(dev_table, (char *)(packet->id),&rdev);
                     if (ret == 0) {
                         // we cant decrypt a packet from a device we don't know
 
@@ -178,19 +178,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         packet_info = NULL;
                         continue;
                     }
-                    /* the most likely is that we need to use the server receive key.
-                     * we first try to decrypt with the server key. If it fails,
-                     * we try to decrypt with the client key.
-                     * If it fails then, something went wrong, it is either an attacker
-                     * or a weird error on the other side
-                     * It should be fast enough, it fails on the tag recalculation not the decryption
-                     */
-                    // todo: change the system so that we need to perform only one decryption
 
-                    /*
-                     * todo: one idea is to have separate keys for each session and the peers public key
-                     * is the identifier in both the session tree and the packet id field
-                     */
                     if (rdev.session_keys == NULL) {
                         mempool_free(args->mempool, packet);
                         packet = NULL;
@@ -214,30 +202,30 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 switch (packet_header.pac_type) {
                     case MSG_INIT_PACKET:
                         log_info("[packet_handler_thread] received init packet");
-                        ret = init_packet_routine(packet, packet_info, dev_tree, xsr_tree, known_keys_tree, username,
+                        ret = init_packet_routine(packet, packet_info, dev_table, xsr_tree, known_keys_tree, username,
                                                   args->sign_keys, args->sockets, args->flag);
                         break;
                     case MSG_SIGNING_REQUEST:
                         log_debug("[packet_handler_thread] received signing request");
-                        ret = signing_request_routine(packet, packet_info, dev_tree, xsr_tree, known_keys_tree,
+                        ret = signing_request_routine(packet, packet_info, dev_table, xsr_tree, known_keys_tree,
                                                       args->sign_keys, args->sockets, args->flag);
                         break;
 
                     case MSG_SIGNING_RESPONSE:
                         log_debug("[packet_handler_thread] received signing response");
-                        ret = signing_response_routine(packet, packet_info, dev_tree, xsr_tree, args->sign_keys,
+                        ret = signing_response_routine(packet, packet_info, dev_table, xsr_tree, args->sign_keys,
                                                        args->sockets, args->flag);
                         break;
                     case MSG_FILE_SENDING_REQUEST:
                         log_debug("[packet_handler_thread] received file sending request");
-                        ret = file_sending_request_routine(packet, packet_info, dev_tree, args->session_tree,
+                        ret = file_sending_request_routine(packet, packet_info, dev_table, args->session_table,
                                                            args->sign_keys, args->sockets, args->flag);
                         break;
                     case MSG_FILE_SENDING_RESPONSE:
                         log_debug("[packet_handler_thread] received file sending response, creating client session...");
                         if (packet->magic_number != MAGIC_NUMBER_2)
                             break;
-                        ret = create_client_session(packet, packet_info, args->device_tree, args->session_tree,
+                        ret = create_client_session(packet, packet_info, args->device_table, args->session_table,
                                                     args->send_queue, args->send_flag);
                         if (ret<0) {
                             *process_return = ret;
@@ -249,7 +237,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         break;
                     case MSG_FILE_CHUNK:
                         log_debug("[packet_handler_thread] received file chunk");
-                        ret = file_chunk_routine(packet, packet_info, args->session_tree, args->sign_keys,
+                        ret = file_chunk_routine(packet, packet_info, args->session_table, args->sign_keys,
                                                  args->sockets, args->flag);
                         break;
                     case MSG_RESEND:
@@ -292,7 +280,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 // they sent us a send request and the user said yes
                 fwd = node->data;
                 ret =
-                    create_server_session(fwd, args->device_tree, session_tree, public_key, args->sockets, args->flag);
+                    create_server_session(fwd, args->device_table, session_table, public_key, args->sockets,
+                                            args->flag);
                 free(fwd);
                 if (ret<0) {
                     // todo: create_server_session() uses send_packet() and returns its errors
@@ -320,7 +309,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 destroy_qnode(node);
                 node = NULL;
 
-                ret = session_tree->insert(session_tree, &session);
+                ret = ducktable_insert(session_table, (char *)&session);
                 if (ret<0) {
                     fclose(session.file);
                     *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
@@ -460,8 +449,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
         remove_array_size = 0;
 
         // update the device tree
-        tree_lock(args->device_tree);
-        ret = new_tree_iterator(args->device_tree, &tree_iterator);
+        ducktable_lock(args->device_table);
+        ret = new_tree_iterator(args->device_table, &tree_iterator);
         if (ret) {
             *process_return = ret;
             log_fatal("[packet_handler_thread] failed to create xsr iterator | return %d", *process_return);
@@ -491,20 +480,20 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
             }
             if (remove_array) {
                 for (size_t i = 0; i < remove_array_size; i++) {
-                    avl_delete_unlocked(args->device_tree, ((remote_device_t **)remove_array)[i]);
+                    ducktable_remove(dev_table, ((remote_device_t **)remove_array)[i]);
                 }
                 free(remove_array);
             }
             free_tree_iterator(&tree_iterator);
         }
-        tree_unlock(args->device_tree);
+        ducktable_unlock(args->device_table);
 
         remove_array = NULL;
         remove_array_size = 0;
 
         // update the device tree
-        tree_lock(session_tree);
-        ret = new_tree_iterator(session_tree, &tree_iterator);
+        ducktable_lock(session_table);
+        ret = new_tree_iterator(session_table, &tree_iterator);
         if (ret) {
             *process_return = ret;
             log_fatal("[packet_handler_thread] failed to create xsr iterator | return %d", *process_return);
@@ -529,11 +518,11 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
                     //find the device and free the device id set
                     memcpy(rdev.peer_pk, found_session->session_id.pk, crypto_sign_PUBLICKEYBYTES);
-                    ret = avl_search_pin(args->device_tree, &rdev, (void**)&found_rdev);
+                    ret = ducktable_access(dev_table, &rdev, (void**)&found_rdev);
                     if (ret == 1) {
                         set_remove(found_rdev->fid_set, found_session->session_id.serial);
                     }
-                    tree_unlock(args->device_tree);
+                    ducktable_unlock(args->device_table);
                 }
                 else {
                     // branchless minimum
@@ -542,13 +531,13 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
             }
             if (remove_array) {
                 for (size_t i = 0; i < remove_array_size; i++) {
-                    avl_delete_unlocked(args->device_tree, ((session_t **)remove_array)[i]);
+                    avl_delete_unlocked(args->device_table, ((session_t **)remove_array)[i]);
                 }
                 free(remove_array);
             }
             free_tree_iterator(&tree_iterator);
         }
-        tree_unlock(session_tree);
+        ducktable_unlock(session_table);
 
         // there is no need to sleep if there is more stuff to do
         if (!queue_is_empty(args->queue))
@@ -592,7 +581,7 @@ void free_xsr(void *xsr)
     free(xsr);
 }
 
-int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t *session_tree,
+int create_server_session(Q_FILE_SENDING_REQUEST *fwd, ducktable_t *dev_table, ducktable_t *session_table,
                           unsigned char pk[crypto_sign_PUBLICKEYBYTES], socket_ll *sockets, EFLAG *flag)
 {
     // they sent us a send request and the user said yes
@@ -612,10 +601,10 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
         log_error("[create_server_session] file size is 0 | return 1");
         return 1;
     }
-    memcpy(rdev.peer_pk, fwd->id, crypto_sign_PUBLICKEYBYTES);
-    ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev);
+    ducktable_lock(dev_table);
+    ret = ducktable_access(dev_table, (char *)fwd->id, (void **)&found_rdev);
     if (ret == 0) {
-        tree_unlock(dev_tree);
+        ducktable_unlock(dev_table);
         log_warn("[create_server_session] peer not found in device tree. Can not create session");
         return 1;
     }
@@ -625,7 +614,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
         // reject the session, no bargaining, if the serial cant be used, then no session
         log_debug("[create_server_session] rejected server session | received_fid: %d", fwd->serial);
         ret = 1;
-        tree_unlock(dev_tree);
+        ducktable_unlock(dev_table);
         goto cleanup;
     }
     set_add(found_rdev->fid_set, (int64_t)fwd->serial);
@@ -635,7 +624,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     if (packet == NULL) {
         log_error("[create_server_session] memory allocation failed");
         ret = -1;
-        tree_unlock(dev_tree);
+        ducktable_unlock(dev_table);
         goto cleanup;
     }
 
@@ -660,7 +649,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
         log_error("[create_server_session] failed opening file %s for receiving | return %d |errno %d ", file_name, ret,
                   errno);
 
-        tree_unlock(dev_tree);
+        ducktable_unlock(dev_table);
         goto cleanup;
     }
     chdir(initial_cwd);
@@ -674,12 +663,12 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
                  sizeof(file_sending_response_data_t));
     ret = encrypt_packet(packet, found_rdev->session_keys->tk, nonce);
     if (ret) {
-        tree_unlock(dev_tree);
+        ducktable_unlock(dev_table);
         ret = -1;
         log_error("[create_server_session] encrypt packet failed | return %d", ret);
         goto cleanup;
     }
-    tree_unlock(dev_tree);
+    ducktable_unlock(dev_table);
 
     ret = send_packet(PORT, fwd->addr, sockets, packet, flag);
     if (ret) {
@@ -706,7 +695,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, tree_t *dev_tree, tree_t 
     session.session_id.serial = file_sending_response_data.serial;
     memcpy(session.session_id.pk, fwd->id, crypto_sign_PUBLICKEYBYTES);
 
-    ret = session_tree->insert(session_tree, &session);
+    ret = ducktable_insert(session_table,(char *)&session);
     if (ret) {
         log_error("[create_server_session] session insert failed");
         goto cleanup;
@@ -718,8 +707,8 @@ cleanup:
     return ret;
 }
 
-int create_client_session(const packet_t *const packet, const packet_info_t *const packet_info, tree_t *dev_tree,
-                          tree_t *session_tree, QUEUE *send_queue, EFLAG *send_flag)
+int create_client_session(const packet_t *const packet, const packet_info_t *const packet_info, ducktable_t *dev_table,
+                          ducktable_t *session_table, QUEUE *send_queue, EFLAG *send_flag)
 {
     // we got their one time public key, and confirmation to proceed
     // we calculate the send key
@@ -728,11 +717,10 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
     remote_device_t rdev;
     session_t *found_session = NULL;
     active_file_t *tmp_active_file = NULL;
-    session_t session;
+    session_id_t session_id;
 
     // check if the peer is in the device tree (if they are not, we shouldn't create a session)
-    memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
-    ret = dev_tree->search(dev_tree, &rdev);
+    ret = ducktable_retrieve(dev_table, (char *)(packet->id),(char *)&rdev);
     if (ret == 0) {
         log_error("[create_client_session] device not found");
         return 1;
@@ -743,34 +731,35 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
     }
 
     // add an expected file packet (xfp) for this session
-    memcpy(&(session.session_id.pk), packet->id, crypto_sign_PUBLICKEYBYTES);
-    session.session_id.serial = ((file_sending_response_data_t *)(packet->data))->serial;
+    memcpy(&(session_id.pk), packet->id, crypto_sign_PUBLICKEYBYTES);
+    session_id.serial = ((file_sending_response_data_t *)(packet->data))->serial;
     /*We sent a packet with a serial to begin a session.
      * we created an session with that serial. (don't worry there is an expiration time, it will not stay forever).
      * we expect a response with the serial we sent (it is an identifier for that session that is being created).
      * If we don't receive a response, nothing should happen.
      */
     // if the session id is not found, then the returned serial is not valid, and the session is rejected
-    ret = session_tree->search_pin(session_tree, &session, (void **)&found_session);
+    ducktable_lock(session_table);
+    ret = ducktable_access(session_table, (char *)&session_id, (void **)&found_session);
     if (ret == 0) {
-        tree_unlock(session_tree);
+        ducktable_unlock(session_table);
         log_warn("[create_client_session] peer not found in expected files tree. Can not create client session,"
-                 " serial %lu", session.session_id.serial);
+                 " serial %lu", session_id.serial);
         return 1;
     }
 
     // if they sent us a serial of a file we are receiving then we reject.
     //(an attacker or a badly writen mod, either way me not happy).
-    if ((session.status_flags & SESSION_FLAG_CLIENT_FILE) == 0) {
+    if ((found_session->status_flags & SESSION_FLAG_CLIENT_FILE) == 0) {
         // we don't goto cleanup here. we don't want to remove an active file
-        tree_unlock(session_tree);
+        ducktable_unlock(session_table);
         log_warn("[create_client_session] peer not found in session tree. Can not create client session");
         return 1;
     }
 
     // necessary allocations
 
-    clock_gettime(CLOCK_REALTIME, &(session.timestamp));
+    clock_gettime(CLOCK_REALTIME, &(found_session->timestamp));
     found_session->packets_writen = 0;
     found_session->last_chunk = 0;
     found_session->bytes_moved = 0;
@@ -779,7 +768,7 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
     found_session->end_time = time(NULL);
     found_session->status_flags = SESSION_FLAG_ACTIVE | SESSION_FLAG_UPSTREAM;
     found_session->ip = packet_info->address.sin_addr.s_addr;
-    tree_unlock(session_tree);
+    ducktable_unlock(session_table);
 
     tmp_active_file = malloc(sizeof(active_file_t));
     if (tmp_active_file == NULL) {
@@ -787,7 +776,7 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
         return -1;
     }
 
-    tmp_active_file->fd = session.file;
+    tmp_active_file->fd = found_session->file;
     tmp_active_file->counter = 0;
     tmp_active_file->next = NULL;
     tmp_active_file->tk = rdev.session_keys->tk;
@@ -811,7 +800,7 @@ cleanup:
     return ret;
 }
 
-int init_packet_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *xsr_tree,
+int init_packet_routine(packet_t *packet, packet_info_t *packet_info, ducktable_t *dev_table, tree_t *xsr_tree,
                         tree_t *known_keys_tree, char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1],
                         signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag)
 {
@@ -846,8 +835,8 @@ int init_packet_routine(packet_t *packet, packet_info_t *packet_info, tree_t *de
     }
 
     // search in the tree
-    memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
-    ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev);
+    ducktable_lock(dev_table);
+    ret = ducktable_access(dev_table, (char *)packet->id, (void **)&found_rdev);
 
     if (ret == 1) {
         clock_gettime(CLOCK_REALTIME, &(found_rdev->timestamp)); // renew the timestamp
@@ -859,10 +848,10 @@ int init_packet_routine(packet_t *packet, packet_info_t *packet_info, tree_t *de
         log_debug("[init_packet_routine] found device with username %s", tmp_username);
         memcpy(found_rdev->username, tmp_username, MAX_USERNAME_LEN * sizeof(uint32_t));
 
-        dev_tree->search_release(dev_tree);
+        ducktable_unlock(dev_table);
         return 0;
     }
-    dev_tree->search_release(dev_tree);
+    ducktable_unlock(dev_table);
 
     // the remote device is not on the tree so we add it
     clock_gettime(CLOCK_REALTIME, &(rdev.timestamp));
@@ -893,7 +882,7 @@ int init_packet_routine(packet_t *packet, packet_info_t *packet_info, tree_t *de
         rdev.dev_state_flag |= KNOWN_KEY_STATUS_UNKNOWN;
     }
 
-    ret = dev_tree->insert(dev_tree, &rdev);
+    ret = ducktable_insert(dev_table, (char *)&rdev);
     if (ret < 0) {
         log_fatal("[init_packet_routine] device_tree insert() failed| return %d", ret);
         return -1;
@@ -952,7 +941,7 @@ int init_packet_routine(packet_t *packet, packet_info_t *packet_info, tree_t *de
     return 0;
 }
 
-int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *xsr_tree,
+int signing_request_routine(packet_t *packet, packet_info_t *packet_info, ducktable_t *dev_table, tree_t *xsr_tree,
                             tree_t *known_keys_tree, signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag)
 {
     int ret;
@@ -990,8 +979,8 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
 
 
     // if the peer is verified we don't need to send a signing request
-    memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
-    ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev);
+    ducktable_lock(dev_table);
+    ret = ducktable_access(dev_table, (char *)packet->id, (void **)&found_rdev);
 
     if (ret == 1 && found_rdev->dev_state_flag & RDSF_VERIFIED) {
         // the device is found
@@ -1002,10 +991,10 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
         memset(signing_response_data.nonce, 0, INDIGO_NONCE_SIZE);
         signing_response_data.sig_request = 0;
 
-        tree_unlock(dev_tree);
+        ducktable_unlock(dev_table);
     }
     else {
-        tree_unlock(dev_tree);
+        ducktable_unlock(dev_table);
         // in this case they found us before we received their discovery packet (if they sent any)
         // add the device to the device table
         // we detected the device (though it is unverified)
@@ -1038,7 +1027,7 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
                 rdev.dev_state_flag |= KNOWN_KEY_STATUS_UNKNOWN;
             }
 
-            ret = dev_tree->insert(dev_tree, &rdev);
+            ret = ducktable_insert(dev_table, (char *)&rdev);
             if (ret < 0) {
                 log_fatal("[packet_handler_thread] device_tree insert failed inserting device"
                           " from signing request | return %d",
@@ -1151,7 +1140,7 @@ int signing_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t
     return 0;
 }
 
-int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *xsr_tree,
+int signing_response_routine(packet_t *packet, packet_info_t *packet_info, ducktable_t *dev_table, tree_t *xsr_tree,
                              signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag)
 {
     int ret;
@@ -1188,13 +1177,13 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
     // the device got verified
     // todo: so we need to create the client and server keys, if we need to sing nonce, we
     // create keys no xsr, otherwise use xsr
-    memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
-    ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev);
+    ducktable_lock(dev_table);
+    ret = ducktable_access(dev_table, (char *)packet->id, (void **)&found_rdev);
     /* I am not sure how we could get an expected packet for a device
      * that isn't in the device tree
      */
     if (ret == 0) {
-        tree_unlock(dev_tree);
+        ducktable_unlock(dev_table);
         return 1;
     }
 
@@ -1206,7 +1195,7 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
 
     found_rdev->session_keys = malloc(sizeof(session_keys_t));
     if (found_rdev->session_keys == NULL) {
-        tree_unlock(dev_tree);
+        ducktable_unlock(dev_table);
         log_fatal("[signing_response_routine] malloc failed to allocate session_keys]");
         return -1;
     }
@@ -1223,7 +1212,7 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
 
         ret = crypto_kem_enc(signing_response_data.kem_ct,ss,((signing_response_data_t *)(packet->data))->kem_pk);
         if (ret != 0) {
-            tree_unlock(dev_tree);
+            ducktable_unlock(dev_table);
             log_fatal("[signing_response_routine] crypto_kem_enc failed to create shared secret and ciphertext");
             return -1;
         }
@@ -1253,7 +1242,7 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
                                    signing_keys->secret);
 
         if (ret) {
-            tree_unlock(dev_tree);
+            ducktable_unlock(dev_table);
             log_fatal("[signing_response_routine] crypto_sing_detached failed signing"
                       " signing response packet | return %d",
                       -1);
@@ -1281,7 +1270,7 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
                 default:
                     break; // winlib errors go here
             }
-            tree_unlock(dev_tree);
+            ducktable_unlock(dev_table);
         }
         log_debug("[signing_response_routine] sent signing response");
     }
@@ -1289,13 +1278,13 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
         // create the client and server keys
         // TODO: parameter may be null, causes segfault
         if (xsr.skx == NULL) {
-            tree_unlock(dev_tree);
+            ducktable_unlock(dev_table);
             log_debug("[signing_response_routine] xsr keys are null");
             return 1;
         }
         ret = crypto_kem_dec(ss,((signing_response_data_t *)packet->data)->kem_ct,xsr.skx);
         if (ret) {
-            tree_unlock(dev_tree);
+            ducktable_unlock(dev_table);
             log_fatal("[signing_response_routine] crypto_kem_enc failed to create shared secret and ciphertext");
             return -1;
         }
@@ -1310,7 +1299,7 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
 
     }
 
-    tree_unlock(dev_tree);
+    ducktable_unlock(dev_table);
 
     // remove the expected packet
     xsr_tree->remove(xsr_tree, &xsr);
@@ -1319,8 +1308,9 @@ int signing_response_routine(packet_t *packet, packet_info_t *packet_info, tree_
     return 0;
 }
 
-int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, tree_t *dev_tree, tree_t *session_tree,
-                                 signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag)
+int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, ducktable_t *dev_table,
+                                 ducktable_t *session_table, signing_key_pair_t *signing_keys, socket_ll *sockets,
+                                 EFLAG *flag)
 {
     // we need permission to proceed, so we push it to the manager to handle
     // tell the interface (ui via queue), the interface will ask the user
@@ -1353,11 +1343,13 @@ int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, t
     fsr->addr = packet_info->address.sin_addr.s_addr;
     fsr->timestamp = time(NULL);
 
-    memcpy(rdev.peer_pk, packet->id, crypto_sign_PUBLICKEYBYTES);
-    if (dev_tree->search_pin(dev_tree, &rdev, (void **)&found_rdev)) {
+
+    ducktable_lock(dev_table);
+    if (ducktable_access(dev_table, (char *)packet->id, (void **)&found_rdev)) {
         if (is_in_set(found_rdev->fid_set, data->serial)) {
             free(fsr);
             fsr = NULL;
+            ducktable_unlock(dev_table);
             return 1;
         }
         fsr->serial = data->serial;
@@ -1366,16 +1358,18 @@ int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, t
         if (found_rdev->dev_state_flag & KNOWN_KEY_STATUS_TOO_GOOD) {
             // in this case and this case only the user has specified
             // that this peer does not need approval
-            tree_unlock(dev_tree);
-            ret = create_server_session(fsr, dev_tree, session_tree, signing_keys->public, sockets, flag);
+            ducktable_unlock(dev_table);
+            ret = create_server_session(fsr, dev_table, session_table, signing_keys->public, sockets, flag);
             if (ret) {
                 // todo: create_server_session() uses send_packet() and returns its errors
                 // todo: do more complex error handling
                 log_fatal("[file_sending_request_routine] failed to create server session "
                           "| return %d",
                           -1);
+                ducktable_unlock(dev_table);
                 return -1;
             }
+            ducktable_unlock(dev_table);
             return 0;
         }
 
@@ -1400,12 +1394,12 @@ int file_sending_request_routine(packet_t *packet, packet_info_t *packet_info, t
         free(fsr);
         fsr = NULL;
     }
-    dev_tree->search_release(dev_tree);
+    ducktable_unlock(dev_table);
 
     return 0;
 }
 
-int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *session_tree,
+int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, ducktable_t *session_table,
                        signing_key_pair_t *signing_keys, socket_ll *sockets, EFLAG *flag)
 {
     /*TODO: the thing is that the file descriptor is in xfp, (and we need to check xfp anyway
@@ -1417,7 +1411,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
      */
     int ret;
     void *tmp_ptr;
-    session_t session;
+    session_id_t session_id;
     session_t *found_session;
 
     range_node_t *range_node;
@@ -1432,17 +1426,17 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
         return 1;
 
     // find the expected file packet node
-    memcpy(session.session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
-    session.session_id.serial = ((file_chunk_data_t *)packet->data)->serial;
+    memcpy(session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
+    session_id.serial = ((file_chunk_data_t *)packet->data)->serial;
 
-    ret = session_tree->search_pin(session_tree, &session, (void **)&found_session);
+    ret = ducktable_access(session_table, (char *)&session_id, (void **)&found_session);
     if (ret == 0) {
-        session_tree->search_release(session_tree);
+        ducktable_unlock(session_table);
         return 1;
     }
     // if it is a client file (we expect an accept response) we don't receive it
     if (found_session->status_flags & SESSION_FLAG_CLIENT_FILE) {
-        session_tree->search_release(session_tree);
+        ducktable_unlock(session_table);
         return 1;
     }
 
@@ -1461,7 +1455,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
             prev_node = range_node;
         }
         if (range_node == NULL) {
-            tree_unlock(session_tree);
+            ducktable_unlock(session_table);
             return 1;
         }
 
@@ -1490,7 +1484,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
                 prev_node = malloc(sizeof(range_node_t));
                 if (!prev_node) {
                     // IDK do something
-                    session_tree->search_release(session_tree);
+                    ducktable_unlock(session_table);
                     return -1;
                 }
                 prev_node->r.start = chunk_number + 1;
@@ -1530,7 +1524,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
                 case ENOMEM:
                 case ENXIO:
                 default:
-                    tree_unlock(session_tree);
+                    ducktable_unlock(session_table);
                     break;
             }
             return 1;
@@ -1547,8 +1541,8 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
             }
             // TODO: rename the file
             fclose(found_session->file);
-            avl_delete_unlocked(session_tree, &session);
-            tree_unlock(session_tree);
+            ducktable_remove(session_table, (char *)&session_id);
+            ducktable_unlock(session_table);
             return 1;
         }
 
@@ -1561,7 +1555,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
             // send the packet
             ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, sockets, &temp_packet, flag);
             if (ret) {
-                tree_unlock(session_tree);
+                ducktable_unlock(session_table);
                 switch (ret) {
                     case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
                     case INDIGO_ERROR_INVALID_PARAM:
@@ -1584,7 +1578,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
         }
         range_node = NULL;
 
-        tree_unlock(session_tree);
+        ducktable_unlock(session_table);
         return 1;
     }
 
@@ -1593,7 +1587,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
 
         range_node = malloc(sizeof(range_node_t));
         if (!range_node) {
-            tree_unlock(session_tree);
+            ducktable_unlock(session_table);
             log_fatal("[file_chunk_routine] malloc failed allocating %d bytes for "
                       "missing packet range node | return %d",
                       -1);
@@ -1614,7 +1608,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
         // send the packet
         ret = send_packet(PORT, packet_info->address.sin_addr.s_addr, sockets, &temp_packet, flag);
         if (ret) {
-            tree_unlock(session_tree);
+            ducktable_unlock(session_table);
             switch (ret) {
                 case INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR:
                 case INDIGO_ERROR_INVALID_PARAM:
@@ -1648,7 +1642,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
 
     ret_val = fwrite(((file_chunk_data_t *)packet->data)->data, 1, PAC_DATA_MAX_PAYLOAD_BYTES, found_session->file);
     if (ret_val != PAC_DATA_MAX_PAYLOAD_BYTES) {
-        tree_unlock(session_tree);
+        ducktable_unlock(session_table);
         log_fatal("[file_chunk_routine] send_packet fwrite failed writing file chunk "
                   "to file | return %d | errno %d",
                   -1, errno);
@@ -1682,12 +1676,12 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, tree_t *ses
         }
         // TODO: rename the file
         fclose(found_session->file);
-        avl_delete_unlocked(session_tree, &session);
-        tree_unlock(session_tree);
+        ducktable_remove(session_table, (char *)&session_id);
+        ducktable_unlock(session_table);
         return 1;
     }
 
-    tree_unlock(session_tree);
+    ducktable_unlock(session_table);
     return 0;
 }
 

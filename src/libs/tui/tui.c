@@ -1446,7 +1446,7 @@ int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree
 void *ui_thread(UI_ARGS *args)
 {
     //copied arguments
-    tree_t *dev_tree;
+    ducktable_t *dev_table;
     tree_t *file_tree;
     tree_t *known_key_tree;
     QUEUE *ui_queue;
@@ -1558,7 +1558,7 @@ void *ui_thread(UI_ARGS *args)
 
     pthread_mutex_unlock(&(args->ui_mutex));
     //copy and free the arguments
-    dev_tree = args->dev_tree;
+    dev_table = args->dev_tree;
     file_tree = args->file_tree;
     known_key_tree = args->known_key_tree;
     ui_queue = args->ui_queue;
@@ -1743,7 +1743,7 @@ void *ui_thread(UI_ARGS *args)
                     if (id_count > 0)
                         context = 1;
                     werase(device_pad);
-                    print_device_files(device_pad, last_id, dev_tree, file_tree, &request_list, &request_count,
+                    print_device_files(device_pad, last_id, dev_table, file_tree, &request_list, &request_count,
                                        &file_list, &file_count, &file_last_row, &file_last_level);
                     pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
                     doupdate();
@@ -1812,7 +1812,7 @@ void *ui_thread(UI_ARGS *args)
                             file_sending_request_data->file_size = ftell(esr->file);
                             fseek(esr->file, 0, SEEK_SET);
 
-                            ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&rdev_p);
+                            ret = dev_table->search_pin(dev_table, &rdev, (void **)&rdev_p);
                             if (ret == 1 && rdev_p->session_keys != NULL) {
                                 fwd_packet->address = rdev_p->ip;
                                 fwd_packet->port = PORT;
@@ -1822,7 +1822,7 @@ void *ui_thread(UI_ARGS *args)
                                 encrypt_packet(&(fwd_packet->packet), rdev_p->session_keys->tk, nonce);
                             }
                             else {
-                                tree_unlock(dev_tree);
+                                tree_unlock(dev_table);
                                 free(fwd_packet);
                                 free(esr);
                                 esr = NULL;
@@ -1833,7 +1833,7 @@ void *ui_thread(UI_ARGS *args)
                             ret = queue_push(send_queue, fwd_packet, QET_SEND_PACKET);
                             if (ret) {
                                 set_remove(rdev_p->fid_set, esr->session_id.serial);
-                                tree_unlock(dev_tree);
+                                tree_unlock(dev_table);
                                 free(fwd_packet);
                                 free(esr);
                                 fwd_packet = NULL;
@@ -1845,7 +1845,7 @@ void *ui_thread(UI_ARGS *args)
                             ret = queue_push(ph_queue, esr, QET_EXPECT_SEND_RESPONSE);
                             if (ret) {
                                 set_remove(rdev_p->fid_set, esr->session_id.serial);
-                                tree_unlock(dev_tree);
+                                tree_unlock(dev_table);
                                 free(fwd_packet);
                                 free(esr);
                                 fwd_packet = NULL;
@@ -1853,7 +1853,7 @@ void *ui_thread(UI_ARGS *args)
                                 log_error("queue_push() failed | return %d", ret);
                                 goto cleanup;
                             }
-                            tree_unlock(dev_tree);
+                            tree_unlock(dev_table);
                             set_event_flag(ph_flag, EF_CHECK_QUEUE);
                             fwd_packet = NULL;
                             log_debug("[create_main_interface] pushed to queue esr and send_packet");
@@ -1878,14 +1878,14 @@ void *ui_thread(UI_ARGS *args)
                         ret = edit_known_key(known_key_tree, last_id, status);
                         if (ret == 0) {
                             memcpy(rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);
-                            ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&rdev_p);
+                            ret = dev_table->search_pin(dev_table, &rdev, (void **)&rdev_p);
                             if (ret) {
                                 rdev_p->dev_state_flag &=
                                     ~(KNOWN_KEY_STATUS_GOOD | KNOWN_KEY_STATUS_TOO_GOOD | KNOWN_KEY_STATUS_BAD |
                                       KNOWN_KEY_STATUS_UNKNOWN | KNOWN_KEY_STATUS_EVIL_AND_SINISTER);
                                 rdev_p->dev_state_flag |= status;
                             }
-                            tree_unlock(dev_tree);
+                            tree_unlock(dev_table);
                         }
                     }
                 }
@@ -1893,7 +1893,7 @@ void *ui_thread(UI_ARGS *args)
                     log_debug("[create_main_interface] selected serial %llu", request_list[file_last_row]);
 
                     memcpy(rdev.peer_pk, last_id, crypto_sign_PUBLICKEYBYTES);
-                    ret = dev_tree->search_pin(dev_tree, &rdev, (void **)&rdev_p);
+                    ret = dev_table->search_pin(dev_table, &rdev, (void **)&rdev_p);
                     if (ret == 1 && rdev_p->session_keys != NULL) {
                         fwd = NULL;
                         for (fwd_fsr_t *f = rdev_p->fsr_list; f != NULL; f = f->next) {
@@ -1910,15 +1910,15 @@ void *ui_thread(UI_ARGS *args)
                             fwd = f;
                         }
                         if (fwd == NULL) {
-                            tree_unlock(dev_tree);
+                            tree_unlock(dev_table);
                             continue;
                         }
                     }
                     else {
-                        tree_unlock(dev_tree);
+                        tree_unlock(dev_table);
                         continue;
                     }
-                    dev_tree->search_release(dev_tree);
+                    dev_table->search_release(dev_table);
 
                     ret = queue_push(ph_queue, fwd, QET_SESSION_START);
                     if (ret) {
@@ -1951,7 +1951,7 @@ void *ui_thread(UI_ARGS *args)
                 dev_IDs = NULL;
             }
             werase(device_pad);
-            print_devices(device_pad, dev_tree, &dev_IDs, &id_count, last_id, &last_id_row);
+            print_devices(device_pad, dev_table, &dev_IDs, &id_count, last_id, &last_id_row);
 
             if (id_count == 0) {
                 mvwprintw(device_pad, 0, 0, "There are currently no devices in the local network.");
@@ -1970,7 +1970,7 @@ void *ui_thread(UI_ARGS *args)
             }
 
             werase(device_pad);
-            print_device_files(device_pad, last_id, dev_tree, file_tree, &request_list, &request_count, &file_list,
+            print_device_files(device_pad, last_id, dev_table, file_tree, &request_list, &request_count, &file_list,
                                &file_count, &file_last_row, &file_last_level);
             pnoutrefresh(device_pad, device_top_row, 0, 0, 0, maxy - 1, maxx - 1);
         }
