@@ -23,7 +23,7 @@ SOFTWARE.
 #ifndef NET_IO_H
 #define NET_IO_H
 
-#include <Queue.h>
+#include <queue.h>
 #include <crypto_utils.h>
 #include <event_flags.h>
 #include <indigo_core/net_monitor.h>
@@ -133,8 +133,10 @@ int register_single_event(int epoll_fd, int fd, struct epoll_event event);
 int register_multiple_receivers(int epoll_fd, socket_ll *sockets, int *event_count);
 #endif
 int send_packet(int port, uint32_t addr, socket_ll *sockets, const packet_t *packet, EFLAG *flag);
-int send_next_file_packet(active_file_t *file, const unsigned char *pk, socket_ll *sockets, EFLAG *flag);
-int send_file_packet(active_file_t *file, uint64_t counter, const unsigned char *pk, socket_ll *sockets, EFLAG *flag);
+int send_next_file_packet(active_file_t *file, const unsigned char *pk, socket_ll *sockets, EFLAG *flag, int ip,
+                          uint16_t port, unsigned char *tk);
+int send_file_packet(active_file_t *file, uint64_t counter, const unsigned char *pk, socket_ll *sockets, EFLAG *flag,
+                     int ip, uint16_t port, unsigned char *tk);
 
 /////////////////////////////////////////////////////////////
 ///                                                       ///

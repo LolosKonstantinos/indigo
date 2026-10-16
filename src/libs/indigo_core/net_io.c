@@ -31,7 +31,7 @@ SOFTWARE.
 #include <stdint.h>
 #include <stdio.h>
 
-#include "Queue.h"
+#include "queue.h"
 #include "crypto_utils.h"
 #include <indigo_types.h>
 #include <stdlib.h>
@@ -785,7 +785,8 @@ int send_packet(const int port, const uint32_t addr, socket_ll *sockets, const p
     return 0;
 }
 #endif
-int send_next_file_packet(active_file_t *file, const unsigned char *const pk, socket_ll *sockets, EFLAG *flag)
+int send_next_file_packet(active_file_t *file, const unsigned char *const pk, socket_ll *sockets, EFLAG *flag, int ip,
+                          uint16_t port, unsigned char *tk)
 {
     unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
     alignas(8) packet_t packet;
@@ -800,43 +801,43 @@ int send_next_file_packet(active_file_t *file, const unsigned char *const pk, so
         return INDIGO_SUCCESS;
     }
 
-    if (file->counter == 0) {
+    if (file->packet_counter == 0) {
         randombytes_buf(file->nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
     }
     memcpy(nonce, file->nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
-    nonce_24_increment(nonce, file->counter);
+    nonce_24_increment(nonce, file->packet_counter);
 
     build_packet(&packet, MSG_FILE_CHUNK, pk, nonce, NULL, 0);
-    read_ret = fread(packet.data, FILE_CHUNK_DATA_BYTES, 1, file->fd);
+    read_ret = fread(packet.data, FILE_CHUNK_DATA_BYTES, 1, file->file);
     if (read_ret != 0) {
-        ret = feof(file->fd);
+        ret = feof(file->file);
         if (ret != 0) {
             log_error("[send_next_file_packet] fread() failed to read from file for outgoing file packet | return -1 | "
                       "errno %d",
                       errno);
             return -1;
         }
-        fclose(file->fd);
-        file->fd = NULL;
+        fclose(file->file);
+        file->file = NULL;
     }
 
-    ret = encrypt_packet(&packet, file->tk, nonce);
+    ret = encrypt_packet(&packet, tk, nonce);
     if (ret) {
         log_error("[send_next_file_packet] encrypt_packet() failed | return %d", ret);
         return ret;
     }
-    ret = send_packet(file->port, file->ip, sockets, &packet, flag);
+    ret = send_packet(port, ip, sockets, &packet, flag);
     if (ret != 0) {
         log_error("[send_next_file_packet] send_packet() failed | return %d", ret);
         return ret;
     }
-    file->counter++;
+    ++(file->packet_counter);
 
     return INDIGO_SUCCESS;
 }
 
 int send_file_packet(active_file_t *file, uint64_t counter, const unsigned char *const pk, socket_ll *sockets,
-                     EFLAG *flag)
+                     EFLAG *flag, int ip, uint16_t port, unsigned char *tk)
 {
     unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
     packet_t packet;
@@ -847,34 +848,34 @@ int send_file_packet(active_file_t *file, uint64_t counter, const unsigned char 
         log_error("[send_file_packet] file is null | return %d", INDIGO_ERROR_INVALID_PARAM);
         return INDIGO_ERROR_INVALID_PARAM;
     }
-    if (!(file->fd)) {
+    if (!(file->file)) {
         return INDIGO_SUCCESS;
     }
-    if (file->counter == 0) {
+    if (file->packet_counter == 0) {
         randombytes_buf(file->nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
     }
     memcpy(nonce, file->nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
     nonce_24_increment(nonce, counter);
 
     build_packet(&packet, MSG_FILE_CHUNK, pk, nonce, NULL, 0);
-    read_ret = fread(packet.data, FILE_CHUNK_DATA_BYTES, 1, file->fd);
+    read_ret = fread(packet.data, FILE_CHUNK_DATA_BYTES, 1, file->file);
     if (read_ret != 0) {
-        ret = feof(file->fd);
+        ret = feof(file->file);
         if (ret != 0) {
             log_error("[send_file_packet] fread() failed to read from file for file packet | return %d | errno %d", ret,
                       errno);
             return -1;
         }
-        fclose(file->fd);
-        file->fd = NULL;
+        fclose(file->file);
+        file->file = NULL;
     }
 
-    ret = encrypt_packet(&packet, file->tk, nonce);
+    ret = encrypt_packet(&packet, tk, nonce);
     if (ret) {
         log_error("[send_file_packet] encrypt_packet() failed | return %d", ret);
         return ret;
     }
-    ret = send_packet(file->port, file->ip, sockets, &packet, flag);
+    ret = send_packet(port, ip, sockets, &packet, flag);
     if (ret != 0) {
         log_error("[send_file_packet] send_packet() failed | return %d", ret);
         return ret;
@@ -1790,9 +1791,9 @@ int *send_thread(SEND_ARGS *args)
     struct timespec deadline_ts;
     struct timespec current_ts;
     QNODE *node;
-    goosetable_t *active_files = NULL;
-    active_file_t *curr_af;
-    goosetable_iterator_t *af_iter;
+    goosetable_t *client_session_table = NULL;
+    active_file_t *curr_session;
+    goosetable_iterator_t *goosetable_iter;
     fwd_packet_t *fwd_packet = NULL;
     remote_device_t rdev = {0};
     char username[MAX_USERNAME_LEN  * sizeof(uint32_t) + 1];
@@ -1809,8 +1810,8 @@ int *send_thread(SEND_ARGS *args)
     }
     *process_return = 0;
 
-    active_files = new_goosetable(sizeof(session_id_t),sizeof(active_file_t),  16, NULL);
-    if (!active_files) {
+    client_session_table = new_goosetable(sizeof(session_id_t),sizeof(active_file_t),  16, NULL);
+    if (!client_session_table) {
         *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_fatal("[send_thread] new_lht() failed creating linked hash table for active files | return %d | errno %d",
                   INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR, errno);
@@ -1871,7 +1872,7 @@ int *send_thread(SEND_ARGS *args)
                 queue_remove_front_no_free_tu(args->queue);
                 queue_unlock(args->queue);
 
-                ret = goosetable_insert(active_files, (char *)&(((active_file_t *)node->data)->session_id), node->data);
+                ret = goosetable_insert(client_session_table, (char *)&(((client_session_t *)node->data)->id), node->data);
                 if (ret) {
                     *process_return = ret;
                     log_info("[send_thread] lht_insert() failed | return %d", *process_return);
@@ -1898,7 +1899,7 @@ int *send_thread(SEND_ARGS *args)
                 active_file_t *af;
                 transmission_control_data_t data = ((Q_RESEND_FILE_CHUNK *)(node->data))->control;
 
-                ret = goosetable_access(active_files, (char *)&(((Q_RESEND_FILE_CHUNK *)(node->data))->session_id), (void **)&af);
+                ret = goosetable_access(client_session_table, (char *)&(((Q_RESEND_FILE_CHUNK *)(node->data))->session_id), (void **)&af);
                 if (ret) {
                     free(node->data);
                     destroy_qnode(node);
@@ -1909,7 +1910,7 @@ int *send_thread(SEND_ARGS *args)
                 clock_gettime(CLOCK_REALTIME, &(af->timestamp));
 
                 for (size_t i = data.range.start; i < data.range.end + 1; i++) {
-                    ret = send_file_packet(af, i, args->sign_keys->public, args->sockets, args->flag);
+                    ret = send_file_packet(af, i, args->sign_keys->public, args->sockets, args->flag, TODO, TODO, TODO);
                     if (ret) { // todo: are all errors non recoverable? check it please
                         free(node->data);
                         destroy_qnode(node);
@@ -1949,28 +1950,29 @@ int *send_thread(SEND_ARGS *args)
         //////////////////////////////////////////////////
 
         // send file packets
-        ret = new_goosetable_iterator(active_files, &af_iter);
+        ret = new_goosetable_iterator(client_session_table, &goosetable_iter);
 
-        while (goosetable_has_next(af_iter)) { // for every active file send a packet, in circular way
-            curr_af = goosetable_next(af_iter);
+        while (goosetable_has_next(goosetable_iter)) { // for every active file send a packet, in circular way
+            curr_session = goosetable_next(goosetable_iter);
 
-            ret = send_next_file_packet(curr_af, args->sign_keys->public, args->sockets, args->flag);
+            ret = send_next_file_packet(curr_session, args->sign_keys->public, args->sockets, args->flag, TODO, TODO,
+                                        TODO);
             if (ret) { // todo: are all errors non recoverable? check it please
                 *process_return = ret;
                 log_fatal("[send_thread] send_next_file_packet() failed | return %d", ret);
                 goto cleanup;
             }
 
-            if (curr_af->is_completed) {
+            if (curr_session->is_completed) {
                 //check if the timeout is over and we can remove the file
                 struct timespec ts_now;
                 struct timespec ts_timeout;
                 struct timespec ts_diff;
                 ts_timeout = mstotimespec(MS_UNTIL_FILE_REMOVAL);
                 clock_gettime(CLOCK_REALTIME, &ts_now);
-                ts_diff = timespec_diff(&ts_now,&(curr_af->timestamp));
+                ts_diff = timespec_diff(&ts_now,&(curr_session->timestamp));
                 if (timespec_cmp(&ts_diff,&ts_timeout) >= 0) {
-                    goosetable_iterator_remove_current(active_files, af_iter);
+                    goosetable_iterator_remove_current(client_session_table, goosetable_iter);
                 }
             }
 
@@ -1980,7 +1982,7 @@ int *send_thread(SEND_ARGS *args)
                 break;
             }
         }
-        free_goosetable_iterator(&af_iter);
+        free_goosetable_iterator(&goosetable_iter);
 
         // set next deadline
         clock_gettime(CLOCK_REALTIME, &deadline_ts);
@@ -2020,12 +2022,12 @@ int *send_thread(SEND_ARGS *args)
         pthread_mutex_unlock(&(args->flag->mutex));
     }
 
-    free_goosetable(active_files);
+    free_goosetable(client_session_table);
     log_info("[send_thread] send thread successful exit | return %d", *process_return);
     return process_return;
 
     cleanup:
-    free_goosetable(active_files);
+    free_goosetable(client_session_table);
     set_event_flag(args->flag, EF_TERMINATION);
     set_event_flag(args->wake, EF_WAKE_MANAGER);
     return process_return;

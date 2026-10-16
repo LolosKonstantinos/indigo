@@ -23,6 +23,7 @@ SOFTWARE.
 #include <indigo_core/manager.h>
 
 #include "config.h"
+#include "time_utils.h"
 
 #include <indigo_errors.h>
 #include <unistd.h>
@@ -64,7 +65,6 @@ int thread_manager(uint32_t address, uint16_t port)
     ducktable_t *device_table = NULL;
     tree_t *file_tree = NULL;
     tree_t *known_key_tree = NULL;
-    ducktable_t *session_table = NULL; // todo: write cmp_session function and create the tree
 
     // the thread args
     SEND_ARGS *send_args = NULL;
@@ -93,6 +93,7 @@ int thread_manager(uint32_t address, uint16_t port)
     const uint64_t termination_val = 1;
     const uint64_t wake_val = 2;
 
+    struct timespec manager_timeout;
     void *temp = NULL;
 
     int process_return = 0;
@@ -132,12 +133,7 @@ int thread_manager(uint32_t address, uint16_t port)
         ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         goto cleanup;
     }
-    session_table = new_ducktable(sizeof(session_id_t),offsetof(session_t,session_id), sizeof(session_t),16);
-    if (session_table == NULL) {
-        log_error("[main] new_tree failed");
-        ret = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-        goto cleanup;
-    }
+
     ret = new_tree(&file_tree, cmp_ui_file, NULL, sizeof(ui_file_t), BINARY_TREE_FLAG_AVL);
     if (ret) {
         log_error("[main] new_tree failed");
@@ -239,8 +235,7 @@ int thread_manager(uint32_t address, uint16_t port)
     }
 
     if (create_packet_handler_thread(&handler_args, flag, ui_queue, send_args->queue, send_args->flag, mempool,
-                                     device_table, session_table, known_key_tree, sockets, signing_key_pair,
-                                     &tid_handler)) {
+                                     device_table, known_key_tree, sockets, signing_key_pair, &tid_handler)) {
         process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_error("[thread_manager_thread] packet handler thread creation failed | return %d", INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         goto cleanup;
@@ -284,10 +279,13 @@ int thread_manager(uint32_t address, uint16_t port)
     ui_args = NULL;
 
 
+    clock_gettime(CLOCK_MONOTONIC, &manager_timeout);
+    manager_timeout.tv_sec += 30;
+
     // the main loop
     while (1) {
         pthread_mutex_lock(&(flag->mutex));
-        pthread_cond_wait(&flag->cond, &flag->mutex);
+        pthread_cond_timedwait(&flag->cond, &flag->mutex,&manager_timeout);
         flag_val = flag->event_flag;
         pthread_mutex_unlock(&flag->mutex);
 
@@ -295,7 +293,13 @@ int thread_manager(uint32_t address, uint16_t port)
         if (!(flag_val & EF_WAKE_MANAGER))
             continue;
         reset_single_event(send_args->flag, EF_WAKE_MANAGER);
+
         // check the thread flags
+        /*decide if error is severe enough and
+         *restart the thread,
+         *enter ultra low-memory state or
+         *terminate completely
+         */
 
         // check the interface updater thread
         flag_val = get_event_flag(update_args->flag);
@@ -330,6 +334,43 @@ int thread_manager(uint32_t address, uint16_t port)
         if (flag_val & EF_TERMINATION) {
             log_info("[thread_manager_thread] ui thread terminated");
             goto cleanup;
+        }
+
+
+        //update live data_structures
+
+        // update the device table
+        {
+            ducktable_iterator_t *ducktable_iterator = NULL;
+            remote_device_t *found_rdev = NULL;
+            struct timespec ts_ms = mstotimespec(MS_UNTIL_DISCONNECT);
+            struct timespec curr_time, time_diff;
+
+            clock_gettime(CLOCK_MONOTONIC, &curr_time);
+            manager_timeout = curr_time;
+            manager_timeout.tv_sec += 30;
+
+            ducktable_lock(device_table);
+            ret = new_ducktable_iterator(device_table, &ducktable_iterator);
+            if (ret && !ducktable_iterator) {
+                log_warn("[packet_handler_thread] failed to create xsr iterator");
+                // TODO: enter low memory state
+            }
+
+            while (ducktable_has_next(ducktable_iterator)) {
+                found_rdev = ducktable_next(ducktable_iterator);
+                time_diff = timespec_diff(&curr_time, &(found_rdev->timestamp));
+                if (timespec_cmp(&time_diff, &ts_ms)>=0) {
+                    //just remove
+                    ducktable_iterator_remove_current(ducktable_iterator);
+                }
+                else {
+                    // branchless minimum
+                    manager_timeout = min_timespec(&time_diff, &manager_timeout);
+                }
+            }
+            free_ducktable_iterator(&ducktable_iterator);
+            ducktable_unlock(device_table);
         }
 
 
@@ -425,7 +466,6 @@ int thread_manager(uint32_t address, uint16_t port)
 
     free_ducktable(device_table);
     free_tree(file_tree);
-    free_ducktable(session_table);
     free_tree(known_key_tree);
 
     sodium_mprotect_readwrite(signing_key_pair);
@@ -558,7 +598,6 @@ cleanup:
 
     free_ducktable(device_table);
     free_tree(file_tree);
-    free_ducktable(session_table);
     free_tree(known_key_tree);
 
     sodium_mprotect_readwrite(signing_key_pair);
@@ -773,8 +812,8 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
 
 int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, QUEUE *ui_queue, QUEUE *send_queue,
                                  EFLAG *send_flag, mempool_t *mempool, ducktable_t *device_tree,
-                                 ducktable_t *session_tree, tree_t *known_keys_tree, socket_ll *sockets,
-                                 signing_key_pair_t *keypair, pthread_t *tid)
+                                 tree_t *known_keys_tree, socket_ll *sockets, signing_key_pair_t *keypair,
+                                 pthread_t *tid)
 {
 
     pthread_t thread;
@@ -824,7 +863,6 @@ int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, Q
     handler_args->flag = flag;
     handler_args->device_table = device_tree;
     handler_args->known_keys_tree = known_keys_tree;
-    handler_args->session_table = session_tree;
     handler_args->sockets = sockets;
     handler_args->send_flag = send_flag;
     handler_args->ui_queue = ui_queue;

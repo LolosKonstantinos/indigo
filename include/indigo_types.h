@@ -270,7 +270,7 @@ typedef struct session_id_t {
     unsigned char pk[crypto_sign_PUBLICKEYBYTES];
 } session_id_t;
 
-typedef struct session_t {
+typedef struct server_session_t {
     session_id_t session_id;
     struct timespec timestamp;
     uint64_t total_packet_count;
@@ -283,26 +283,36 @@ typedef struct session_t {
     size_t bytes_moved;
     uint32_t ip;
     uint32_t status_flags;
-} session_t;
+} server_session_t;
+
+typedef struct active_file_t {
+    uint64_t session_serial;
+    uint64_t packet_counter;
+    FILE *file;
+    struct timespec timestamp;
+    struct timespec start_time_realtime;
+    struct timespec start_time_monotonic;
+    struct timespec end_time_monotonic;
+    unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
+    char is_completed;
+    unsigned char zero[7];
+} active_file_t;
+
+typedef struct client_session_t {
+    unsigned char id [crypto_sign_PUBLICKEYBYTES];
+    unsigned char *tk;
+    size_t bytes_moved;
+    active_file_t *active_files_list;
+    uint32_t ip;
+    uint16_t port;
+    uint16_t status_flags;
+}client_session_t;
+
 
 typedef struct sessions_t {
     ducktable_t *recv_sessions;
     goosetable_t *send_sessions;
 }sessions_t;
-
-
-typedef struct active_file_t {
-    struct timespec timestamp;
-    struct active_file_t *next;
-    FILE *fd;
-    uint64_t counter;
-    session_id_t session_id;
-    unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
-    unsigned char *tk;
-    uint32_t ip;
-    uint16_t port;
-    uint16_t is_completed;
-} active_file_t;
 
 typedef struct known_key_t {
     unsigned char key[crypto_sign_PUBLICKEYBYTES];
@@ -352,7 +362,7 @@ static FORCE_INLINE int cmp_ui_file(void *s1, void *s2)
 
 static FORCE_INLINE int cmp_session(void *s1, void *s2)
 {
-    return memcmp(&((session_t *)s1)->session_id, &((session_t *)s2)->session_id,
+    return memcmp(&((server_session_t *)s1)->session_id, &((server_session_t *)s2)->session_id,
                   (sizeof(uint64_t) + crypto_sign_PUBLICKEYBYTES));
 }
 static FORCE_INLINE void free_session(void *session)
@@ -361,10 +371,10 @@ static FORCE_INLINE void free_session(void *session)
     range_node_t *next;
     if (!session)
         return;
-    if (((session_t *)session)->file) {
-        fclose(((session_t *)session)->file);
+    if (((server_session_t *)session)->file) {
+        fclose(((server_session_t *)session)->file);
     }
-    curr = ((session_t *)session)->missing_range_ll;
+    curr = ((server_session_t *)session)->missing_range_ll;
     while (curr != NULL) {
         next = curr->next;
         free(curr);

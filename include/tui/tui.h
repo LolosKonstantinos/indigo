@@ -25,7 +25,7 @@ SOFTWARE.
 #include "indigo_types.h"
 #define _XOPEN_SOURCE_EXTENDED
 
-#include <Queue.h>
+#include <queue.h>
 #include <binary_tree.h>
 // #include <ncursesw/curses.h>
 #include "ducktable.h"

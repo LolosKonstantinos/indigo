@@ -20,7 +20,7 @@ SOFTWARE.
 */
 
 #include "tui.h"
-#include "Queue.h"
+#include "queue.h"
 #include "binary_tree.h"
 #include "crypto_utils.h"
 #include "indigo_core/net_io.h"

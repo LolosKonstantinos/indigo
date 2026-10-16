@@ -24,7 +24,7 @@ SOFTWARE.
 #include "indigo_types.h"
 #include "net_io.h"
 #include <config.h>
-#include <Queue.h>
+#include <queue.h>
 #include <glib.h>
 #include <indigo_core/packet_handler.h>
 #include <indigo_errors.h>
@@ -81,14 +81,15 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     remote_device_t *found_rdev = NULL;
 
     tree_iterator_t *tree_iterator = NULL;
+    ducktable_iterator_t *ducktable_iterator = NULL;
 
     // the expected signing response table
     tree_t *xsr_tree = NULL;
     xsr_t *found_xsr;
 
-    ducktable_t *session_table = NULL;
-    session_t session;
-    session_t *found_session = NULL;
+    ducktable_t *server_session_table = NULL;
+    server_session_t session;
+    server_session_t *found_session = NULL;
 
     void *remove_array = NULL;
     size_t remove_array_size = 0;
@@ -99,6 +100,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
     ducktable_t *dev_table = NULL;
 
     char username[MAX_USERNAME_LEN * sizeof(uint32_t) + 1] = {0};
+
+    const struct timespec ts_ms = mstotimespec(MS_UNTIL_SESSION_TERMINATION);
 
     int ret = 0; // general purpose return variable
 
@@ -121,7 +124,6 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
 
     known_keys_tree = args->known_keys_tree;
     dev_table = args->device_table;
-    session_table = args->session_table;
 
     // the less the private key is exposed the better, we copy the public key since it is frequently used
     memcpy(public_key, args->sign_keys->public, crypto_sign_PUBLICKEYBYTES);
@@ -135,6 +137,14 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
         goto cleanup;
     }
 
+    server_session_table = new_ducktable(sizeof(session_id_t),offsetof(server_session_t, session_id), sizeof(server_session_t), 0);
+    if (!server_session_table) {
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        log_fatal("[packet_handler_thread] new_tree failed to create server session ducktable | return %d",
+                  *process_return, process_return);
+        goto cleanup;
+    }
+    
     ret = load_username(username);
     if (ret != INDIGO_SUCCESS) {
         strcpy(username, "unknown");
@@ -218,14 +228,14 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         break;
                     case MSG_FILE_SENDING_REQUEST:
                         log_debug("[packet_handler_thread] received file sending request");
-                        ret = file_sending_request_routine(packet, packet_info, dev_table, args->session_table,
+                        ret = file_sending_request_routine(packet, packet_info, dev_table, server_session_table,
                                                            args->sign_keys, args->sockets, args->flag);
                         break;
                     case MSG_FILE_SENDING_RESPONSE:
                         log_debug("[packet_handler_thread] received file sending response, creating client session...");
                         if (packet->magic_number != MAGIC_NUMBER_2)
                             break;
-                        ret = create_client_session(packet, packet_info, args->device_table, args->session_table,
+                        ret = create_client_session(packet, packet_info, dev_table, server_session_table,
                                                     args->send_queue, args->send_flag);
                         if (ret<0) {
                             *process_return = ret;
@@ -237,7 +247,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                         break;
                     case MSG_FILE_CHUNK:
                         log_debug("[packet_handler_thread] received file chunk");
-                        ret = file_chunk_routine(packet, packet_info, args->session_table, args->sign_keys,
+                        ret = file_chunk_routine(packet, packet_info, server_session_table, args->sign_keys,
                                                  args->sockets, args->flag);
                         break;
                     case MSG_RESEND:
@@ -280,7 +290,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 // they sent us a send request and the user said yes
                 fwd = node->data;
                 ret =
-                    create_server_session(fwd, args->device_table, session_table, public_key, args->sockets,
+                    create_server_session(fwd, dev_table, server_session_table, public_key, args->sockets,
                                             args->flag);
                 free(fwd);
                 if (ret<0) {
@@ -298,7 +308,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 log_debug("[packet_handler_thread] received expect send response via queue");
                 Q_EXPECT_SEND_RESPONSE *qe = node->data;
                 // we sent a request to send a file, and we expect a response to that request
-                memset(&session, 0, sizeof(session_t));
+                memset(&session, 0, sizeof(server_session_t));
                 memcpy(&(session.session_id), &(qe->session_id), sizeof(session_id_t));
                 session.file = qe->file;
                 clock_gettime(CLOCK_REALTIME, &(session.timestamp));
@@ -309,7 +319,7 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
                 destroy_qnode(node);
                 node = NULL;
 
-                ret = ducktable_insert(session_table, (char *)&session);
+                ret = ducktable_insert(server_session_table, (char *)&session);
                 if (ret<0) {
                     fclose(session.file);
                     *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
@@ -361,8 +371,8 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
             goto cleanup;
         }
         if (tree_iterator) {
-            struct timespec ts_ms_del = mstotimespec(MS_UNTIL_SIGN_REQUEST_DELETION);
-            struct timespec ts_ms_resend = mstotimespec(MS_UNTIL_SIGN_REQUEST_RESEND);
+            const struct timespec ts_ms_del = mstotimespec(MS_UNTIL_SIGN_REQUEST_DELETION);
+            const struct timespec ts_ms_resend = mstotimespec(MS_UNTIL_SIGN_REQUEST_RESEND);
             while (tree_has_next(tree_iterator)) {
                 tree_next(tree_iterator, (void **)&found_xsr);
                 time_diff = timespec_diff(&curr_time, &(found_xsr->expiration_time));
@@ -448,96 +458,34 @@ int *packet_handler_thread(PACKET_HANDLER_ARGS *args)
         remove_array = NULL;
         remove_array_size = 0;
 
-        // update the device tree
-        ducktable_lock(args->device_table);
-        ret = new_tree_iterator(args->device_table, &tree_iterator);
-        if (ret) {
+
+        //update the (receive) server session table
+        ret = new_ducktable_iterator(server_session_table, &ducktable_iterator);
+        if (ret && !ducktable_iterator) {
             *process_return = ret;
             log_fatal("[packet_handler_thread] failed to create xsr iterator | return %d", *process_return);
             goto cleanup;
         }
-        if (tree_iterator) {
-            struct timespec ts_ms = mstotimespec(MS_UNTIL_DISCONNECT);
-            while (tree_has_next(tree_iterator)) {
-                tree_next(tree_iterator, (void **)&found_rdev);
-                time_diff = timespec_diff(&curr_time, &(found_rdev->timestamp));
-                if (timespec_cmp(&time_diff, &ts_ms)>=0) {
-                    tmp_ptr = realloc(remove_array, (++remove_array_size) * sizeof(remote_device_t *));
-                    if (tmp_ptr == NULL) {
-                        free(remove_array);
-                        remove_array = NULL;
-                        free_tree_iterator(&tree_iterator);
-                        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                        goto cleanup;
-                    }
-                    remove_array = tmp_ptr;
-                    ((remote_device_t **)remove_array)[remove_array_size - 1] = found_rdev;
-                }
-                else {
-                    // branchless minimum
-                    lowest_time = min_timespec(&time_diff, &lowest_time);
-                }
-            }
-            if (remove_array) {
-                for (size_t i = 0; i < remove_array_size; i++) {
-                    ducktable_remove(dev_table, ((remote_device_t **)remove_array)[i]);
-                }
-                free(remove_array);
-            }
-            free_tree_iterator(&tree_iterator);
-        }
-        ducktable_unlock(args->device_table);
 
-        remove_array = NULL;
-        remove_array_size = 0;
-
-        // update the device tree
-        ducktable_lock(session_table);
-        ret = new_tree_iterator(session_table, &tree_iterator);
-        if (ret) {
-            *process_return = ret;
-            log_fatal("[packet_handler_thread] failed to create xsr iterator | return %d", *process_return);
-            goto cleanup;
-        }
-        if (tree_iterator) {
-            struct timespec ts_ms = mstotimespec(MS_UNTIL_SESSION_TERMINATION);
-            while (tree_has_next(tree_iterator)) {
-                tree_next(tree_iterator, (void **)&found_session);
-                time_diff = timespec_diff(&curr_time , &(found_session->timestamp));
-                if (timespec_cmp(&time_diff, &ts_ms)>=0) {
-                    tmp_ptr = realloc(remove_array, (++remove_array_size) * sizeof(session_t *));
-                    if (tmp_ptr == NULL) {
-                        free(remove_array);
-                        remove_array = NULL;
-                        free_tree_iterator(&tree_iterator);
-                        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
-                        goto cleanup;
-                    }
-                    remove_array = tmp_ptr;
-                    ((session_t **)remove_array)[remove_array_size - 1] = found_session;
-
-                    //find the device and free the device id set
-                    memcpy(rdev.peer_pk, found_session->session_id.pk, crypto_sign_PUBLICKEYBYTES);
-                    ret = ducktable_access(dev_table, &rdev, (void**)&found_rdev);
-                    if (ret == 1) {
-                        set_remove(found_rdev->fid_set, found_session->session_id.serial);
-                    }
-                    ducktable_unlock(args->device_table);
+        while (tree_has_next(tree_iterator)) {
+            tree_next(tree_iterator, (void **)&found_session);
+            time_diff = timespec_diff(&curr_time , &(found_session->timestamp));
+            if (timespec_cmp(&time_diff, &ts_ms)>=0) {
+                //find the device and free the device id set
+                ret = ducktable_access(dev_table, (char *)found_session->session_id.pk, (void**)&found_rdev);
+                if (ret == 1) {
+                    set_remove(found_rdev->fid_set, found_session->session_id.serial);
                 }
-                else {
-                    // branchless minimum
-                    lowest_time = min_timespec(&time_diff, &lowest_time);
-                }
+                ducktable_unlock(dev_table);
+                ducktable_iterator_remove_current(ducktable_iterator);
             }
-            if (remove_array) {
-                for (size_t i = 0; i < remove_array_size; i++) {
-                    avl_delete_unlocked(args->device_table, ((session_t **)remove_array)[i]);
-                }
-                free(remove_array);
+            else {
+                // branchless minimum
+                lowest_time = min_timespec(&time_diff, &lowest_time);
             }
-            free_tree_iterator(&tree_iterator);
         }
-        ducktable_unlock(session_table);
+        free_tree_iterator(&tree_iterator);
+
 
         // there is no need to sleep if there is more stuff to do
         if (!queue_is_empty(args->queue))
@@ -589,7 +537,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, ducktable_t *dev_table, d
     remote_device_t rdev;
     remote_device_t *found_rdev;
     packet_t *packet = NULL;
-    session_t session;
+    server_session_t session;
     unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES];
     file_sending_response_data_t file_sending_response_data = {0};
     char file_name[2 * sizeof(session_id_t) + 1] = INDIGO_TEMP_DIR;
@@ -629,7 +577,7 @@ int create_server_session(Q_FILE_SENDING_REQUEST *fwd, ducktable_t *dev_table, d
     }
 
     // zero out the session Not sure if this is necessary, probably will be optimized out by the compiler
-    memset(&session, 0, sizeof(session_t));
+    memset(&session, 0, sizeof(server_session_t));
     // create the file we will write to
     for (int i = 0; i < crypto_sign_PUBLICKEYBYTES; ++i) {
         sprintf(file_name + (2 * i), "%02x", (session.session_id.pk)[i]);
@@ -707,6 +655,7 @@ cleanup:
     return ret;
 }
 
+// TODO: update this function when the ui api is ready
 int create_client_session(const packet_t *const packet, const packet_info_t *const packet_info, ducktable_t *dev_table,
                           ducktable_t *session_table, QUEUE *send_queue, EFLAG *send_flag)
 {
@@ -715,8 +664,7 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
     // tell the sending thread to start sending the file
     int ret;
     remote_device_t rdev;
-    session_t *found_session = NULL;
-    active_file_t *tmp_active_file = NULL;
+    Q_SEND_FILE *queue_node_data = NULL;
     session_id_t session_id;
 
     // check if the peer is in the device tree (if they are not, we shouldn't create a session)
@@ -733,59 +681,27 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
     // add an expected file packet (xfp) for this session
     memcpy(&(session_id.pk), packet->id, crypto_sign_PUBLICKEYBYTES);
     session_id.serial = ((file_sending_response_data_t *)(packet->data))->serial;
-    /*We sent a packet with a serial to begin a session.
-     * we created an session with that serial. (don't worry there is an expiration time, it will not stay forever).
-     * we expect a response with the serial we sent (it is an identifier for that session that is being created).
-     * If we don't receive a response, nothing should happen.
-     */
-    // if the session id is not found, then the returned serial is not valid, and the session is rejected
-    ducktable_lock(session_table);
-    ret = ducktable_access(session_table, (char *)&session_id, (void **)&found_session);
-    if (ret == 0) {
-        ducktable_unlock(session_table);
-        log_warn("[create_client_session] peer not found in expected files tree. Can not create client session,"
-                 " serial %lu", session_id.serial);
-        return 1;
-    }
 
-    // if they sent us a serial of a file we are receiving then we reject.
-    //(an attacker or a badly writen mod, either way me not happy).
-    if ((found_session->status_flags & SESSION_FLAG_CLIENT_FILE) == 0) {
-        // we don't goto cleanup here. we don't want to remove an active file
-        ducktable_unlock(session_table);
-        log_warn("[create_client_session] peer not found in session tree. Can not create client session");
-        return 1;
-    }
-
-    // necessary allocations
-
-    clock_gettime(CLOCK_REALTIME, &(found_session->timestamp));
-    found_session->packets_writen = 0;
-    found_session->last_chunk = 0;
-    found_session->bytes_moved = 0;
-    found_session->missing_range_ll = NULL;
-    found_session->start_time = time(NULL);
-    found_session->end_time = time(NULL);
-    found_session->status_flags = SESSION_FLAG_ACTIVE | SESSION_FLAG_UPSTREAM;
-    found_session->ip = packet_info->address.sin_addr.s_addr;
-    ducktable_unlock(session_table);
-
-    tmp_active_file = malloc(sizeof(active_file_t));
-    if (tmp_active_file == NULL) {
+    queue_node_data = malloc(sizeof(Q_SEND_FILE));
+    if (queue_node_data == NULL) {
         log_error("[create_client_session] malloc failed");
         return -1;
     }
+    // TODO: we have stored a file pointer somewhere
+    queue_node_data->af.session_serial = ((file_sending_response_data_t *)(packet->data))->serial;
+    queue_node_data->af.packet_counter = 0;
+    queue_node_data->af.file = NULL;
+    queue_node_data->af.is_completed = 0;
+    clock_gettime(CLOCK_REALTIME, &(queue_node_data->af.start_time_realtime));
+    clock_gettime(CLOCK_MONOTONIC, &(queue_node_data->af.start_time_monotonic));
+    queue_node_data->af.end_time_monotonic = queue_node_data->af.start_time_monotonic;
+    queue_node_data->af.timestamp = queue_node_data->af.start_time_monotonic;
 
-    tmp_active_file->fd = found_session->file;
-    tmp_active_file->counter = 0;
-    tmp_active_file->next = NULL;
-    tmp_active_file->tk = rdev.session_keys->tk;
-    tmp_active_file->port = PORT;
-    randombytes_buf(tmp_active_file->nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
-    memcpy(tmp_active_file->session_id.pk, packet->id, crypto_sign_PUBLICKEYBYTES);
-    tmp_active_file->session_id.serial = ((file_sending_response_data_t *)(packet->data))->serial;
+    randombytes_buf(queue_node_data->af.nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
+    queue_node_data->port = PORT;
+    memcpy(queue_node_data->id, packet->id, crypto_sign_PUBLICKEYBYTES);
 
-    ret = queue_push(send_queue, tmp_active_file, QET_SEND_FILE);
+    ret = queue_push(send_queue, queue_node_data, QET_SEND_FILE);
     if (ret != 0) {
         ret = -1;
         log_error("[create_client_session] queue_push failed pushing active file to send queue | return %d", ret);
@@ -796,7 +712,7 @@ int create_client_session(const packet_t *const packet, const packet_info_t *con
     return 0;
 
 cleanup:
-    free(tmp_active_file);
+    free(queue_node_data);
     return ret;
 }
 
@@ -1412,7 +1328,7 @@ int file_chunk_routine(packet_t *packet, packet_info_t *packet_info, ducktable_t
     int ret;
     void *tmp_ptr;
     session_id_t session_id;
-    session_t *found_session;
+    server_session_t *found_session;
 
     range_node_t *range_node;
     range_node_t *prev_node;

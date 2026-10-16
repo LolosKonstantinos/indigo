@@ -28,7 +28,7 @@ SOFTWARE.
 #include <event_flags.h>
 #include <mempool.h>
 #include <crypto_utils.h>
-#include <Queue.h>
+#include <queue.h>
 #include <binary_tree.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -51,7 +51,6 @@ typedef struct PACKET_HANDLER_ARGS {
     QUEUE *send_queue;
     EFLAG *send_flag;
     ducktable_t *device_table;
-    ducktable_t *session_table;
     tree_t *known_keys_tree;
     mempool_t *mempool;
     signing_key_pair_t *sign_keys;
