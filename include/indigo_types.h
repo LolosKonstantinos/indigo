@@ -250,14 +250,11 @@ typedef struct session_keys_t {
 }session_keys_t;
 
 typedef struct remote_device_t {
-    struct timespec timestamp; // the time until which we consider the device active,
-                            // updated with any packet
+    struct timespec timestamp; // the last time the device was seen
     int port;
     uint32_t ip;
     unsigned char peer_pk[crypto_sign_PUBLICKEYBYTES];
-
     session_keys_t *session_keys;
-
     char username[MAX_USERNAME_LEN * sizeof(uint32_t)];
     uint32_t dev_state_flag;
     uint32_t fsr_count;
@@ -273,13 +270,14 @@ typedef struct session_id_t {
 typedef struct server_session_t {
     session_id_t session_id;
     struct timespec timestamp;
+    struct timespec start_time_realtime;
+    struct timespec start_time_monotonic;
+    struct timespec end_time_monotonic;
     uint64_t total_packet_count;
     uint64_t packets_writen;
     uint64_t last_chunk;
     FILE *file;
     range_node_t *missing_range_ll;
-    uint64_t start_time;
-    uint64_t end_time;
     size_t bytes_moved;
     uint32_t ip;
     uint32_t status_flags;
@@ -287,6 +285,8 @@ typedef struct server_session_t {
 
 typedef struct active_file_t {
     uint64_t session_serial;
+    size_t file_size;
+    size_t bytes_sent;
     uint64_t packet_counter;
     FILE *file;
     struct timespec timestamp;
@@ -301,7 +301,6 @@ typedef struct active_file_t {
 typedef struct client_session_t {
     unsigned char id [crypto_sign_PUBLICKEYBYTES];
     unsigned char *tk;
-    size_t bytes_moved;
     active_file_t *active_files_list;
     uint32_t ip;
     uint16_t port;

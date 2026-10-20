@@ -67,10 +67,8 @@ typedef struct Q_EXPECT_SEND_RESPONSE {
 typedef session_id_t Q_SESSION_REJECTED;
 
 typedef struct Q_SEND_FILE {
-    active_file_t af;
-    uint32_t ip;
-    uint32_t port;
     unsigned char id[crypto_sign_PUBLICKEYBYTES];
+    char *filename;
 }Q_SEND_FILE;
 
 typedef struct Q_RESEND_FILE_CHUNK {

@@ -1,0 +1,3 @@
+add_library(indigo_api_includes INTERFACE indigo_api.h)
+
+target_include_directories(indigo_api_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})

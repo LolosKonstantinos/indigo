@@ -431,6 +431,7 @@ void remove_path_sep(char *path, ssize_t max_len)
 {
     ssize_t idx = 0;
     if (max_len < 0) {
+        //for negative max_len we assume the string is null terminated
         while (path[idx] != '\0') {
             path[idx] = path[idx] == '/' ? '-' : path[idx];
             ++idx;
