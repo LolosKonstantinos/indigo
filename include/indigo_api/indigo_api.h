@@ -24,8 +24,6 @@ SOFTWARE.
 #define INDIGO_UI_API_H
 
 #include "binary_tree.h"
-
-#include <event_flags.h>
 #include <queue.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -69,8 +67,6 @@ typedef struct {
     unsigned char zero[4];
 } indigo_server_session_t;
 
-int ui_api_init(QUEUE *manager_queue, QUEUE *send_queue, QUEUE *packet_handler_queue, EFLAG *send_flag,
-                tree_t *known_keys);
 int ui_error();
 
 int get_device_info(void **device_array, size_t *device_array_size);

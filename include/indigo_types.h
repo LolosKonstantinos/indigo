@@ -73,6 +73,13 @@ SOFTWARE.
 #define INDIGO_SETTINGS_FILE_NAME "settings.conf"
 #define INDIGO_LOG_FILE_NAME "log"
 
+#ifndef INDIGO_PLUGIN_DIR
+#define INDIGO_PLUGIN_DIR "plugins"
+#endif
+#ifndef INDIGO_USER_PLUGIN_DIR
+#define INDIGO_USER_PLUGIN_DIR "config/user/plugins"
+#endif
+
 // RDSF == RemoteDeviceStateFlag
 #define RDSF_UNVERIFIED 0x0001
 #define RDSF_VERIFIED 0x0002

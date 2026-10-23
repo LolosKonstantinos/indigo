@@ -24,8 +24,8 @@ SOFTWARE.
 #include <stdatomic.h>
 #include <event_flags.h>
 #include <queue.h>
-
 #include "indigo_api.h"
+#include "indigo_private_api.h"
 
 #include "config.h"
 

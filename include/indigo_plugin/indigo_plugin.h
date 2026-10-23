@@ -23,10 +23,25 @@ SOFTWARE.
 #ifndef INDIGO_PLUGIN_H
 #define INDIGO_PLUGIN_H
 #include <stddef.h>
+#include <indigo_plugin_interface.h>
 
+#ifndef INDIGO_PLUGIN_VERSION
+#define INDIGO_PLUGIN_VERSION "1.1.1"
+#endif
 
-int load_plugin(char *path, char **names, size_t name_count, char **symbols);
-int load_plugin_now(char *path, char **names, size_t name_count, char **symbols);
-int load_plugins(char **paths, size_t path_count, char **names, size_t name_count, void **symbols);
+#ifndef INDIGO_PLUGIN_DIR
+#define INDIGO_PLUGIN_DIR "plugins"
+#endif
+#ifndef INDIGO_USER_PLUGIN_DIR
+#define INDIGO_USER_PLUGIN_DIR "config/user/plugins"
+#endif
+
+#define INDIGO_PLUGIN_GETTER_NAME "get_indigo_plugin"
+
+typedef indigo_plugin_t *(*plugin_getter_fn)(void);
+
+int load_plugin(char *path, indigo_plugin_t **plugin);
+int load_plugin_now(char *path, indigo_plugin_t **plugin);
+int load_plugins(indigo_plugin_t ***plugins, size_t *plugin_count);
 
 #endif // INDIGO_PLUGIN_H

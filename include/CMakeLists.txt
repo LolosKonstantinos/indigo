@@ -1,7 +1,7 @@
 add_subdirectory(gui)
 add_subdirectory(tui)
-add_subdirectory(plugin)
-add_subdirectory(ui_api)
+add_subdirectory(indigo_plugin)
+add_subdirectory(indigo_api)
 add_subdirectory(indigo_core)
 
 #utilities libraries
