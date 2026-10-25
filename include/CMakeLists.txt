@@ -1,5 +1,4 @@
-add_subdirectory(gui)
-add_subdirectory(tui)
+add_subdirectory(ui)
 add_subdirectory(indigo_plugin)
 add_subdirectory(indigo_api)
 add_subdirectory(indigo_core)

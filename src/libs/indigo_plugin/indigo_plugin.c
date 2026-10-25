@@ -198,3 +198,12 @@ int load_plugins(indigo_plugin_t ***plugins, size_t *plugin_count)
 
     return 0;
 }
+
+int run_plugin(indigo_plugin_t *plugin)
+{
+
+}
+int is_ui_plugin(indigo_plugin_t *plugin)
+{
+    return plugin->start_indigo_ui != NULL;
+}

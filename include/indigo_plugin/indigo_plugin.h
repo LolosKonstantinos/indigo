@@ -26,7 +26,7 @@ SOFTWARE.
 #include <indigo_plugin_interface.h>
 
 #ifndef INDIGO_PLUGIN_VERSION
-#define INDIGO_PLUGIN_VERSION "1.1.1"
+#define INDIGO_PLUGIN_VERSION (0x010101)
 #endif
 
 #ifndef INDIGO_PLUGIN_DIR
@@ -43,5 +43,8 @@ typedef indigo_plugin_t *(*plugin_getter_fn)(void);
 int load_plugin(char *path, indigo_plugin_t **plugin);
 int load_plugin_now(char *path, indigo_plugin_t **plugin);
 int load_plugins(indigo_plugin_t ***plugins, size_t *plugin_count);
+
+int run_plugin(indigo_plugin_t *plugin);
+int is_ui_plugin(indigo_plugin_t *plugin);
 
 #endif // INDIGO_PLUGIN_H

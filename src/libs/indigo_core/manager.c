@@ -24,6 +24,7 @@ SOFTWARE.
 
 #include "config.h"
 #include "time_utils.h"
+#include "indigo_api/indigo_private_api.h"
 
 #include <indigo_errors.h>
 #include <unistd.h>
@@ -40,22 +41,31 @@ SOFTWARE.
 ///                                                    ///
 //////////////////////////////////////////////////////////
 ///
-int thread_manager(uint32_t address, uint16_t port)
+int *thread_manager(MANAGER_ARGS *args)
 {
+    uint16_t port = args->port;
+    uint32_t address = args->multicast_addr;
+    uint16_t execution_flags = args->flags;
+
+    pthread_mutex_t *ui_mutex = args->mutex;
+    pthread_cond_t *ui_cond = args->cond;
+    char *ui_control_flag = args->ui_flag;
+
+    indigo_plugin_t **plugins = args->plugins;
+    uint64_t plugin_count = args->plugin_count;
+
+    char ui_initialized = 0;
+
     // for the thread creation
     pthread_t tid_send = pthread_self();
     pthread_t tid_receive = pthread_self();
     pthread_t tid_update = pthread_self();
     pthread_t tid_handler = pthread_self();
-    pthread_t tid_ui = pthread_self();
 
     int *send_ret = NULL;
     int *receive_ret = NULL;
     int *update_ret = NULL;
     int *handler_ret = NULL;
-    int *ui_ret = NULL;
-
-    EFLAG *override_flags[3];
 
     // the pool used for receiving
     mempool_t *mempool = NULL;
@@ -71,7 +81,6 @@ int thread_manager(uint32_t address, uint16_t port)
     RECV_ARGS *recv_args = NULL;
     INTERFACE_UPDATE_ARGS *update_args = NULL;
     PACKET_HANDLER_ARGS *handler_args = NULL;
-    UI_ARGS *ui_args = NULL;
 
     // for the event handling
     QNODE *qnode = NULL;
@@ -96,30 +105,27 @@ int thread_manager(uint32_t address, uint16_t port)
     struct timespec manager_timeout;
     void *temp = NULL;
 
-    int process_return = 0;
+    int *process_return = NULL;
     int ret = 0; // general purpose return value variable
 
     /*_______________________________________HERE STARTS THE FUNCTIONS LOGIC__________________________________________*/
+    master_key = args->master_key;
+    free(args);
+    args = NULL;
 
-    ret = create_ui_thread(&ui_args, &tid_ui);
-    if (ret != 0) {
-        log_fatal("[thread_manager] create_ui_thread() failed");
-        process_return = ret;
-        return process_return;
-    }
-    pthread_mutex_lock(&(ui_args->ui_mutex));
-    while (ui_args->turn != 0) {
-        pthread_cond_wait(&(ui_args->ui_cond), &(ui_args->ui_mutex));
-    }
-    master_key = ui_args->master_key;
-    ui_args->master_key = NULL;
+    pthread_mutex_lock(ui_mutex);
 
-    // allocate memory for the return value
+
     flag = create_event_flag();
     if (flag == NULL) {
         set_event_flag(flag, EF_TERMINATION);
-        process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_fatal("[thread_manager_thread] create_event_flag() failed | return %d", process_return);
+
+        *ui_control_flag = -1;
+        pthread_mutex_unlock(ui_mutex);
+        pthread_cond_broadcast(ui_cond);
+
         return process_return;
     }
     process_return = INDIGO_SUCCESS;
@@ -179,7 +185,7 @@ int thread_manager(uint32_t address, uint16_t port)
     // create the sockets
     sockets = malloc(sizeof(socket_ll));
     if (sockets == NULL) {
-        process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_fatal("[thread_manager_thread] malloc failed allocating %d bytes for socket linked list | return %d",
             sizeof(socket_ll), INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         goto cleanup;
@@ -200,7 +206,7 @@ int thread_manager(uint32_t address, uint16_t port)
     // the initial mempool is about 1MiB, it may be extended automatically if needed
     mempool = new_mempool_manual(1 << 10, sizeof(packet_t) + sizeof(packet_info_t), PAC_ALIGNMENT, 0.5f);
     if (!mempool) {
-        process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_fatal("[thread_manager_thread] failed to create new memory pool of %lld bytes | return %d",
             (1<<10) * ((sizeof(packet_t) + sizeof(packet_info_t))), INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         goto cleanup;
@@ -209,7 +215,7 @@ int thread_manager(uint32_t address, uint16_t port)
     // load the signing keys
     signing_key_pair = sodium_malloc(sizeof(signing_key_pair_t));
     if (signing_key_pair == NULL) {
-        process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_fatal("[thread_manager_thread] sodium_malloc() failed allocating %d bytes for sign keypair | return %d",
             sizeof(signing_key_pair_t), INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         goto cleanup;
@@ -217,7 +223,7 @@ int thread_manager(uint32_t address, uint16_t port)
 
     ret = load_signing_key_pair(signing_key_pair, master_key);
     if (ret != INDIGO_SUCCESS) {
-        process_return = ret;
+        *process_return = ret;
         log_fatal("[thread_manager_thread] failed loading sign key pair | return %d", ret);
         goto cleanup;
     }
@@ -227,16 +233,24 @@ int thread_manager(uint32_t address, uint16_t port)
     // the less the time the private key is accessible the better
     memcpy(signing_pk, signing_key_pair->public, crypto_sign_PUBLICKEYBYTES);
 
+    //initialize the indigo_api
+    ret = ui_api_init(queue, send_args->queue, handler_args->queue, send_args->flag, known_key_tree);
+    if (ret) {
+        *process_return = ret;
+        log_fatal("[thread_manager_thread] ui_api_init() failed");
+        goto cleanup;
+    }
+
     // create threads
     if (create_sending_thread(&send_args, port, address, sockets, flag, signing_key_pair, &tid_send)) {
-        process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_error("[thread_manager_thread] send thread creation failed | return %d", INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         goto cleanup;
     }
 
     if (create_packet_handler_thread(&handler_args, flag, ui_queue, send_args->queue, send_args->flag, mempool,
                                      device_table, known_key_tree, sockets, signing_key_pair, &tid_handler)) {
-        process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_error("[thread_manager_thread] packet handler thread creation failed | return %d", INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         goto cleanup;
     }
@@ -244,40 +258,21 @@ int thread_manager(uint32_t address, uint16_t port)
     if (create_receiving_thread(&recv_args, sockets, handler_args->queue, handler_args->flag, mempool, flag,
                                 address, port, &tid_receive))
     {
-        process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_error("[thread_manager_thread] receive thread creation failed | return %d", INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         goto cleanup;
     }
 
-    override_flags[0] = handler_args->flag;
-    override_flags[1] = recv_args->flag;
-    override_flags[2] = send_args->flag;
-
-    if (create_interface_updater_thread(&update_args, port, address, flag, override_flags, sockets, &tid_update)) {
-        process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
+    if (create_interface_updater_thread(&update_args, port, address, flag, sockets, &tid_update)) {
+        *process_return = INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR;
         log_error("[thread_manager_thread] interface update thread creation failed | return %d", INDIGO_ERROR_NOT_ENOUGH_MEMORY_ERROR);
         goto cleanup;
     }
 
-    //fill the ui arguments and signal the condition
-    ui_args->dev_tree = device_table;
-    ui_args->file_tree = file_tree;
-    ui_args->known_key_tree = known_key_tree;
-    ui_args->ui_queue = ui_queue;
-    ui_args->ph_queue = handler_args->queue;
-    ui_args->send_queue = send_args->queue;
-    ui_args->ui_flag = ui_flag;
-    ui_args->send_flag = send_args->flag;
-    ui_args->ph_flag = handler_args->flag;
-    ui_args->wake_flag = flag;
-    memcpy(ui_args->pk, signing_pk, crypto_sign_PUBLICKEYBYTES);
-    ui_args->turn = 1;
-    pthread_mutex_unlock(&(ui_args->ui_mutex));
+    //start plugins
+    for (uint64_t i = 0; i < plugin_count; i++) {
 
-    pthread_cond_broadcast(&(ui_args->ui_cond));
-    //the ui thread frees its arguments so if we access them by accident we will create a use after free
-    ui_args = NULL;
-
+    }
 
     clock_gettime(CLOCK_MONOTONIC, &manager_timeout);
     manager_timeout.tv_sec += 30;
@@ -336,8 +331,9 @@ int thread_manager(uint32_t address, uint16_t port)
             goto cleanup;
         }
 
-
-        //update live data_structures
+        ///////////////////////////////////
+        //  update live data_structures  //
+        ///////////////////////////////////
 
         // update the device table
         {
@@ -397,14 +393,11 @@ int thread_manager(uint32_t address, uint16_t port)
         pthread_join(tid_handler, (void **)&handler_ret);
     if (pthread_equal(tid_update, pthread_self()) == 0)
         pthread_join(tid_update, (void **)&update_ret);
-    if (pthread_equal(tid_ui, pthread_self()) == 0)
-        pthread_join(tid_ui, (void **)&ui_ret);
 
     free(send_ret);
     free(receive_ret);
     free(update_ret);
     free(handler_ret);
-    free(ui_ret);
 
     pthread_mutex_destroy(&sockets->mutex);
     pthread_cond_destroy(&sockets->cond);
@@ -454,13 +447,6 @@ int thread_manager(uint32_t address, uint16_t port)
             free(handler_args);
         }
     }
-    if (pthread_equal(tid_ui, pthread_self()) == 0) {
-        if (ui_flag) {
-            destroy_queue(ui_queue);
-            free(ui_queue);
-            free_event_flag(ui_flag);
-        }
-    }
 
     free_mempool(mempool);
 
@@ -486,6 +472,13 @@ int thread_manager(uint32_t address, uint16_t port)
 ///                                               ///
 /////////////////////////////////////////////////////
 cleanup:
+
+    if (ui_initialized == 0) {
+        *ui_control_flag = -1;
+        pthread_mutex_unlock(ui_mutex);
+        pthread_cond_broadcast(ui_cond);
+    }
+
     // signal termination to all threads
 #ifdef _WIN32
     if (recv_args != NULL) {
@@ -524,14 +517,11 @@ cleanup:
         pthread_join(tid_update, (void **)&update_ret);
     if (pthread_equal(tid_handler, pthread_self()) == 0)
         pthread_join(tid_handler, (void **)&handler_ret);
-    if (pthread_equal(tid_ui, pthread_self()) == 0)
-        pthread_join(tid_ui, (void **)&ui_ret);
 
     free(send_ret);
     free(receive_ret);
     free(update_ret);
     free(handler_ret);
-    free(ui_ret);
 
     // free the args of the threads
     // send
@@ -579,13 +569,6 @@ cleanup:
             free(handler_args);
         }
     }
-    if (pthread_equal(tid_ui, pthread_self()) == 0) {
-        if (ui_flag) {
-            destroy_queue(ui_queue);
-            free(ui_queue);
-            free_event_flag(ui_flag);
-        }
-    }
 
     if (sockets) {
         pthread_mutex_destroy(&sockets->mutex);
@@ -620,6 +603,32 @@ cleanup:
 ///                                                             ///
 ///////////////////////////////////////////////////////////////////
 
+
+int create_thread_manager(void *master_key, uint16_t port, uint32_t multicast_addr, uint16_t flags,
+                          pthread_mutex_t *mutex, pthread_cond_t *cond, char *ui_flag, indigo_plugin_t **plugins,
+                          uint64_t plugin_count)
+{
+    int ret;
+    pthread_t thread;
+    MANAGER_ARGS *args = malloc(sizeof(MANAGER_ARGS));
+    if (args == NULL) {
+        return -1;
+    }
+    args->master_key = master_key;
+    args->port = port;
+    args->multicast_addr = multicast_addr;
+    args->flags = flags;
+    args->mutex = mutex;
+    args->cond = cond;
+    args->ui_flag = ui_flag;
+
+    ret = pthread_create(&thread, NULL, (void *)thread_manager, args);
+    if (ret != 0) {
+        free(args);
+        log_error("[create_thread_manager] pthread_create() failed to create thread manager with error %d", ret);
+    }
+    return 0;
+}
 
 int create_sending_thread(SEND_ARGS **args, int port, uint32_t multicast_address, socket_ll *sockets, EFLAG *wake_mngr,
                           signing_key_pair_t *keypair, pthread_t *tid)
@@ -757,7 +766,7 @@ int create_receiving_thread(RECV_ARGS **args, socket_ll *sockets, QUEUE *packet_
 }
 
 int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint32_t multicast_address,
-                                    EFLAG *wake_mngr, EFLAG *override_flags[3], socket_ll *sockets, pthread_t *tid)
+                                    EFLAG *wake_mngr, socket_ll *sockets, pthread_t *tid)
 {
     pthread_t thread;
 
@@ -797,7 +806,6 @@ int create_interface_updater_thread(INTERFACE_UPDATE_ARGS **args, int port, uint
     update_args->sockets = sockets;
     update_args->wake = wake_mngr;
     update_args->flag = flag;
-    memcpy((void *)((*args)->override_flags), (void *)override_flags, 3 * sizeof(EFLAG *));
 
     if (pthread_create(&thread, NULL, (void *)(&interface_updater_thread), update_args)) {
         free_event_flag(flag);
@@ -870,45 +878,6 @@ int create_packet_handler_thread(PACKET_HANDLER_ARGS **args, EFLAG *wake_mngr, Q
     if (pthread_create(&thread, NULL, (void *)(&packet_handler_thread), handler_args)) {
         free(handler_args);
         log_error("[create_packet_handler_thread] pthread_create() failed to create packet handler thread | return 1 | errno %d", errno);
-        return 1;
-    }
-
-    *tid = thread;
-    return 0;
-}
-
-int create_ui_thread(UI_ARGS **args, pthread_t *tid)
-{
-    pthread_t thread;
-    int ret;
-
-    UI_ARGS *ui_args = calloc(1,sizeof(UI_ARGS));
-    if (ui_args == NULL) {
-        log_error("[create_packet_handler_thread] malloc() failed allocating %d bytes for packet handler thread arguments | return 1",
-            sizeof(PACKET_HANDLER_ARGS));
-        return 1;
-    }
-    *args = ui_args;
-    ret = pthread_mutex_init(&((*args)->ui_mutex), NULL);
-    if (ret != 0) {
-        free(ui_args);
-        return 1;
-    }
-    ret = pthread_cond_init(&((*args)->ui_cond), NULL);
-    if (ret != 0) {
-        pthread_mutex_destroy(&((*args)->ui_mutex));
-        free(ui_args);
-        return 1;
-    }
-
-    (*args)->master_key = NULL;
-    (*args)->turn = 1;
-
-    if (pthread_create(&thread, NULL, (void *)(&ui_thread), ui_args)) {
-        pthread_mutex_destroy(&((*args)->ui_mutex));
-        pthread_cond_destroy(&((*args)->ui_cond));
-        free(ui_args);
-        log_error("[create_packet_handler_thread] pthread_create() failed to create ui thread | return 1 | errno %d", errno);
         return 1;
     }
 

@@ -19,12 +19,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#include "tui/tui.h"
+#include "ui/ui.h"
 #include "indigo_errors.h"
 #include "config.h"
 #include "indigo_types.h"
 #include "logger.h"
 #include "manager.h"
+#include "indigo_plugin/indigo_plugin.h"
+
 #include <log.h>
 
 #include <locale.h>
@@ -42,13 +44,24 @@ int main(int argc, char *argv[])
     WSADATA wsaData;
 #endif
     int ret = 0;
-    sigset_t sigset;
 
     // network
     uint16_t port;
     uint32_t multicast_addr;
 
+    uint16_t execution_flags = 0;
+
     FILE *log_file = NULL;
+
+    void *master_key = NULL;
+
+    pthread_mutex_t *mutex = NULL;
+    pthread_cond_t *cond = NULL;
+    char *flag = NULL;
+
+    indigo_plugin_t **plugins = NULL;
+    size_t plugin_count = 0;
+
 
     logger_init();
     log_file = load_log_file();
@@ -70,22 +83,103 @@ int main(int argc, char *argv[])
 
     setlocale(LC_ALL, "");
 
-    //block window change signal for all thread (we allow only ui thread to have it unblocked)
-    sigemptyset(&sigset);
-    sigaddset(&sigset, SIGWINCH);
-
-    pthread_sigmask(SIG_BLOCK, &sigset, NULL);
+    ret = verify_user(&master_key);
+    if (ret) {
+        log_fatal("[main] verify_user() failed\n");
+        return ret;
+    }
 
     inet_pton(AF_INET, MULTICAST_ADDR, &multicast_addr);
     port = PORT;
 
-    ret = thread_manager(multicast_addr, port);
-    if (ret != INDIGO_SUCCESS) {
-        log_error("[main] create_thread_manager_thread failed\n");
+#ifdef __linux
+    if (getuid() == 0) {
+        execution_flags |= MANAGER_FLAG_PRIVILEGED;
     }
+#endif
+
+    ret = load_plugins(&plugins, &plugin_count);
+    if (ret != 0) {
+        log_warn("[main] load_plugins() failed\n");
+        plugin_count = 0;
+        plugins = NULL;
+    }
+
+
+    flag = malloc(sizeof(char));
+    mutex = malloc(sizeof(pthread_mutex_t));
+    cond = malloc(sizeof(pthread_cond_t));
+    if (!flag || !mutex || !cond) {
+        log_fatal("[main] malloc failed\n");
+        free(flag);
+        free(mutex);
+        free(cond);
+        free(plugins);
+        return 1;
+    }
+
+    *flag = 0;
+    ret = pthread_mutex_init(mutex, NULL);
+    if(ret != 0) {
+        free(flag);
+        free(mutex);
+        free(cond);
+        free(plugins);
+        log_fatal("[main] pthread_mutex_init() failed\n");
+        return 1;
+    }
+    ret = pthread_cond_init(cond, NULL);
+    if (ret != 0) {
+        log_fatal("[main] pthread_cond_init() failed\n");
+        free(flag);
+        free(mutex);
+        free(cond);
+        free(plugins);
+        pthread_mutex_destroy(mutex);
+        return 1;
+    }
+
+
+    ret = create_thread_manager(master_key, port, multicast_addr, execution_flags, mutex, cond, flag, plugins, plugin_count);
+    if (ret != INDIGO_SUCCESS) {
+        log_fatal("[main] create_thread_manager_thread failed\n");
+        pthread_mutex_destroy(mutex);
+        pthread_cond_destroy(cond);
+        free(flag);
+        free(mutex);
+        free(cond);
+        free(plugins);
+        return ret;
+    }
+    master_key = NULL;
+
+    pthread_mutex_lock(mutex);
+    while (pthread_cond_wait(cond, mutex)) {
+        if (*flag == -1) {
+            pthread_exit(NULL);
+        }
+        if (*flag == 1) {
+            break;
+        }
+    }
+
+    pthread_mutex_unlock(mutex);
+
+    pthread_mutex_destroy(mutex);
+    pthread_cond_destroy(cond);
+    free(flag);
+    free(mutex);
+    free(cond);
+    flag = NULL;
+    mutex = NULL;
+    cond = NULL;
+
+    //run the ui
+    start_indigo_ui();
 
 #ifdef _WIN32
     WSACleanup();
 #endif
-    return ret;
+
+    pthread_exit(NULL);
 }

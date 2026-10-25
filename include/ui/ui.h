@@ -25,53 +25,18 @@ SOFTWARE.
 #include "indigo_types.h"
 #define _XOPEN_SOURCE_EXTENDED
 
-#include <queue.h>
-#include <binary_tree.h>
-// #include <ncursesw/curses.h>
-#include "ducktable.h"
-#include "event_flags.h"
 
 #include <curses.h>
-#include <stdint.h>
 
-typedef struct UI_ARGS {
-    union {
-        ducktable_t *dev_tree;
-        void *master_key;
-    };
-    tree_t *file_tree;
-    tree_t *known_key_tree;
-    QUEUE *ui_queue;
-    QUEUE *ph_queue;
-    QUEUE *send_queue;
-    EFLAG *ui_flag;
-    EFLAG *ph_flag;
-    EFLAG *send_flag;
-    EFLAG *wake_flag;
-    unsigned char pk[crypto_sign_PUBLICKEYBYTES];
-    pthread_mutex_t ui_mutex;
-    pthread_cond_t ui_cond;
-    uint64_t turn;
-}UI_ARGS;
 
 int verify_user(void **master_key);
-
-// todo: make it return via pointer the master key
 int verify_password(void **master_key);
-
-WINDOW *create_welcome_screen();
+void print_welcome_screen(WINDOW *password_window);
 int create_new_password();
-// TODO: remove this (allow all characters (utf8) if they entered it once they can do it again)
-int iswspecialchar(wint_t ch);
+
 int get_user_input(WINDOW *win, utf8_char_t *input);
 
 int pathfinder(char path[PATH_MAX]);
-int print_devices(WINDOW *win, tree_t *dev_tree, unsigned char ***dev_IDs, size_t *id_count,
-                  unsigned char last_id[crypto_sign_PUBLICKEYBYTES], int *last_row);
-int print_device(WINDOW *win, remote_device_t *rdev, int row, char highlight);
-int print_device_files(WINDOW *win, unsigned char id[32], tree_t *dev_tree, tree_t *active_files,
-                       uint64_t **requests_list, int *request_count, uint64_t **file_list, int *file_count,
-                       int *last_row, char *level);
 
-void *ui_thread(UI_ARGS *args);
+int start_indigo_ui();
 #endif // TUI_H

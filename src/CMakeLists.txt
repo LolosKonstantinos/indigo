@@ -11,7 +11,6 @@ target_link_libraries(${PROJECT_NAME}_tui PRIVATE indigo_core
                                                   crypto_utils
                                                   queue
                                                   binary_tree
-                                                  tui
                                                   ncursesw
                                                   PkgConfig::SODIUM
                                                   logger

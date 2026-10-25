@@ -904,10 +904,6 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args)
                 }
                 if (ret == 1) {
                     // in any case we need to update the socket list
-                    // raise the override flags of the io threads
-                    for (int i = 0; i < 3; i++) {
-                        set_event_flag(args->override_flags[i], EF_OVERRIDE_IO);
-                    }
                     pthread_mutex_lock(&(args->sockets->mutex));
                     free_discv_sock_ll(args->sockets->head);
                     args->sockets->head = get_discovery_sockets(args->port, args->multicast_addr);
@@ -921,10 +917,6 @@ int *interface_updater_thread(INTERFACE_UPDATE_ARGS *args)
                         goto cleanup;
                     }
                     pthread_mutex_unlock(&(args->sockets->mutex));
-                    // lower the override flag for the io threads
-                    for (int i = 0; i < 3; i++) {
-                        reset_single_event(args->override_flags[i], EF_OVERRIDE_IO);
-                    }
                 }
 
             }

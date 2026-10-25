@@ -91,11 +91,14 @@ typedef int (*destroy_plugin_fn)(indigo_plugin_thread_args_t *);
 
 typedef int *(*plugin_thread_fn)(indigo_plugin_thread_args_t *);
 
+typedef int (*start_indigo_ui_fn)(void);
+
 typedef struct indigo_plugin_t {
     const unsigned char version[8];
     init_plugin_fn init_plugin;
     destroy_plugin_fn destroy_plugin;
     plugin_thread_fn plugin_thread;
+    start_indigo_ui_fn start_indigo_ui;
 }indigo_plugin_t;
 
 const indigo_plugin_t *get_indigo_plugin(void);

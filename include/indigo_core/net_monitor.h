@@ -68,7 +68,6 @@ typedef struct socket_ll {
 
 typedef struct INTERFACE_UPDATE_ARGS {
     EFLAG *flag;
-    EFLAG *override_flags[3];
     EFLAG *wake;
 #ifdef _WIN32
     HANDLE termination_handle;
