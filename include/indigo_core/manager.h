@@ -30,9 +30,10 @@ SOFTWARE.
 #include <queue.h>
 #include <binary_tree.h>
 
-#define MANAGER_FLAG_NO_UI          0x0001
-#define MANAGER_FLAG_PRIVILEGED     0x0002
-#define MANAGER_FLAG_NO_PLUGINS     0x0004
+#define EXECUTION_FLAG_NO_UI          0x0001
+#define EXECUTION_FLAG_PRIVILEGED     0x0002
+#define EXECUTION_FLAG_NO_PLUGINS     0x0004
+#define EXECUTION_FLAG_DAEMON         0x0008
 
 typedef struct MANAGER_ARGS {
     void *master_key;

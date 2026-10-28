@@ -94,7 +94,7 @@ int main(int argc, char *argv[])
 
 #ifdef __linux
     if (getuid() == 0) {
-        execution_flags |= MANAGER_FLAG_PRIVILEGED;
+        execution_flags |= EXECUTION_FLAG_PRIVILEGED;
     }
 #endif
 

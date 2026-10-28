@@ -18,6 +18,7 @@ add_library(config_includes INTERFACE config.h)
 add_library(logger_includes INTERFACE logger.h)
 add_library(set_includes INTERFACE set.h)
 add_library(time_utils INTERFACE time_utils.h)
+add_library(diplomat_includes INTERFACE diplomat.h)
 
 # The interface target makes all its consumers aware of the include directory.
 target_include_directories(crypto_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -32,6 +33,7 @@ target_include_directories(config_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}
 target_include_directories(logger_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(set_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(time_utils INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(diplomat_includes INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_include_directories(indigo_errors INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(indigo_types INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})

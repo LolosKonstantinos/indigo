@@ -23,7 +23,7 @@ SOFTWARE.
 #ifndef INDIGO_PLUGIN_H
 #define INDIGO_PLUGIN_H
 #include <stddef.h>
-#include <indigo_plugin_interface.h>
+#include <indigo_plugin/indigo_plugin_interface.h>
 
 #ifndef INDIGO_PLUGIN_VERSION
 #define INDIGO_PLUGIN_VERSION (0x010101)
